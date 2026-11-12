@@ -22,6 +22,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "CommandHistory.h"
 #include "ConsoleCommands.h"
 #include "VideoDecoder.h"
+#include "MemoryDump.h"
 
 //////////////////////////////////////////////////////////////////////
 
@@ -341,35 +342,23 @@ void ConsoleView_DeleteAllBreakpoints()
 
 BOOL ConsoleView_SaveMemoryDump(CProcessor *pProc, uint16_t addr1, uint16_t addr2)
 {
-    if (addr2 <= addr1)
+    const auto range = memory_dump::Range(addr1, addr2);
+    if (!range)
     {
         ConsoleView_PrintFormat(_T("  End address should be greater than start address.\r\n"));
         return FALSE;
     }
 
-    uint16_t waddr1 = addr1 / 2;
-    uint16_t waddr2 = addr2 & 1 ? addr2 / 2 : (addr2 - 1) / 2;
-    size_t bsize = (waddr2 - waddr1 + 1) * 2;
-
     CMemoryController* pMemCtl = pProc->GetMemoryController();
-    std::vector<uint16_t> data(bsize / sizeof(uint16_t));
+    std::vector<uint16_t> data(range->Count());
 
     bool isHaltMode = pProc->IsHaltMode();
-    for (uint16_t i = waddr1; i <= waddr2; i++)
-        data[i - waddr1] = pMemCtl->GetWordView(i * 2, isHaltMode, false).value;
+    for (std::size_t i = 0; i < data.size(); ++i)
+        data[i] = pMemCtl->GetWordView(static_cast<uint16_t>((range->first + i) * 2), isHaltMode, false).value;
 
     TCHAR fname[20];
     FormatBuffer(fname, _T("memdump{}.bin"), pProc->GetName());
-    HANDLE file = ::CreateFile(fname,
-            GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE)
-        return FALSE;
-
-    DWORD dwBytesWritten = 0;
-    BOOL written = ::WriteFile(file, data.data(), static_cast<DWORD>(bsize), &dwBytesWritten, nullptr);
-    ::CloseHandle(file);
-    if (!written || dwBytesWritten != bsize)
+    if (!memory_dump::Save(std::filesystem::path(fname), data))
         return FALSE;
 
     ConsoleView_PrintFormat(_T("  {} memory saved to {}\r\n"), pProc->GetName(), fname);
