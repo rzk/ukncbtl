@@ -17,6 +17,9 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <climits>
 #include "util/SettingsCodec.h"
 #include "util/CachedSetting.h"
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+#include "util/SettingsStore.h"
+#endif
 
 //////////////////////////////////////////////////////////////////////
 
@@ -96,13 +99,28 @@ void Settings_Done()
 
 BOOL Settings_SaveStringValue(LPCTSTR sName, LPCTSTR sValue)
 {
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    if (!sName) return FALSE;
+    const SettingsStore store{m_Settings_IniPath};
+    return (sValue ? store.Set(sName, sValue) : store.Remove(sName)).has_value();
+#else
     BOOL result = WritePrivateProfileString(
             m_Settings_IniAppName, sName, sValue, m_Settings_IniPath.c_str());
     return result;
+#endif
 }
 BOOL Settings_LoadStringValue(LPCTSTR sName, LPTSTR sBuffer, int nBufferLengthChars)
 {
     if (!sBuffer || nBufferLengthChars <= 0) return FALSE;
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    sBuffer[0] = _T('\0');
+    if (!sName) return FALSE;
+    const auto value = SettingsStore{m_Settings_IniPath}.Get(sName);
+    if (!value || !*value || (*value)->size() >= static_cast<size_t>(nBufferLengthChars)) return FALSE;
+    std::copy((*value)->begin(), (*value)->end(), sBuffer);
+    sBuffer[(*value)->size()] = _T('\0');
+    return TRUE;
+#else
     // Probe one character beyond the destination so an exact fit is distinct
     // from a truncated value. Never expose a valid-looking truncated prefix.
     std::vector<TCHAR> text(static_cast<size_t>(nBufferLengthChars) + 1, 0);
@@ -116,6 +134,7 @@ BOOL Settings_LoadStringValue(LPCTSTR sName, LPTSTR sBuffer, int nBufferLengthCh
     }
     sBuffer[0] = _T('\0');
     return FALSE;
+#endif
 }
 
 BOOL Settings_SaveDwordValue(LPCTSTR sName, DWORD dwValue)

@@ -231,6 +231,13 @@ if(BUILD_TESTING)
   target_compile_definitions(ConsoleProductTests PRIVATE PRODUCT)
   set_target_properties(ConsoleProductTests PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
   ukncbtl_test(SettingsTests tests/SettingsTests.cpp emulator/Settings.cpp)
+  # Exercise the same application settings API against the new store without
+  # changing the production backend before legacy INI migration is complete.
+  add_executable(SettingsPortableTests tests/SettingsTests.cpp emulator/Settings.cpp)
+  ukncbtl_target(SettingsPortableTests)
+  target_compile_definitions(SettingsPortableTests PRIVATE UKNCBTL_PORTABLE_SETTINGS)
+  target_link_libraries(SettingsPortableTests PRIVATE GTest::gtest_main SettingsStore)
+  gtest_discover_tests(SettingsPortableTests TEST_PREFIX "PortableBackend." DISCOVERY_TIMEOUT 30)
   ukncbtl_test(IniWindowsCompatibilityTests tests/IniWindowsCompatibilityTests.cpp)
   target_link_libraries(IniWindowsCompatibilityTests PRIVATE IniDocument IniEncoding SettingsStore)
   ukncbtl_test(CommonTextTests tests/CommonTextTests.cpp emulator/util/CommonText.cpp)
