@@ -213,7 +213,7 @@ endfunction()
 
 add_executable(UKNCBTL WIN32
   emulator/Common.cpp emulator/util/CommonText.cpp emulator/ConsoleView.cpp emulator/DebugView.cpp
-  emulator/Dialogs.cpp emulator/DiskImage.cpp emulator/DisasmView.cpp emulator/InstrHistoryView.cpp
+  emulator/Dialogs.cpp emulator/DisasmView.cpp emulator/InstrHistoryView.cpp
   emulator/DisplayListView.cpp emulator/Emulator.cpp emulator/KeyboardView.cpp
   emulator/Main.cpp emulator/MainWindow.cpp emulator/MemoryView.cpp
   emulator/ScreenView.cpp emulator/ScreenText.cpp emulator/Subtitles.cpp emulator/Settings.cpp emulator/SoundGen.cpp
@@ -222,7 +222,7 @@ add_executable(UKNCBTL WIN32
 ukncbtl_target(UKNCBTL)
 target_include_directories(UKNCBTL PRIVATE emulator/res)
 target_link_libraries(UKNCBTL PRIVATE FrameControl FrameTiming HostInput WavPcmFile EmulatorCore EmulatorSnapshot VideoDecoder ScreenScale vfw32 comctl32 winmm advapi32 shell32 windowscodecs)
-target_link_libraries(UKNCBTL PRIVATE DiskImageData)
+target_link_libraries(UKNCBTL PRIVATE DiskImageFile)
 if(UKNCBTL_USE_PORTABLE_SETTINGS)
   target_compile_definitions(UKNCBTL PRIVATE UKNCBTL_PORTABLE_SETTINGS)
   target_link_libraries(UKNCBTL PRIVATE SettingsStore)
@@ -289,8 +289,8 @@ if(BUILD_TESTING)
   target_link_libraries(MemoryEdgeTests PRIVATE EmulatorCore)
   ukncbtl_test(ProcessorEdgeTests tests/ProcessorEdgeTests.cpp)
   target_link_libraries(ProcessorEdgeTests PRIVATE EmulatorCore)
-  ukncbtl_test(DiskImageTests tests/DiskImageTests.cpp emulator/DiskImage.cpp)
-  target_link_libraries(DiskImageTests PRIVATE DiskImageData)
+  ukncbtl_test(DiskImageWindowsTests tests/DiskImageWindowsTests.cpp)
+  target_link_libraries(DiskImageWindowsTests PRIVATE DiskImageFile)
   ukncbtl_test(SoundOutputTests tests/SoundOutputTests.cpp emulator/SoundGen.cpp)
   target_link_libraries(SoundOutputTests PRIVATE winmm EmulatorProfiling)
   ukncbtl_test(CoreSmokeTests tests/CoreSmokeTests.cpp)

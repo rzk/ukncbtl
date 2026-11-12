@@ -11,7 +11,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 // Dialogs.cpp
 
 #include "stdafx.h"
-#include "DiskImage.h"
+#include "DiskImageFile.h"
 #include <commdlg.h>
 #include <CommCtrl.h>
 #include <shellapi.h>
@@ -312,11 +312,11 @@ void Dialogs_DoCreateDisk(int tracks)
             bufFileName);
     if (! okResult) return;
 
-    const auto result = disk_image::Create(bufFileName, tracks);
+    const auto result = disk_image::CreatePortable(std::filesystem::path(bufFileName), tracks);
     if (result)
         AlertInfo(_T("New disk file created successfully."));
-    else if (result.error().kind == disk_image::ErrorKind::Open)
-        AlertWarningFormat(_T("Failed to create a file for the new disk (0x{:08x})."), result.error().code);
+    else if (result.error() == disk_image::FileError::open_failed)
+        AlertWarning(_T("Failed to create a file for the new disk."));
     else
         AlertWarning(_T("Failed to write the new disk file."));
 }
