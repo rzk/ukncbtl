@@ -71,6 +71,12 @@ target_include_directories(Disassembler PRIVATE "${PROJECT_SOURCE_DIR}/emulator"
 add_library(SoundAY STATIC emulator/emubase/SoundAY.cpp)
 ukncbtl_toolchain(SoundAY)
 
+# The snapshot implementation uses the portable board interface; linking its
+# operations into an executable also requires the emulator core.
+add_library(EmulatorSnapshot STATIC emulator/Snapshot.cpp)
+ukncbtl_toolchain(EmulatorSnapshot)
+target_include_directories(EmulatorSnapshot PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+
 if(BUILD_TESTING)
   include(GoogleTest)
   function(ukncbtl_portable_test target)
@@ -113,10 +119,6 @@ target_link_libraries(EmulatorCore PUBLIC CpuOverflow SoundAY)
 
 target_link_libraries(EmulatorCore PUBLIC EmulatorProfiling)
 
-add_library(EmulatorSnapshot STATIC emulator/Snapshot.cpp)
-ukncbtl_target(EmulatorSnapshot)
-target_link_libraries(EmulatorSnapshot PUBLIC EmulatorCore)
-
 add_executable(UKNCBTL WIN32
   emulator/Common.cpp emulator/util/CommonText.cpp emulator/ConsoleView.cpp emulator/DebugView.cpp
   emulator/Dialogs.cpp emulator/DiskImage.cpp emulator/DisasmView.cpp emulator/InstrHistoryView.cpp
@@ -149,7 +151,7 @@ if(BUILD_TESTING)
   endfunction()
 
   ukncbtl_test(SnapshotTests tests/SnapshotTests.cpp)
-  target_link_libraries(SnapshotTests PRIVATE EmulatorSnapshot)
+  target_link_libraries(SnapshotTests PRIVATE EmulatorSnapshot EmulatorCore)
   ukncbtl_test(VideoDecoderTests tests/VideoDecoderTests.cpp)
   target_link_libraries(VideoDecoderTests PRIVATE VideoDecoder EmulatorCore)
   ukncbtl_test(CommandTests tests/CommandTests.cpp)
