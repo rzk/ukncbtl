@@ -10,6 +10,11 @@ if(BUILD_TESTING)
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG 52eb8108c5bdec04579160ae17225d66034bd723) # v1.17.0
   FetchContent_MakeAvailable(googletest)
+  # Newer Clang versions diagnose a conversion in the pinned GoogleTest
+  # release. Keep the dependency's warnings from becoming build errors.
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(gtest PRIVATE -Wno-error=character-conversion)
+  endif()
 endif()
 
 if(UKNCBTL_BUILD_BENCHMARKS)

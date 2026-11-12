@@ -33,7 +33,7 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF
       - name: Configure Windows
         if: runner.os == 'Windows'
-        run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF
+        run: cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF
       - name: Build
         run: cmake --build build
       - name: Test

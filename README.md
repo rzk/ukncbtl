@@ -18,18 +18,27 @@ cmake --build build/portable
 ctest --test-dir build/portable --output-on-failure
 ```
 
-On Windows use `clang-cl` as `CMAKE_CXX_COMPILER` from an environment that
-provides the SDK, standard library and linker. GoogleTest is fetched at its
+On Windows set both `CMAKE_C_COMPILER` and `CMAKE_CXX_COMPILER` to `clang-cl`
+from an environment that provides the SDK, standard library and linker. Clang's
+`clang` driver must also be on `PATH` to assemble the CPU overflow routines;
+alternatively set `UKNCBTL_CLANG_ASSEMBLER` to its full path. GoogleTest is fetched at its
 pinned commit; offline builds can use `FETCHCONTENT_SOURCE_DIR_GOOGLETEST` as
 described in [testing and performance](docs/performance.md). The portable
 build defaults to enabled tests; `BUILD_TESTING=OFF` configures without test
 targets. Benchmarks, Tracy and ASan remain legacy-only for now. The migration
 checklist is in [docs/sdl-migration-baseline.md](docs/sdl-migration-baseline.md).
 
+The overflow assembly has x86-64 and ARM64 implementations for Windows, Linux
+and macOS. CMake selects a single target architecture; macOS universal builds
+must currently be made as separate architecture builds. Windows x86-64 has
+been executed locally; the other combinations still require native CI or hardware
+verification even though their objects have been cross-assembled.
+
 ### Building on Windows
 
 Install Visual Studio 2026 with the Desktop development with C++ workload and a
-Windows SDK. Use its bundled CMake (4.1 or newer for the Visual Studio 2026
+Windows SDK, and install LLVM/Clang with `clang` on `PATH` for the CPU assembly.
+Use its bundled CMake (4.1 or newer for the Visual Studio 2026
 generator), for example from a Visual Studio Developer PowerShell:
 
 ```powershell
