@@ -10,11 +10,11 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 /// \file Processor.cpp  KM1801VM2 processor class implementation
 
-#include "stdafx.h"
 #include <algorithm>
+#include <cassert>
+#include <cstddef>
 #include "ImageSerialization.h"
 #include "Processor.h"
-#include "Emubase.h"
 
 
 // Timings ///////////////////////////////////////////////////////////
@@ -132,7 +132,7 @@ std::unique_ptr<CProcessor::ExecuteMethodRef[]> CProcessor::m_pExecuteMethodMap;
 
 void CProcessor::Init()
 {
-    ASSERT(m_pExecuteMethodMap == nullptr);
+    assert(m_pExecuteMethodMap == nullptr);
     m_pExecuteMethodMap = std::make_unique<ExecuteMethodRef[]>(65536);
     const auto RegisterMethodOpc = [](uint16_t opcode, ExecuteMethodRef method)
     {
@@ -140,7 +140,7 @@ void CProcessor::Init()
     };
     const auto RegisterMethodRef = [](uint16_t first, uint16_t last, ExecuteMethodRef method)
     {
-        std::ranges::fill(std::span{m_pExecuteMethodMap.get(), size_t{65536}}.subspan(
+        std::ranges::fill(std::span{m_pExecuteMethodMap.get(), std::size_t{65536}}.subspan(
             first, static_cast<size_t>(last) - first + 1), method);
     };
 
@@ -553,7 +553,7 @@ void CProcessor::FetchInstruction()
 {
     // Read the next instruction
     uint16_t pc = GetPC();
-    ASSERT((pc & 1) == 0); // it have to be word aligned
+    assert((pc & 1) == 0); // it have to be word aligned
 
     m_instruction = GetWordExec(pc);
     SetPC(GetPC() + 2);
