@@ -15,6 +15,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <filesystem>
 #include "Main.h"
 #include "Views.h"
+#include "util/DebugLogFile.h"
 
 //////////////////////////////////////////////////////////////////////
 
@@ -75,47 +76,21 @@ void DebugPrint(LPCTSTR message)
 }
 
 
-const LPCTSTR TRACELOG_FILE_NAME = _T("trace.log");
-
-HANDLE Common_LogFile = nullptr;
-
-void DebugLogCreateFile()
-{
-    if (Common_LogFile == nullptr)
-    {
-        Common_LogFile = ::CreateFile(TRACELOG_FILE_NAME,
-                GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (Common_LogFile == INVALID_HANDLE_VALUE)
-            Common_LogFile = nullptr;
-    }
-}
+static DebugLogFile traceLog{"trace.log"};
 
 void DebugLogCloseFile()
 {
-    if (Common_LogFile == nullptr)
-        return;
-
-    ::CloseHandle(Common_LogFile);
-    Common_LogFile = nullptr;
+    traceLog.Close();
 }
 
 void DebugLogClear()
 {
-    DebugLogCreateFile();
-
-    if (Common_LogFile != nullptr)
-    {
-        // Truncate to zero length
-        ::SetFilePointer(Common_LogFile, 0, 0, 0);
-        ::SetEndOfFile(Common_LogFile);
-    }
+    (void)traceLog.Clear();
 }
 
 void DebugLog(LPCTSTR message)
 {
-    DebugLogCreateFile();
-    if (!Common_LogFile || !message) return;
+    if (!traceLog.Open() || !message) return;
 
     // Size the conversion in characters, including the terminator. Formatting
     // has no fixed buffer limit, so the output sink must not truncate it either.
@@ -124,9 +99,7 @@ void DebugLog(LPCTSTR message)
     std::string text(static_cast<size_t>(length), '\0');
     if (!WideCharToMultiByte(CP_ACP, 0, message, -1, text.data(), length, nullptr, nullptr)) return;
 
-    SetFilePointer(Common_LogFile, 0, nullptr, FILE_END);
-    DWORD written = 0;
-    WriteFile(Common_LogFile, text.data(), static_cast<DWORD>(length - 1), &written, nullptr);
+    (void)traceLog.Append(std::string_view(text.data(), static_cast<size_t>(length - 1)));
 }
 
 
