@@ -31,8 +31,16 @@ replace the file and do not preserve its original filesystem metadata.
 The portable file API can explicitly import Windows-1251 and Windows-1252
 through `IniFile::ImportLegacy`, which creates a new UTF-8 file and refuses to
 replace an existing destination. The destination filesystem must support hard
-links. This import is not yet exposed by the application, and the caller must
-know the source code page; it is never detected automatically.
+links. The `ukncbtl-import-ini` CMake target provides a command-line importer:
+
+```text
+ukncbtl-import-ini windows-1251 old.ini new.ini
+```
+
+Use `windows-1252` for that code page. The source code page must be known; it
+is never detected automatically. On Windows, command-line paths are limited by
+the process's narrow-character encoding; use ASCII paths if necessary. Import
+is not yet exposed in the application UI.
 
 ## Migration checklist
 

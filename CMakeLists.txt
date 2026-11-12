@@ -128,6 +128,11 @@ add_library(SettingsStore STATIC emulator/util/SettingsStore.cpp)
 ukncbtl_toolchain(SettingsStore)
 target_link_libraries(SettingsStore PUBLIC IniFile)
 
+add_executable(ukncbtl-import-ini tools/ImportIni.cpp)
+ukncbtl_toolchain(ukncbtl-import-ini)
+target_include_directories(ukncbtl-import-ini PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+target_link_libraries(ukncbtl-import-ini PRIVATE IniFile)
+
 # The snapshot implementation uses the portable board interface; linking its
 # operations into an executable also requires the emulator core.
 add_library(EmulatorSnapshot STATIC emulator/Snapshot.cpp)
@@ -137,6 +142,10 @@ target_link_libraries(EmulatorSnapshot PUBLIC EmulatorCore)
 
 if(BUILD_TESTING)
   include(GoogleTest)
+  add_test(NAME IniImportCli COMMAND ${CMAKE_COMMAND}
+    "-DIMPORTER=$<TARGET_FILE:ukncbtl-import-ini>"
+    "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/ini-import-cli-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/IniImportCli.cmake")
   function(ukncbtl_portable_test target)
     add_executable(${target} ${ARGN})
     ukncbtl_toolchain(${target})
