@@ -12,10 +12,15 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 /// \brief Hard disk drive emulation.
 /// \details See defines in header file Emubase.h
 
-#include "stdafx.h"
 #include <algorithm>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <string_view>
-#include <sys/stat.h>
+#include <utility>
 #include "Emubase.h"
 #include "util/LittleEndian.h"
 
@@ -101,36 +106,42 @@ void CHardDrive::Reset()
     m_timeoutevent = TimeoutEvent::reset_done;
 }
 
-bool CHardDrive::AttachImage(LPCTSTR sFileName)
+bool CHardDrive::AttachImage(const wchar_t* sFileName)
 {
-    ASSERT(sFileName != nullptr);
-    if (sFileName == nullptr || m_fpFile != nullptr)
+    return sFileName && AttachImage(std::filesystem::path(sFileName));
+}
+
+bool CHardDrive::AttachImage(const std::filesystem::path& path)
+{
+    if (path.empty() || m_fpFile != nullptr)
         return false;
 
     // Open file
     m_okReadOnly = false;
-    UniqueFile file(::_tfopen(sFileName, _T("r+b")));
-    if (!file)
+    auto file = std::make_unique<std::fstream>(path, std::ios::binary | std::ios::in | std::ios::out);
+    if (!*file)
     {
         m_okReadOnly = true;
-        file.reset(::_tfopen(sFileName, _T("rb")));
+        file = std::make_unique<std::fstream>(path, std::ios::binary | std::ios::in);
     }
-    if (!file)
+    if (!*file)
         return false;
 
     // Check file size
-    if (::fseek(file.get(), 0, SEEK_END) != 0)
+    file->seekg(0, std::ios::end);
+    if (!*file)
         return false;
-    const long fileSize = ::ftell(file.get());
-    if (fileSize < 0 || ::fseek(file.get(), 0, SEEK_SET) != 0)
+    const auto fileSize = file->tellg();
+    if (fileSize < 0 || fileSize > (std::numeric_limits<int32_t>::max)())
         return false;
+    file->seekg(0, std::ios::beg);
+    if (!*file) return false;
     uint32_t dwFileSize = static_cast<uint32_t>(fileSize);
     if (dwFileSize % 512 != 0)
         return false;
 
     // Read first sector
-    size_t dwBytesRead = ::fread(m_buffer.data(), 1, 512, file.get());
-    if (dwBytesRead != 512)
+    if (!file->read(reinterpret_cast<char*>(m_buffer.data()), IDE_DISK_SECTOR_SIZE))
         return false;
 
     // Detect hard disk type
@@ -199,7 +210,7 @@ void CHardDrive::DetachImage()
 
 uint16_t CHardDrive::ReadPort(uint16_t port)
 {
-    ASSERT(port >= 0x1F0 && port <= 0x1F7);
+    assert(port >= 0x1F0 && port <= 0x1F7);
 
     uint16_t data = 0;
     switch (port)
@@ -253,7 +264,7 @@ uint16_t CHardDrive::ReadPort(uint16_t port)
 
 void CHardDrive::WritePort(uint16_t port, uint16_t data)
 {
-    ASSERT(port >= 0x1F0 && port <= 0x1F7);
+    assert(port >= 0x1F0 && port <= 0x1F7);
 
 //    DebugPrintFormat(_T("HDD Write {:x} <-- 0x{:04x}\r\n"), port, data);
 
@@ -321,6 +332,8 @@ void CHardDrive::Periodic()
             const auto evt = std::exchange(m_timeoutevent, TimeoutEvent::none);
             switch (evt)
             {
+            case TimeoutEvent::none:
+                break;
             case TimeoutEvent::reset_done:
                 m_status &= ~IDE_STATUS_BUSY;
                 m_status |= IDE_STATUS_DRIVE_READY | IDE_STATUS_SEEK_COMPLETE;
@@ -443,7 +456,7 @@ std::expected<long, CHardDrive::AddressError> CHardDrive::CalculateOffset() cons
     const uint64_t sector = (static_cast<uint64_t>(m_curcylinder) * m_numheads + m_curhead) *
         m_numsectors + (m_cursector - 1);
     const uint64_t byteOffset = sector * IDE_DISK_SECTOR_SIZE;
-    if (byteOffset > LONG_MAX)
+    if (byteOffset > static_cast<uint64_t>((std::numeric_limits<int32_t>::max)()))
         return std::unexpected(AddressError::offset_overflow);
     return static_cast<long>(byteOffset);
 }
@@ -465,15 +478,19 @@ void CHardDrive::ReadSectorDone()
 
     // Read sector from HDD image to the buffer
     const auto fileOffset = CalculateOffset();
-    if (!m_fpFile || !fileOffset || ::fseek(m_fpFile.get(), *fileOffset, SEEK_SET) != 0)
+    if (m_fpFile && fileOffset)
+    {
+        m_fpFile->clear();
+        m_fpFile->seekg(*fileOffset, std::ios::beg);
+    }
+    if (!m_fpFile || !fileOffset || !*m_fpFile)
     {
         m_status &= ~IDE_STATUS_BUFFER_READY;
         m_status |= IDE_STATUS_ERROR;
         m_error = IDE_ERROR_BAD_SECTOR;
         return;
     }
-    size_t dwBytesRead = ::fread(m_buffer.data(), 1, IDE_DISK_SECTOR_SIZE, m_fpFile.get());
-    if (dwBytesRead != IDE_DISK_SECTOR_SIZE)
+    if (!m_fpFile->read(reinterpret_cast<char*>(m_buffer.data()), IDE_DISK_SECTOR_SIZE))
     {
         m_status &= ~IDE_STATUS_BUFFER_READY;
         m_status |= IDE_STATUS_ERROR;
@@ -505,7 +522,12 @@ void CHardDrive::WriteSectorDone()
 
     //if (fileOffset) DebugLogFormat(_T("WriteSector {:x}\r\n"), *fileOffset);
 
-    if (!m_fpFile || m_okReadOnly || !fileOffset || ::fseek(m_fpFile.get(), *fileOffset, SEEK_SET) != 0)
+    if (m_fpFile && !m_okReadOnly && fileOffset)
+    {
+        m_fpFile->clear();
+        m_fpFile->seekp(*fileOffset, std::ios::beg);
+    }
+    if (!m_fpFile || m_okReadOnly || !fileOffset || !*m_fpFile)
     {
         m_status &= ~IDE_STATUS_BUFFER_READY;
         m_status |= IDE_STATUS_ERROR;
@@ -513,8 +535,9 @@ void CHardDrive::WriteSectorDone()
         return;
     }
 
-    size_t dwBytesWritten = ::fwrite(m_buffer.data(), 1, IDE_DISK_SECTOR_SIZE, m_fpFile.get());
-    if (dwBytesWritten != IDE_DISK_SECTOR_SIZE || ::fflush(m_fpFile.get()) != 0)
+    m_fpFile->write(reinterpret_cast<const char*>(m_buffer.data()), IDE_DISK_SECTOR_SIZE);
+    m_fpFile->flush();
+    if (!*m_fpFile)
     {
         m_status &= ~IDE_STATUS_BUFFER_READY;
         m_status |= IDE_STATUS_ERROR;

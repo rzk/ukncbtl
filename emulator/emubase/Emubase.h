@@ -22,6 +22,8 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "Memory.h"
 #include <optional>
 #include <expected>
+#include <filesystem>
+#include <fstream>
 #include <span>
 #include <string>
 
@@ -138,7 +140,7 @@ inline constexpr auto IDE_DISK_SECTOR_SIZE = 512;
 class CHardDrive
 {
 protected:
-    UniqueFile m_fpFile;           ///< File pointer for the attached HDD image
+    std::unique_ptr<std::fstream> m_fpFile; ///< Stream for the attached HDD image
     bool    m_okReadOnly;       ///< Flag indicating that the HDD image file is read-only
     bool    m_okInverted;       ///< Flag indicating that the HDD image has inverted bits
     uint8_t m_status;           ///< IDE status register, see IDE_STATUS_XXX constants
@@ -165,6 +167,7 @@ public:
     void Reset();
     /// \brief Attach HDD image file to the device
     bool AttachImage(const wchar_t* sFileName);
+    bool AttachImage(const std::filesystem::path& path);
     /// \brief Detach HDD image file from the device
     void DetachImage();
     /// \brief Check if the attached hard drive image is read-only
