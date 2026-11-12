@@ -12,6 +12,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 #include "stdafx.h"
 #include "RamChanges.h"
+#include "FrameControl.h"
 #include "util/Profiler.h"
 #include <cstdio>
 #include <algorithm>
@@ -242,18 +243,13 @@ void Emulator_Start()
     m_dwTickCount = GetTickCount();
 
     // For proper breakpoint processing
-    if (!cpuBreakpoints.Addresses().empty() || !ppuBreakpoints.Addresses().empty())
-    {
-        g_pBoard->GetCPU()->ClearInternalTick();
-        g_pBoard->GetPPU()->ClearInternalTick();
-    }
+    frame_control::PrepareRun(*g_pBoard, cpuBreakpoints, ppuBreakpoints);
 }
 void Emulator_Stop()
 {
     g_okEmulatorRunning = false;
 
-    Emulator_SetTempCPUBreakpoint(0177777);
-    Emulator_SetTempPPUBreakpoint(0177777);
+    frame_control::CancelTemporaryBreakpoints(cpuBreakpoints, ppuBreakpoints);
 
     if (m_parallelOutput)
         std::fflush(m_parallelOutput.get());
@@ -675,15 +671,8 @@ bool Emulator_SystemFrame()
     if (Settings_GetMouse())
         ScreenView_UpdateMouse();
 
-    g_pBoard->SetCPUBreakpoints(cpuBreakpoints.Addresses());
-    g_pBoard->SetPPUBreakpoints(ppuBreakpoints.Addresses());
-
-    if (!g_pBoard->SystemFrame())  // Breakpoint hit
-    {
-        Emulator_SetTempCPUBreakpoint(0177777);
-        Emulator_SetTempPPUBreakpoint(0177777);
+    if (!frame_control::RunFrame(*g_pBoard, cpuBreakpoints, ppuBreakpoints))
         return false;
-    }
 
     // Calculate frames per second
     m_nFrameCount++;

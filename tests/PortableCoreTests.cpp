@@ -1,5 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "emubase/Emubase.h"
+#include "BreakpointSet.h"
+#include "FrameControl.h"
 #include "InstructionHistory.h"
 #include "Snapshot.h"
 #include "VideoDecoder.h"
@@ -81,5 +83,47 @@ TEST_F(PortableCore, BoardAttachesImagesUsingFilesystemPaths)
     ASSERT_TRUE(board.AttachFloppyImage(0, file.path));
     EXPECT_TRUE(board.IsFloppyImageAttached(0));
     board.DetachFloppyImage(0);
+}
+
+TEST_F(PortableCore, FrameStopsAtBreakpointAndPreservesPermanentTargets)
+{
+    BreakpointSet cpu, ppu;
+    CMotherboard board;
+    board.Reset();
+    board.GetCPU()->SetDCLOPin(true);
+    board.GetPPU()->SetDCLOPin(true);
+    const auto start = [](CProcessor* processor) {
+        processor->SetACLOPin(true);
+        processor->SetDCLOPin(false);
+        processor->SetACLOPin(false);
+        processor->InterruptProcessing();
+        processor->SetPSW(0200);
+        processor->SetPC(01000);
+        processor->SetSP(0400);
+        processor->ClearInternalTick();
+        processor->GetMemoryController()->SetWord(01000, false, 0005200); // INC R0
+    };
+    start(board.GetCPU());
+    start(board.GetPPU());
+    ASSERT_TRUE(cpu.Add(01002));
+    cpu.SetTemporary(04000);
+    ppu.SetTemporary(05000);
+    frame_control::PrepareRun(board, cpu, ppu);
+
+    EXPECT_FALSE(frame_control::RunFrame(board, cpu, ppu));
+    EXPECT_EQ(board.GetCPU()->GetReg(0), 1);
+    EXPECT_EQ(board.GetPPU()->GetReg(0), 0);
+    EXPECT_TRUE(cpu.Contains(01002));
+    EXPECT_FALSE(cpu.Contains(04000));
+    EXPECT_FALSE(ppu.Contains(05000));
+}
+
+TEST_F(PortableCore, FrameWithoutBreakpointsCompletes)
+{
+    BreakpointSet cpu, ppu;
+    CMotherboard board;
+    board.Reset();
+    frame_control::PrepareRun(board, cpu, ppu);
+    EXPECT_TRUE(frame_control::RunFrame(board, cpu, ppu));
 }
 }
