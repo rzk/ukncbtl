@@ -11,8 +11,6 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 // ConsoleView.cpp
 
 #include "stdafx.h"
-#include <print>
-#include <system_error>
 #include "Main.h"
 #include "Views.h"
 #include "ToolWindow.h"
@@ -23,6 +21,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "ConsoleCommands.h"
 #include "VideoDecoder.h"
 #include "MemoryDump.h"
+#include "DisplayListDump.h"
 
 //////////////////////////////////////////////////////////////////////
 
@@ -365,49 +364,18 @@ BOOL ConsoleView_SaveMemoryDump(CProcessor *pProc, uint16_t addr1, uint16_t addr
     return TRUE;
 }
 
-void ConsoleView_SaveDisplayListDump() try
+void ConsoleView_SaveDisplayListDump()
 {
     LPCTSTR fname = _T("displaylist.txt");
-    UniqueFile fpFile(::_tfopen(fname, _T("wt")));
-    if (fpFile == nullptr)
+    const auto result = display_list_dump::Save(std::filesystem::path(fname), *g_pBoard);
+    if (!result)
     {
-        ConsoleView_Print(_T("  Failed to create display list file.\r\n"));
+        ConsoleView_Print(result.error() == display_list_dump::FileError::open_failed
+            ? _T("  Failed to create display list file.\r\n")
+            : _T("  Failed to write display list file.\r\n"));
         return;
     }
-    std::print(fpFile.get(), "line address  tag 1  tag 2  addr   next   \n");
-
-    video::DisplayListCursor cursor;
-    for (int line = 0; line < video::TotalLines; ++line)
-    {
-        const auto tag = cursor.Next(*g_pBoard);
-        std::print(fpFile.get(), "{:4d}  {:06o}  ", line, tag.address);
-        if (tag.kind != video::TagKind::Short)
-            std::print(fpFile.get(), "{:06o} {:06o} ", tag.tag1, tag.tag2);
-        else
-            std::print(fpFile.get(), "------ ------ ");
-        std::print(fpFile.get(), "{:06o} {:06o}  ", tag.pixels, tag.link);
-        if (tag.kind == video::TagKind::Palette)
-            std::print(fpFile.get(), "palette; ");
-        else if (tag.kind == video::TagKind::Parameters)
-            std::print(fpFile.get(), "scale {}; ", tag.Scale());
-        if (tag.NextKind() != video::TagKind::Short)
-            std::print(fpFile.get(), "next: 4-word at {:06o}", tag.NextAddress());
-        std::print(fpFile.get(), "\n");
-    }
-    const bool writeFailed = std::ferror(fpFile.get()) != 0;
-    const bool closeFailed = std::fclose(fpFile.release()) != 0;
-    if (writeFailed || closeFailed)
-    {
-        ConsoleView_Print(_T("  Failed to write display list file.\r\n"));
-        return;
-    }
-
     ConsoleView_PrintFormat(_T("  Display list saved to {}\r\n"), fname);
-}
-
-catch (const std::system_error&)
-{
-    ConsoleView_Print(_T("  Failed to write display list file.\r\n"));
 }
 
 // Print memory dump
