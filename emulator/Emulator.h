@@ -56,7 +56,6 @@ void Emulator_SetSoundAY(bool soundAYOnOff);
 void Emulator_SetSoundCovox(bool soundCovoxOnOff);
 void Emulator_SetMouse(bool mouseOnOff);
 bool Emulator_SetParallel(bool parallelOnOff);
-bool Emulator_SetNetwork(bool networkOnOff, LPCTSTR networkPort);
 void Emulator_Start();
 void Emulator_Stop();
 void Emulator_Reset();

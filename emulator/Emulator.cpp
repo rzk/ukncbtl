@@ -50,10 +50,6 @@ bool m_okEmulatorSound = false;
 uint16_t m_wEmulatorSoundSpeed = 100;
 int m_nEmulatorSoundChanges = 0;
 
-uint16_t m_Settings_NetStation_Bits = 0;
-bool m_okEmulatorNetwork = false;
-HANDLE m_hEmulatorNetPort = INVALID_HANDLE_VALUE;
-
 bool m_okEmulatorParallel = false;
 static PrinterOutput m_parallelOutput;
 static void Emulator_ReportPrinterFailure();
@@ -193,13 +189,6 @@ void Emulator_Done()
     g_pBoard->SetInterruptCallback(nullptr);
     g_pBoard->SetSoundGenCallback(nullptr);
     SoundGen_Finalize();
-
-    g_pBoard->SetNetworkCallbacks(nullptr, nullptr);
-    if (m_hEmulatorNetPort != INVALID_HANDLE_VALUE)
-    {
-        ::CloseHandle(m_hEmulatorNetPort);
-        m_hEmulatorNetPort = INVALID_HANDLE_VALUE;
-    }
 
     g_pBoard->SetParallelOutCallback(nullptr);
     (void)m_parallelOutput.Close();
@@ -440,102 +429,6 @@ void Emulator_SetTrace(uint32_t dwTrace)
 }
 
 #endif // !PRODUCT
-
-bool CALLBACK Emulator_NetworkIn_Callback(uint8_t* pByte)
-{
-    DWORD dwBytesRead = 0;
-    BOOL result = ::ReadFile(m_hEmulatorNetPort, pByte, 1, &dwBytesRead, nullptr);
-
-    if (result && (dwBytesRead == 1))
-        DebugLogFormat(_T("Net IN {:02x}\r\n"), (int)(*pByte));
-
-    return result && (dwBytesRead == 1);
-}
-
-bool CALLBACK Emulator_NetworkOut_Callback(uint8_t byte)
-{
-    DWORD dwBytesWritten = 0;
-    const BOOL result = ::WriteFile(m_hEmulatorNetPort, &byte, 1, &dwBytesWritten, nullptr);
-
-    DebugLogFormat(_T("Net OUT {:02x}\r\n"), byte);
-
-    return result && dwBytesWritten == 1;
-}
-
-bool Emulator_SetNetwork(bool networkOnOff, LPCTSTR networkPort)
-{
-    if (m_okEmulatorNetwork != networkOnOff)
-    {
-        m_Settings_NetStation_Bits = (uint16_t)Settings_GetNetStation();
-        uint16_t rotateBits = (m_Settings_NetStation_Bits / 16);
-        m_Settings_NetStation_Bits = (256 * (16 * rotateBits + m_Settings_NetStation_Bits));
-        g_pBoard->SetNetStation(m_Settings_NetStation_Bits);
-
-        if (networkOnOff)
-        {
-            // Prepare port name
-            if (networkPort == nullptr) return false;
-            const auto port = std::format(_T("\\\\.\\{}"), networkPort);
-
-            // Open port
-            m_hEmulatorNetPort = ::CreateFile(port.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (m_hEmulatorNetPort == INVALID_HANDLE_VALUE)
-            {
-                DWORD dwError = ::GetLastError();
-                AlertWarningFormat(_T("Failed to open network COM port (0x{:08x})."), dwError);
-                return false;
-            }
-
-            // Set port settings
-            DCB dcb;
-            Settings_GetNetComConfig(&dcb);
-            if (!::SetCommState(m_hEmulatorNetPort, &dcb))
-            {
-                DWORD dwError = ::GetLastError();
-                ::CloseHandle(m_hEmulatorNetPort);
-                m_hEmulatorNetPort = INVALID_HANDLE_VALUE;
-                AlertWarningFormat(_T("Failed to configure the Network COM port (0x{:08x})."), dwError);
-                return false;
-            }
-
-            // Set timeouts: ReadIntervalTimeout value of MAXDWORD, combined with zero values for both the ReadTotalTimeoutConstant
-            // and ReadTotalTimeoutMultiplier members, specifies that the read operation is to return immediately with the bytes
-            // that have already been received, even if no bytes have been received.
-            COMMTIMEOUTS timeouts{};
-            timeouts.ReadIntervalTimeout = MAXDWORD;
-            timeouts.WriteTotalTimeoutConstant = 100;
-            if (!::SetCommTimeouts(m_hEmulatorNetPort, &timeouts))
-            {
-                DWORD dwError = ::GetLastError();
-                ::CloseHandle(m_hEmulatorNetPort);
-                m_hEmulatorNetPort = INVALID_HANDLE_VALUE;
-                AlertWarningFormat(_T("Failed to set the Network COM port timeouts (0x{:08x})."), dwError);
-                return false;
-            }
-
-            // Clear port input buffer
-            ::PurgeComm(m_hEmulatorNetPort, PURGE_RXABORT | PURGE_RXCLEAR);
-
-            // Set callbacks
-            g_pBoard->SetNetworkCallbacks(Emulator_NetworkIn_Callback, Emulator_NetworkOut_Callback);
-        }
-        else
-        {
-            g_pBoard->SetNetworkCallbacks(nullptr, nullptr);  // Reset callbacks
-
-            // Close port
-            if (m_hEmulatorNetPort != INVALID_HANDLE_VALUE)
-            {
-                ::CloseHandle(m_hEmulatorNetPort);
-                m_hEmulatorNetPort = INVALID_HANDLE_VALUE;
-            }
-        }
-    }
-
-    m_okEmulatorNetwork = networkOnOff;
-
-    return true;
-}
 
 bool CALLBACK Emulator_ParallelOut_Callback(BYTE byte)
 {

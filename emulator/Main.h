@@ -96,7 +96,6 @@ enum ToolbarButtonImages
     ToolbarImageStepOver = 16,
     ToolbarImageCpuPpu = 17,
     ToolbarImageParallel = 19,
-    ToolbarImageNetwork = 20,
     ToolbarImageMemoryRom = 21,
     ToolbarImageMemoryCpu = 22,
     ToolbarImageMemoryPpu = 23,
@@ -248,14 +247,8 @@ WORD Settings_GetSpriteMode();
 void Settings_SetSpriteMode(WORD value);
 void Settings_SetParallel(BOOL flag);
 BOOL Settings_GetParallel();
-void Settings_SetNetwork(BOOL flag);
-BOOL Settings_GetNetwork();
 int  Settings_GetNetStation();
 void Settings_SetNetStation(int value);
-void Settings_GetNetComPort(std::span<TCHAR> buffer);
-void Settings_SetNetComPort(LPCTSTR sValue);
-void Settings_GetNetComConfig(DCB * pDcb);
-void Settings_SetNetComConfig(const DCB * pDcb);
 
 LPCTSTR Settings_GetColorFriendlyName(ColorIndices colorIndex);
 COLORREF Settings_GetColor(ColorIndices colorIndex);

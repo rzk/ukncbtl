@@ -190,14 +190,14 @@ TEST_F(SettingsTests, GettersRespectSmallAndEmptyDestinations)
     EXPECT_EQ(guarded[1], _T('\0'));
     EXPECT_EQ(guarded[4], _T('e'));
 
-    Settings_SetNetComPort(_T("COM12"));
-    Settings_GetNetComPort(std::span{guarded}.subspan<1, 3>());
+    Settings_SetFloppyFilePath(0, _T("long.dsk"));
+    Settings_GetFloppyFilePath(0, std::span{guarded}.subspan<1, 3>());
     EXPECT_EQ(guarded[1], _T('\0'));
     EXPECT_EQ(guarded[4], _T('e'));
     Settings_GetDebugFontName(std::span<TCHAR>{});
 }
 
-TEST_F(SettingsTests, DevicePathsAndPortNamesPersistIndependently)
+TEST_F(SettingsTests, DevicePathsPersistIndependently)
 {
     const auto unicode = _T("C:\\images\\\u0423\u041a\u041d\u0426.dsk");
     Settings_SetFloppyFilePath(0, unicode);
@@ -206,7 +206,6 @@ TEST_F(SettingsTests, DevicePathsAndPortNamesPersistIndependently)
     Settings_SetHardFilePath(2, _T("two.hdi"));
     Settings_SetCartridgeFilePath(1, _T("one.rom"));
     Settings_SetCartridgeFilePath(2, _T("two.rom"));
-    Settings_SetNetComPort(_T("COM34"));
     Settings_Init(path.data());
     std::array<TCHAR, MAX_PATH> text{};
     Settings_GetFloppyFilePath(0, text); EXPECT_STREQ(text.data(), unicode);
@@ -216,7 +215,6 @@ TEST_F(SettingsTests, DevicePathsAndPortNamesPersistIndependently)
     Settings_GetHardFilePath(2, text); EXPECT_STREQ(text.data(), _T("two.hdi"));
     Settings_GetCartridgeFilePath(1, text); EXPECT_STREQ(text.data(), _T("one.rom"));
     Settings_GetCartridgeFilePath(2, text); EXPECT_STREQ(text.data(), _T("two.rom"));
-    Settings_GetNetComPort(text); EXPECT_STREQ(text.data(), _T("COM34"));
 }
 
 TEST_F(SettingsTests, BreakpointSlotsAndProcessorsPersistIndependentlyAndDelete)
@@ -271,56 +269,26 @@ TEST_F(SettingsTests, InvalidColorKeepsOutputAndFallsBackToDefault)
     Settings_SetColor(ColorIndicesCount, 0);
 }
 
-TEST_F(SettingsTests, NetworkDefaults)
-{
-    DCB network{};
-    Settings_GetNetComConfig(&network);
-    EXPECT_EQ(network.DCBlength, sizeof(DCB));
-    EXPECT_EQ(network.BaudRate, 57600u);
-    EXPECT_EQ(network.ByteSize, 8);
-    EXPECT_EQ(network.Parity, ODDPARITY);
-    EXPECT_EQ(network.StopBits, TWOSTOPBITS);
-    EXPECT_EQ(static_cast<DWORD>(network.fRtsControl), RTS_CONTROL_DISABLE);
-}
-
-TEST_F(SettingsTests, LegacySerialEntriesArePreservedButUnused)
+TEST_F(SettingsTests, LegacyHostPortEntriesArePreservedButUnused)
 {
     Raw(_T("Serial"), _T("1"));
     Raw(_T("SerialPort"), _T("COM12"));
     Raw(_T("SerialConfig"), _T("legacy"));
+    Raw(_T("Network"), _T("1"));
+    Raw(_T("NetComPort"), _T("COM34"));
+    Raw(_T("NetComConfig"), _T("legacy-network"));
     Settings_SetParallel(TRUE);
     Settings_Init(path.data());
     EXPECT_TRUE(Settings_GetParallel());
     for (const auto& [key, expected] : std::array{
              std::pair{_T("Serial"), _T("1")}, std::pair{_T("SerialPort"), _T("COM12")},
-             std::pair{_T("SerialConfig"), _T("legacy")}})
+             std::pair{_T("SerialConfig"), _T("legacy")}, std::pair{_T("Network"), _T("1")},
+             std::pair{_T("NetComPort"), _T("COM34")}, std::pair{_T("NetComConfig"), _T("legacy-network")}})
     {
         std::array<TCHAR, 64> value{};
         GetPrivateProfileString(_T("UKNCBTL"), key, nullptr, value.data(), static_cast<DWORD>(value.size()), path.data());
         EXPECT_STREQ(value.data(), expected);
     }
-}
-
-TEST_F(SettingsTests, ConfigurationsPersistCacheAndResetAfterFileSwitch)
-{
-    DCB network{};
-    Settings_GetNetComConfig(&network);
-    network.BaudRate = 115200;
-    Settings_SetNetComConfig(&network);
-    Raw(_T("NetComConfig"), _T("invalid"));
-    DCB actual{};
-    Settings_GetNetComConfig(&actual);
-    EXPECT_EQ(actual.BaudRate, 115200u);
-    Settings_Init(path.data());
-    Settings_GetNetComConfig(&actual);
-    EXPECT_EQ(actual.BaudRate, 57600u);
-    Settings_SetNetComConfig(&network);
-    Settings_Init(path.data());
-    Settings_GetNetComConfig(&actual);
-    EXPECT_EQ(std::memcmp(&actual, &network, sizeof(DCB)), 0);
-    Settings_Init(other.data());
-    Settings_GetNetComConfig(&actual);
-    EXPECT_EQ(actual.BaudRate, 57600u);
 }
 
 struct CachedSetting
@@ -387,7 +355,6 @@ INSTANTIATE_TEST_SUITE_P(AllCachedSettings, CachedSettingsTests, testing::Values
     CachedSetting{"Tape", _T("Tape"), FALSE, [] { return static_cast<DWORD>(Settings_GetTape()); }, [](DWORD value) { Settings_SetTape(static_cast<BOOL>(value)); }},
     CachedSetting{"InstrHistory", _T("InstrHistory"), FALSE, [] { return static_cast<DWORD>(Settings_GetInstrHistory()); }, [](DWORD value) { Settings_SetInstrHistory(static_cast<BOOL>(value)); }},
     CachedSetting{"Parallel", _T("Parallel"), FALSE, [] { return static_cast<DWORD>(Settings_GetParallel()); }, [](DWORD value) { Settings_SetParallel(static_cast<BOOL>(value)); }},
-    CachedSetting{"Network", _T("Network"), FALSE, [] { return static_cast<DWORD>(Settings_GetNetwork()); }, [](DWORD value) { Settings_SetNetwork(static_cast<BOOL>(value)); }},
     CachedSetting{"NetStation", _T("NetStation"), 0, [] { return static_cast<DWORD>(Settings_GetNetStation()); }, [](DWORD value) { Settings_SetNetStation(static_cast<int>(value)); }},
     CachedSetting{"SpriteAddress", _T("SpriteAddress"), 0, [] { return static_cast<DWORD>(Settings_GetSpriteAddress()); }, [](DWORD value) { Settings_SetSpriteAddress(static_cast<WORD>(value)); }},
     CachedSetting{"SpriteWidth", _T("SpriteWidth"), 2, [] { return static_cast<DWORD>(Settings_GetSpriteWidth()); }, [](DWORD value) { Settings_SetSpriteWidth(static_cast<WORD>(value)); }},

@@ -103,10 +103,9 @@ permitted; never commit user disk images, ROMs or recordings without checking.
 
 ## Intentional removals
 
-- Host serial-port connections and their settings have been removed. Existing
-  INI entries are left untouched. The serial-backed network connection is still
-  present and remains scheduled for removal. Keep the emulated machine's
-  internal device behavior and tests.
+- Host serial-port and serial-backed network connections and their host
+  settings have been removed. Existing INI entries are left untouched. The
+  emulated network station setting and internal device behavior remain.
 - Renderer plugins and the bundled Windows renderer are removed; retained
   display modes become application-owned functionality.
 - Application-owned WinAPI, MASM, Visual Studio projects and Visual Studio

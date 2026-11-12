@@ -24,7 +24,6 @@
 #define IDD_SETTINGS_COLORS             146
 #define IDD_SETTINGS_OSD                147
 #define IDR_UKNC_ROM                    148
-#define IDD_DCB_EDITOR                  149
 #define IDB_KEYBOARDMASK                150
 #define IDD_CONFIGDLG                   151
 #define IDD_COMMANDLINEHELP             152
@@ -34,16 +33,7 @@
 #define IDC_TRACKS40                    1002
 #define IDC_TRACKS80                    1003
 #define IDC_VOLUME                      1005
-#define IDC_NETWORKPORT                 1006
 #define IDC_NETWORKSTATION              1007
-#define IDC_BAUDRATE                    1008
-#define IDC_PARITY                      1018
-#define IDC_STOPBITS                    1019
-#define IDC_DTRCONTROL                  1020
-#define IDC_RTSCONTROL                  1021
-#define IDC_OUTXCTSFLOW                 1022
-#define IDC_OUTXDSRFLOW                 1023
-#define IDC_DSRSENSITIVITY              1024
 #define IDC_BUTTON1                     1025
 #define IDC_BUTTON2                     1026
 #define IDC_RENDER                      1027
@@ -94,7 +84,6 @@
 #define ID_EMULATOR_CARTRIDGE1          32811
 #define ID_EMULATOR_CARTRIDGE2          32812
 #define ID_EMULATOR_PARALLEL            32827
-#define ID_EMULATOR_NETWORK             32828
 #define ID_EMULATOR_SOUND               32831
 #define ID_EMULATOR_SOUNDAY             32832
 #define ID_EMULATOR_MOUSE               32833

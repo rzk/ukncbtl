@@ -150,6 +150,15 @@ TEST_F(BoardFrames, SerialAndNetworkInputPollAtTheirFrameCadences)
     board->SetSerialCallbacks(nullptr,SerialOut); board->SetNetworkCallbacks(NetworkIn,nullptr);
     ASSERT_TRUE(board->SystemFrame()); EXPECT_EQ(25,data.serialPolls); EXPECT_EQ(157,data.networkPolls);
 }
+
+TEST_F(BoardFrames, NetworkStationRemainsVisibleWithoutHostConnection)
+{
+    board->SetNetworkCallbacks(nullptr, nullptr);
+    board->SetNetStation(01234);
+    EXPECT_EQ(C(0176566), 0360 + 01234);
+    board->SetNetStation(7);
+    EXPECT_EQ(C(0176566), 0360 + 7);
+}
 TEST_F(BoardFrames, InputCallbacksDeliverBytesAndLatchReceiverInterrupts)
 {
     Start(board->GetCPU()); data.input=true;

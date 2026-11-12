@@ -28,7 +28,6 @@ const TCHAR m_Settings_IniAppName[] = _T("UKNCBTL");
 static std::basic_string<TCHAR> m_Settings_IniPath;
 static void Settings_ResetCaches();
 
-DCB  m_Settings_NetComConfig;
 
 //////////////////////////////////////////////////////////////////////
 // Options
@@ -54,24 +53,6 @@ void Settings_Init(LPCTSTR iniPath)
         if (extension != std::basic_string<TCHAR>::npos) m_Settings_IniPath.resize(extension);
         m_Settings_IniPath += _T(".ini");
     }
-    // Set m_Settings_NetComConfig defaults
-    m_Settings_NetComConfig = {};
-    m_Settings_NetComConfig.DCBlength = sizeof(DCB);
-    m_Settings_NetComConfig.BaudRate = 57600;
-    m_Settings_NetComConfig.ByteSize = 8;
-    m_Settings_NetComConfig.fBinary = 1;
-    m_Settings_NetComConfig.fParity = 1;
-    m_Settings_NetComConfig.fOutxCtsFlow = m_Settings_NetComConfig.fOutxDsrFlow = 0;
-    m_Settings_NetComConfig.fDtrControl = DTR_CONTROL_DISABLE;
-    m_Settings_NetComConfig.fDsrSensitivity = 0;
-    m_Settings_NetComConfig.fTXContinueOnXoff = 0;
-    m_Settings_NetComConfig.fOutX = m_Settings_NetComConfig.fInX = 0;
-    m_Settings_NetComConfig.fErrorChar = 0;
-    m_Settings_NetComConfig.fNull = 0;
-    m_Settings_NetComConfig.fRtsControl = RTS_CONTROL_DISABLE;
-    m_Settings_NetComConfig.fAbortOnError = 0;
-    m_Settings_NetComConfig.Parity = ODDPARITY;
-    m_Settings_NetComConfig.StopBits = TWOSTOPBITS;
 }
 void Settings_Done()
 {
@@ -421,46 +402,9 @@ static CachedDwordSetting<BOOL> settingParallel{_T("Parallel"), FALSE};
 void Settings_SetParallel(BOOL value) { settingParallel.Set(value); }
 BOOL Settings_GetParallel() { return settingParallel.Get(); }
 
-static CachedDwordSetting<BOOL> settingNetwork{_T("Network"), FALSE};
-void Settings_SetNetwork(BOOL value) { settingNetwork.Set(value); }
-BOOL Settings_GetNetwork() { return settingNetwork.Get(); }
-
 static CachedDwordSetting<int> settingNetStation{_T("NetStation"), 0};
 void Settings_SetNetStation(int value) { settingNetStation.Set(value); }
 int Settings_GetNetStation() { return settingNetStation.Get(); }
-
-void Settings_GetNetComPort(std::span<TCHAR> buffer)
-{
-    Settings_LoadStringValue(_T("NetComPort"), buffer.data(), static_cast<int>((std::min)(buffer.size(), size_t{10})));
-}
-void Settings_SetNetComPort(LPCTSTR sValue)
-{
-    Settings_SaveStringValue(_T("NetComPort"), sValue);
-}
-
-BOOL m_Settings_NetComConfig_Valid = FALSE;
-void Settings_GetNetComConfig(DCB * pDcb)
-{
-    if (!m_Settings_NetComConfig_Valid)
-    {
-        DCB dcb;
-        if (Settings_LoadBinaryValue(_T("NetComConfig"), &dcb, sizeof(DCB)))
-        {
-            m_Settings_NetComConfig = dcb;
-        }
-        //NOTE: else -- use defaults from m_Settings_NetComConfig
-
-        m_Settings_NetComConfig_Valid = TRUE;
-    }
-
-    *pDcb = m_Settings_NetComConfig;
-}
-void Settings_SetNetComConfig(const DCB * pDcb)
-{
-    m_Settings_NetComConfig = *pDcb;
-    Settings_SaveBinaryValue(_T("NetComConfig"), pDcb, sizeof(DCB));
-    m_Settings_NetComConfig_Valid = TRUE;
-}
 
 static CachedDwordSetting<WORD> settingSpriteAddress{_T("SpriteAddress"), 0};
 void Settings_SetSpriteAddress(WORD value) { settingSpriteAddress.Set(value); }
@@ -587,11 +531,9 @@ static void Settings_ResetCaches()
     settingTape.Reset();
     settingInstrHistory.Reset();
     settingParallel.Reset();
-    settingNetwork.Reset();
     settingNetStation.Reset();
     settingSpriteAddress.Reset();
     settingSpriteWidth.Reset();
     settingSpriteMode.Reset();
-    m_Settings_NetComConfig_Valid = FALSE;
     for (auto& color : ColorDescriptors) color.valid = FALSE;
 }
