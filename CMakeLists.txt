@@ -104,6 +104,9 @@ ukncbtl_toolchain(FrameControl)
 target_include_directories(FrameControl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
 target_link_libraries(FrameControl PUBLIC EmulatorCore)
 
+add_library(FrameTiming STATIC emulator/FrameTiming.cpp)
+ukncbtl_toolchain(FrameTiming)
+
 add_library(HostInput STATIC emulator/Input.cpp)
 ukncbtl_toolchain(HostInput)
 
@@ -132,6 +135,8 @@ if(BUILD_TESTING)
   ukncbtl_portable_test(RamChangeTests tests/RamChangeTests.cpp)
   ukncbtl_portable_test(CoreHeaderTests tests/CoreHeaderTests.cpp)
   ukncbtl_portable_test(TraceTests tests/TraceTests.cpp)
+  ukncbtl_portable_test(FrameTimingTests tests/FrameTimingTests.cpp)
+  target_link_libraries(FrameTimingTests PRIVATE FrameTiming)
   ukncbtl_portable_test(InputTests tests/InputTests.cpp)
   target_link_libraries(InputTests PRIVATE HostInput)
   ukncbtl_portable_test(TapeTests tests/TapeTests.cpp)
@@ -170,7 +175,7 @@ add_executable(UKNCBTL WIN32
   emulator/util/BitmapFile.cpp emulator/res/UKNCBTL.rc)
 ukncbtl_target(UKNCBTL)
 target_include_directories(UKNCBTL PRIVATE emulator/res)
-target_link_libraries(UKNCBTL PRIVATE FrameControl HostInput WavPcmFile EmulatorCore EmulatorSnapshot VideoDecoder ScreenScale vfw32 comctl32 winmm advapi32 shell32 windowscodecs)
+target_link_libraries(UKNCBTL PRIVATE FrameControl FrameTiming HostInput WavPcmFile EmulatorCore EmulatorSnapshot VideoDecoder ScreenScale vfw32 comctl32 winmm advapi32 shell32 windowscodecs)
 target_link_options(UKNCBTL PRIVATE "LINKER:/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='amd64' publicKeyToken='6595b64144ccf1df' language='*'")
 
 # The default renderer is loaded dynamically, so it must be built alongside the
