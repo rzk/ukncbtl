@@ -14,6 +14,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "RamChanges.h"
 #include "FrameControl.h"
 #include "FrameTiming.h"
+#include "PrinterOutput.h"
 #include "util/Profiler.h"
 #include <cstdio>
 #include <algorithm>
@@ -57,7 +58,7 @@ bool m_okEmulatorSerial = false;
 HANDLE m_hEmulatorComPort = INVALID_HANDLE_VALUE;
 
 bool m_okEmulatorParallel = false;
-UniqueFile m_parallelOutput;
+static PrinterOutput m_parallelOutput;
 
 static frame_timing::Tracker frameTiming(FRAMERATE);
 
@@ -210,7 +211,7 @@ void Emulator_Done()
     }
 
     g_pBoard->SetParallelOutCallback(nullptr);
-    m_parallelOutput.reset();
+    (void)m_parallelOutput.Close();
     m_okEmulatorParallel = false;
 
     g_boardOwner.reset();
@@ -247,8 +248,8 @@ void Emulator_Stop()
 
     frame_control::CancelTemporaryBreakpoints(cpuBreakpoints, ppuBreakpoints);
 
-    if (m_parallelOutput)
-        std::fflush(m_parallelOutput.get());
+    if (m_parallelOutput.IsOpen())
+        (void)m_parallelOutput.Flush();
 
     // Reset title bar message
     MainWindow_UpdateWindowTitle();
@@ -630,7 +631,7 @@ bool Emulator_SetSerial(bool serialOnOff, LPCTSTR serialPort)
 
 bool CALLBACK Emulator_ParallelOut_Callback(BYTE byte)
 {
-    return m_parallelOutput && std::fwrite(&byte, 1, 1, m_parallelOutput.get()) == 1;
+    return m_parallelOutput.Write(byte);
 }
 
 void Emulator_SetParallel(bool parallelOnOff)
@@ -641,12 +642,11 @@ void Emulator_SetParallel(bool parallelOnOff)
     if (!parallelOnOff)
     {
         g_pBoard->SetParallelOutCallback(nullptr);
-        m_parallelOutput.reset();
+        (void)m_parallelOutput.Close();
     }
     else
     {
-        m_parallelOutput.reset(::_tfopen(_T("printer.log"), _T("wb")));
-        if (!m_parallelOutput)
+        if (!m_parallelOutput.Open("printer.log"))
         {
             AlertWarning(_T("Failed to open the printer output file."));
             return;
