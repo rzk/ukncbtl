@@ -190,8 +190,8 @@ TEST_F(SettingsTests, GettersRespectSmallAndEmptyDestinations)
     EXPECT_EQ(guarded[1], _T('\0'));
     EXPECT_EQ(guarded[4], _T('e'));
 
-    Settings_SetSerialPort(_T("COM12"));
-    Settings_GetSerialPort(std::span{guarded}.subspan<1, 3>());
+    Settings_SetNetComPort(_T("COM12"));
+    Settings_GetNetComPort(std::span{guarded}.subspan<1, 3>());
     EXPECT_EQ(guarded[1], _T('\0'));
     EXPECT_EQ(guarded[4], _T('e'));
     Settings_GetDebugFontName(std::span<TCHAR>{});
@@ -206,7 +206,6 @@ TEST_F(SettingsTests, DevicePathsAndPortNamesPersistIndependently)
     Settings_SetHardFilePath(2, _T("two.hdi"));
     Settings_SetCartridgeFilePath(1, _T("one.rom"));
     Settings_SetCartridgeFilePath(2, _T("two.rom"));
-    Settings_SetSerialPort(_T("COM12"));
     Settings_SetNetComPort(_T("COM34"));
     Settings_Init(path.data());
     std::array<TCHAR, MAX_PATH> text{};
@@ -217,7 +216,6 @@ TEST_F(SettingsTests, DevicePathsAndPortNamesPersistIndependently)
     Settings_GetHardFilePath(2, text); EXPECT_STREQ(text.data(), _T("two.hdi"));
     Settings_GetCartridgeFilePath(1, text); EXPECT_STREQ(text.data(), _T("one.rom"));
     Settings_GetCartridgeFilePath(2, text); EXPECT_STREQ(text.data(), _T("two.rom"));
-    Settings_GetSerialPort(text); EXPECT_STREQ(text.data(), _T("COM12"));
     Settings_GetNetComPort(text); EXPECT_STREQ(text.data(), _T("COM34"));
 }
 
@@ -273,41 +271,51 @@ TEST_F(SettingsTests, InvalidColorKeepsOutputAndFallsBackToDefault)
     Settings_SetColor(ColorIndicesCount, 0);
 }
 
-TEST_F(SettingsTests, SerialAndNetworkDefaultsAreDistinct)
+TEST_F(SettingsTests, NetworkDefaults)
 {
-    DCB serial{}, network{};
-    Settings_GetSerialConfig(&serial);
+    DCB network{};
     Settings_GetNetComConfig(&network);
-    EXPECT_EQ(serial.DCBlength, sizeof(DCB));
     EXPECT_EQ(network.DCBlength, sizeof(DCB));
-    EXPECT_EQ(serial.BaudRate, 9600u);
     EXPECT_EQ(network.BaudRate, 57600u);
-    EXPECT_EQ(serial.ByteSize, 8);
     EXPECT_EQ(network.ByteSize, 8);
-    EXPECT_EQ(serial.Parity, NOPARITY);
     EXPECT_EQ(network.Parity, ODDPARITY);
-    EXPECT_EQ(serial.StopBits, TWOSTOPBITS);
     EXPECT_EQ(network.StopBits, TWOSTOPBITS);
-    EXPECT_EQ(static_cast<DWORD>(serial.fRtsControl), RTS_CONTROL_HANDSHAKE);
     EXPECT_EQ(static_cast<DWORD>(network.fRtsControl), RTS_CONTROL_DISABLE);
+}
+
+TEST_F(SettingsTests, LegacySerialEntriesArePreservedButUnused)
+{
+    Raw(_T("Serial"), _T("1"));
+    Raw(_T("SerialPort"), _T("COM12"));
+    Raw(_T("SerialConfig"), _T("legacy"));
+    Settings_SetParallel(TRUE);
+    Settings_Init(path.data());
+    EXPECT_TRUE(Settings_GetParallel());
+    for (const auto& [key, expected] : std::array{
+             std::pair{_T("Serial"), _T("1")}, std::pair{_T("SerialPort"), _T("COM12")},
+             std::pair{_T("SerialConfig"), _T("legacy")}})
+    {
+        std::array<TCHAR, 64> value{};
+        GetPrivateProfileString(_T("UKNCBTL"), key, nullptr, value.data(), static_cast<DWORD>(value.size()), path.data());
+        EXPECT_STREQ(value.data(), expected);
+    }
 }
 
 TEST_F(SettingsTests, ConfigurationsPersistCacheAndResetAfterFileSwitch)
 {
-    DCB serial{}, network{};
-    Settings_GetSerialConfig(&serial);
+    DCB network{};
     Settings_GetNetComConfig(&network);
-    serial.BaudRate = 19200;
     network.BaudRate = 115200;
-    Settings_SetSerialConfig(&serial);
     Settings_SetNetComConfig(&network);
-    Raw(_T("SerialConfig"), _T("invalid"));
+    Raw(_T("NetComConfig"), _T("invalid"));
     DCB actual{};
-    Settings_GetSerialConfig(&actual);
-    EXPECT_EQ(actual.BaudRate, 19200u);
+    Settings_GetNetComConfig(&actual);
+    EXPECT_EQ(actual.BaudRate, 115200u);
     Settings_Init(path.data());
-    Settings_GetSerialConfig(&actual);
-    EXPECT_EQ(actual.BaudRate, 9600u);
+    Settings_GetNetComConfig(&actual);
+    EXPECT_EQ(actual.BaudRate, 57600u);
+    Settings_SetNetComConfig(&network);
+    Settings_Init(path.data());
     Settings_GetNetComConfig(&actual);
     EXPECT_EQ(std::memcmp(&actual, &network, sizeof(DCB)), 0);
     Settings_Init(other.data());
@@ -378,7 +386,6 @@ INSTANTIATE_TEST_SUITE_P(AllCachedSettings, CachedSettingsTests, testing::Values
     CachedSetting{"Keyboard", _T("Keyboard"), TRUE, [] { return static_cast<DWORD>(Settings_GetKeyboard()); }, [](DWORD value) { Settings_SetKeyboard(static_cast<BOOL>(value)); }},
     CachedSetting{"Tape", _T("Tape"), FALSE, [] { return static_cast<DWORD>(Settings_GetTape()); }, [](DWORD value) { Settings_SetTape(static_cast<BOOL>(value)); }},
     CachedSetting{"InstrHistory", _T("InstrHistory"), FALSE, [] { return static_cast<DWORD>(Settings_GetInstrHistory()); }, [](DWORD value) { Settings_SetInstrHistory(static_cast<BOOL>(value)); }},
-    CachedSetting{"Serial", _T("Serial"), FALSE, [] { return static_cast<DWORD>(Settings_GetSerial()); }, [](DWORD value) { Settings_SetSerial(static_cast<BOOL>(value)); }},
     CachedSetting{"Parallel", _T("Parallel"), FALSE, [] { return static_cast<DWORD>(Settings_GetParallel()); }, [](DWORD value) { Settings_SetParallel(static_cast<BOOL>(value)); }},
     CachedSetting{"Network", _T("Network"), FALSE, [] { return static_cast<DWORD>(Settings_GetNetwork()); }, [](DWORD value) { Settings_SetNetwork(static_cast<BOOL>(value)); }},
     CachedSetting{"NetStation", _T("NetStation"), 0, [] { return static_cast<DWORD>(Settings_GetNetStation()); }, [](DWORD value) { Settings_SetNetStation(static_cast<int>(value)); }},

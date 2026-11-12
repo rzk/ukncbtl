@@ -33,7 +33,6 @@
 #define IDC_EDIT2                       1002
 #define IDC_TRACKS40                    1002
 #define IDC_TRACKS80                    1003
-#define IDC_SERIALPORT                  1004
 #define IDC_VOLUME                      1005
 #define IDC_NETWORKPORT                 1006
 #define IDC_NETWORKSTATION              1007
@@ -94,7 +93,6 @@
 #define ID_EMULATOR_HARDDRIVE2          32810
 #define ID_EMULATOR_CARTRIDGE1          32811
 #define ID_EMULATOR_CARTRIDGE2          32812
-#define ID_EMULATOR_SERIAL              32826
 #define ID_EMULATOR_PARALLEL            32827
 #define ID_EMULATOR_NETWORK             32828
 #define ID_EMULATOR_SOUND               32831

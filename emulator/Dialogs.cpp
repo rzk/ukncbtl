@@ -41,7 +41,6 @@ BOOL ShowColorDialog(COLORREF& color);
 
 COLORREF m_DialogSettings_acrCustClr[16];  // array of custom colors to use in ChooseColor()
 
-DCB m_DialogSettings_SerialConfig;
 DCB m_DialogSettings_NetComConfig;
 DCB* m_pDcbEditorData = nullptr;
 
@@ -414,15 +413,11 @@ void SettingsDialog_InitGeneralDialog(HWND hDlg)
 
     TCHAR buffer[10];
 
-    Settings_GetSerialPort(buffer);
-    SetDlgItemText(hDlg, IDC_SERIALPORT, buffer);
-
     SetDlgItemInt(hDlg, IDC_NETWORKSTATION, Settings_GetNetStation(), FALSE);
 
     Settings_GetNetComPort(buffer);
     SetDlgItemText(hDlg, IDC_NETWORKPORT, buffer);
 
-    Settings_GetSerialConfig(&m_DialogSettings_SerialConfig);
     Settings_GetNetComConfig(&m_DialogSettings_NetComConfig);
 }
 
@@ -440,16 +435,12 @@ void SettingsDialog_SaveGeneralSettings(HWND hDlg)
     int screenshotMode = ::SendMessage(GetDlgItem(hDlg, IDC_SCREENSHOTMODE), CB_GETCURSEL, 0, 0);
     Settings_SetScreenshotMode(screenshotMode);
 
-    GetDlgItemText(hDlg, IDC_SERIALPORT, buffer, 10);
-    Settings_SetSerialPort(buffer);
-
     int netStation = GetDlgItemInt(hDlg, IDC_NETWORKSTATION, 0, FALSE);
     Settings_SetNetStation(netStation);
 
     GetDlgItemText(hDlg, IDC_NETWORKPORT, buffer, 10);
     Settings_SetNetComPort(buffer);
 
-    Settings_SetSerialConfig(&m_DialogSettings_SerialConfig);
     Settings_SetNetComConfig(&m_DialogSettings_NetComConfig);
 }
 
@@ -470,10 +461,6 @@ INT_PTR CALLBACK SettingsProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM /*l
         case IDCANCEL:
             EndDialog(hDlg, LOWORD(wParam));
             return (INT_PTR)TRUE;
-        case IDC_BUTTON1:
-            ShowSerialPortSettings(&m_DialogSettings_SerialConfig);
-            SetFocus(GetDlgItem(hDlg, IDC_BUTTON1));
-            break;
         case IDC_BUTTON2:
             ShowSerialPortSettings(&m_DialogSettings_NetComConfig);
             SetFocus(GetDlgItem(hDlg, IDC_BUTTON2));

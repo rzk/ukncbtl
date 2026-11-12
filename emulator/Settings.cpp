@@ -1,4 +1,4 @@
-﻿/*  This file is part of UKNCBTL.
+/*  This file is part of UKNCBTL.
     UKNCBTL is free software: you can redistribute it and/or modify it under the terms
 of the GNU Lesser General Public License as published by the Free Software Foundation,
 either version 3 of the License, or (at your option) any later version.
@@ -28,7 +28,6 @@ const TCHAR m_Settings_IniAppName[] = _T("UKNCBTL");
 static std::basic_string<TCHAR> m_Settings_IniPath;
 static void Settings_ResetCaches();
 
-DCB  m_Settings_SerialConfig;
 DCB  m_Settings_NetComConfig;
 
 //////////////////////////////////////////////////////////////////////
@@ -55,25 +54,6 @@ void Settings_Init(LPCTSTR iniPath)
         if (extension != std::basic_string<TCHAR>::npos) m_Settings_IniPath.resize(extension);
         m_Settings_IniPath += _T(".ini");
     }
-    // Set m_Settings_SerialConfig defaults
-    m_Settings_SerialConfig = {};
-    m_Settings_SerialConfig.DCBlength = sizeof(DCB);
-    m_Settings_SerialConfig.BaudRate = 9600;
-    m_Settings_SerialConfig.ByteSize = 8;
-    m_Settings_SerialConfig.fBinary = 1;
-    m_Settings_SerialConfig.fParity = 0;
-    m_Settings_SerialConfig.fOutxCtsFlow = m_Settings_SerialConfig.fOutxDsrFlow = 0;
-    m_Settings_SerialConfig.fDtrControl = DTR_CONTROL_ENABLE;
-    m_Settings_SerialConfig.fDsrSensitivity = 0;
-    m_Settings_SerialConfig.fTXContinueOnXoff = 0;
-    m_Settings_SerialConfig.fOutX = m_Settings_SerialConfig.fInX = 0;
-    m_Settings_SerialConfig.fErrorChar = 0;
-    m_Settings_SerialConfig.fNull = 0;
-    m_Settings_SerialConfig.fRtsControl = RTS_CONTROL_HANDSHAKE;
-    m_Settings_SerialConfig.fAbortOnError = 0;
-    m_Settings_SerialConfig.Parity = NOPARITY;
-    m_Settings_SerialConfig.StopBits = TWOSTOPBITS;
-
     // Set m_Settings_NetComConfig defaults
     m_Settings_NetComConfig = {};
     m_Settings_NetComConfig.DCBlength = sizeof(DCB);
@@ -437,46 +417,9 @@ static CachedDwordSetting<BOOL> settingInstrHistory{_T("InstrHistory"), FALSE};
 void Settings_SetInstrHistory(BOOL value) { settingInstrHistory.Set(value); }
 BOOL Settings_GetInstrHistory() { return settingInstrHistory.Get(); }
 
-static CachedDwordSetting<BOOL> settingSerial{_T("Serial"), FALSE};
-void Settings_SetSerial(BOOL value) { settingSerial.Set(value); }
-BOOL Settings_GetSerial() { return settingSerial.Get(); }
-
 static CachedDwordSetting<BOOL> settingParallel{_T("Parallel"), FALSE};
 void Settings_SetParallel(BOOL value) { settingParallel.Set(value); }
 BOOL Settings_GetParallel() { return settingParallel.Get(); }
-
-void Settings_GetSerialPort(std::span<TCHAR> buffer)
-{
-    Settings_LoadStringValue(_T("SerialPort"), buffer.data(), static_cast<int>((std::min)(buffer.size(), size_t{10})));
-}
-void Settings_SetSerialPort(LPCTSTR sValue)
-{
-    Settings_SaveStringValue(_T("SerialPort"), sValue);
-}
-
-BOOL m_Settings_SerialConfig_Valid = FALSE;
-void Settings_GetSerialConfig(DCB * pDcb)
-{
-    if (!m_Settings_SerialConfig_Valid)
-    {
-        DCB dcb;
-        if (Settings_LoadBinaryValue(_T("SerialConfig"), &dcb, sizeof(DCB)))
-        {
-            m_Settings_SerialConfig = dcb;
-        }
-        //NOTE: else -- use defaults from m_Settings_SerialConfig
-
-        m_Settings_SerialConfig_Valid = TRUE;
-    }
-
-    *pDcb = m_Settings_SerialConfig;
-}
-void Settings_SetSerialConfig(const DCB * pDcb)
-{
-    m_Settings_SerialConfig = *pDcb;
-    Settings_SaveBinaryValue(_T("SerialConfig"), pDcb, sizeof(DCB));
-    m_Settings_SerialConfig_Valid = TRUE;
-}
 
 static CachedDwordSetting<BOOL> settingNetwork{_T("Network"), FALSE};
 void Settings_SetNetwork(BOOL value) { settingNetwork.Set(value); }
@@ -643,14 +586,12 @@ static void Settings_ResetCaches()
     settingKeyboard.Reset();
     settingTape.Reset();
     settingInstrHistory.Reset();
-    settingSerial.Reset();
     settingParallel.Reset();
     settingNetwork.Reset();
     settingNetStation.Reset();
     settingSpriteAddress.Reset();
     settingSpriteWidth.Reset();
     settingSpriteMode.Reset();
-    m_Settings_SerialConfig_Valid = FALSE;
     m_Settings_NetComConfig_Valid = FALSE;
     for (auto& color : ColorDescriptors) color.valid = FALSE;
 }
