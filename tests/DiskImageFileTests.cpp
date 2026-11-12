@@ -70,4 +70,87 @@ TEST_F(PortableDiskImageFile, InvalidDestinationReportsOpenFailure)
     EXPECT_EQ(result.error(), disk_image::FileError::open_failed);
     EXPECT_FALSE(std::filesystem::exists(path));
 }
+
+class FakeWriter final : public disk_image::FileWriter
+{
+public:
+    bool openSucceeds = true, closeSucceeds = true, shortWrite = false;
+    int opens = 0, writes = 0, closes = 0;
+    std::filesystem::path openedPath;
+    std::vector<std::uint8_t> bytes;
+
+    bool Open(const std::filesystem::path& path) override
+    {
+        ++opens;
+        openedPath = path;
+        return openSucceeds;
+    }
+    std::size_t Write(std::span<const std::uint8_t> data) override
+    {
+        ++writes;
+        bytes.assign(data.begin(), data.end());
+        return data.size() - (shortWrite ? 1 : 0);
+    }
+    bool Close() override { ++closes; return closeSucceeds; }
+};
+
+TEST(PortableDiskImageErrors, InvalidArgumentsDoNotOpenWriter)
+{
+    FakeWriter writer;
+    const auto empty = disk_image::CreatePortable({}, 40, writer);
+    const auto invalid = disk_image::CreatePortable("disk.dsk", 41, writer);
+    ASSERT_FALSE(empty);
+    ASSERT_FALSE(invalid);
+    EXPECT_EQ(empty.error(), disk_image::FileError::invalid_argument);
+    EXPECT_EQ(invalid.error(), disk_image::FileError::invalid_argument);
+    EXPECT_EQ(writer.opens, 0);
+}
+
+TEST(PortableDiskImageErrors, OpenFailureDoesNotWriteOrClose)
+{
+    FakeWriter writer;
+    writer.openSucceeds = false;
+    const auto result = disk_image::CreatePortable("disk.dsk", 40, writer);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), disk_image::FileError::open_failed);
+    EXPECT_EQ(writer.opens, 1);
+    EXPECT_EQ(writer.writes, 0);
+    EXPECT_EQ(writer.closes, 0);
+}
+
+TEST(PortableDiskImageErrors, ShortWriteClosesAndTakesPrecedenceOverCloseFailure)
+{
+    FakeWriter writer;
+    writer.shortWrite = true;
+    writer.closeSucceeds = false;
+    const auto result = disk_image::CreatePortable("disk.dsk", 40, writer);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), disk_image::FileError::write_failed);
+    EXPECT_EQ(writer.writes, 1);
+    EXPECT_EQ(writer.closes, 1);
+}
+
+TEST(PortableDiskImageErrors, CloseFailureIsReported)
+{
+    FakeWriter writer;
+    writer.closeSucceeds = false;
+    const auto result = disk_image::CreatePortable("disk.dsk", 80, writer);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), disk_image::FileError::close_failed);
+    EXPECT_EQ(writer.writes, 1);
+    EXPECT_EQ(writer.closes, 1);
+}
+
+TEST(PortableDiskImageErrors, SuccessfulWriteReceivesTheCompleteImage)
+{
+    FakeWriter writer;
+    ASSERT_TRUE(disk_image::CreatePortable("disk.dsk", 80, writer));
+    std::vector<std::uint8_t> expected(disk_image::Size(80));
+    ASSERT_TRUE(disk_image::Build(80, expected));
+    EXPECT_EQ(writer.openedPath, std::filesystem::path("disk.dsk"));
+    EXPECT_EQ(writer.bytes, expected);
+    EXPECT_EQ(writer.opens, 1);
+    EXPECT_EQ(writer.writes, 1);
+    EXPECT_EQ(writer.closes, 1);
+}
 }
