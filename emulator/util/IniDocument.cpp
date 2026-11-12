@@ -33,7 +33,7 @@ std::optional<std::wstring_view> Section(std::wstring_view line)
 std::optional<std::pair<std::wstring_view, std::wstring_view>> Entry(std::wstring_view line)
 {
     line = Trim(line);
-    if (line.empty() || line.front() == L';' || line.front() == L'#') return std::nullopt;
+    if (line.empty() || line.front() == L';') return std::nullopt;
     const auto delimiter = line.find(L'=');
     if (delimiter == line.npos) return std::nullopt;
     const auto name = Trim(line.substr(0, delimiter));
@@ -72,7 +72,12 @@ std::optional<std::wstring> IniDocument::Get(std::wstring_view section, std::wst
         if (const auto name = Section(line.text)) { active = Equal(*name, section); continue; }
         if (!active) continue;
         if (const auto entry = Entry(line.text); entry && Equal(entry->first, key))
-            return std::wstring(entry->second);
+        {
+            auto value = entry->second;
+            if (value.size() >= 2 && (value.front() == L'\'' || value.front() == L'"') && value.front() == value.back())
+                value = value.substr(1, value.size() - 2);
+            return std::wstring(value);
+        }
     }
     return std::nullopt;
 }
@@ -80,9 +85,16 @@ std::optional<std::wstring> IniDocument::Get(std::wstring_view section, std::wst
 bool IniDocument::Set(std::wstring_view section, std::wstring_view key, std::wstring_view value)
 {
     if (!ValidName(section, L"[]\r\n") || !ValidName(key, L"=\r\n") ||
-        key.front() == L';' || key.front() == L'#' || value != Trim(value) ||
+        key.front() == L';' ||
         value.find(L'\0') != value.npos || value.find_first_of(L"\r\n") != value.npos)
         return false;
+    std::wstring encoded(value);
+    const bool quoted = value.size() >= 2 && (value.front() == L'\'' || value.front() == L'"') && value.front() == value.back();
+    if (value != Trim(value) || quoted)
+    {
+        const wchar_t quote = quoted && value.front() == L'"' ? L'\'' : L'"';
+        encoded = quote + encoded + quote;
+    }
     std::size_t insert = lines_.size();
     bool active = false, found = false;
     for (std::size_t i = 0; i < lines_.size(); ++i)
@@ -98,7 +110,7 @@ bool IniDocument::Set(std::wstring_view section, std::wstring_view key, std::wst
         {
             if (const auto entry = Entry(lines_[i].text); entry && Equal(entry->first, key))
             {
-                lines_[i].text = std::wstring(key) + L"=" + std::wstring(value);
+                lines_[i].text = std::wstring(key) + L"=" + encoded;
                 return true;
             }
         }
@@ -110,8 +122,24 @@ bool IniDocument::Set(std::wstring_view section, std::wstring_view key, std::wst
         lines_.push_back({L"[" + std::wstring(section) + L"]", defaultEnding_});
         insert = lines_.size();
     }
-    lines_.insert(lines_.begin() + insert, {std::wstring(key) + L"=" + std::wstring(value), defaultEnding_});
+    lines_.insert(lines_.begin() + insert, {std::wstring(key) + L"=" + encoded, defaultEnding_});
     return true;
+}
+
+bool IniDocument::Remove(std::wstring_view section, std::wstring_view key)
+{
+    bool active = false;
+    for (auto it = lines_.begin(); it != lines_.end(); ++it)
+    {
+        if (const auto name = Section(it->text)) { active = Equal(*name, section); continue; }
+        if (!active) continue;
+        if (const auto entry = Entry(it->text); entry && Equal(entry->first, key))
+        {
+            lines_.erase(it);
+            return true;
+        }
+    }
+    return false;
 }
 
 std::wstring IniDocument::Serialize() const

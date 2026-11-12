@@ -13,9 +13,10 @@ class IniDocument
 public:
     explicit IniDocument(std::wstring_view text = {});
     [[nodiscard]] std::optional<std::wstring> Get(std::wstring_view section, std::wstring_view key) const;
-    // Reject embedded NULs, line breaks and INI delimiters in names. Leading
-    // and trailing spaces in values are rejected because INI reads trim them.
+    // Reject embedded NULs, line breaks and INI delimiters in names.
     [[nodiscard]] bool Set(std::wstring_view section, std::wstring_view key, std::wstring_view value);
+    // Removes the first matching key, returning whether one was found.
+    bool Remove(std::wstring_view section, std::wstring_view key);
     [[nodiscard]] std::wstring Serialize() const;
 
 private:

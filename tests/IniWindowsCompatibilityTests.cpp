@@ -1,0 +1,64 @@
+/* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
+#include "util/IniDocument.h"
+#include "util/IniEncoding.h"
+#include <Windows.h>
+#include <gtest/gtest.h>
+#include <array>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+
+TEST(IniWindowsCompatibility, ReadsRepresentativeValuesLikeWindowsProfileApi)
+{
+    const std::wstring text =
+        L"[UKNCBTL]\r\nPlain=  value  \r\nDouble=\"two words\"\r\nSingle='two words'\r\n"
+        L"EmptyQuotes=\"\"\r\nDoubleSpace=\" two words \"\r\n"
+        L"Different=\"hello'\r\nUnpaired=\"hello\r\nInline=value ; comment\r\n"
+        L"First=one\r\nFirst=two\r\nPath=C:\\folder\\image.dsk\r\n#Hash=hash\r\n";
+    const auto encoded = ini_encoding::Encode(text, ini_encoding::Encoding::utf16_le);
+    ASSERT_TRUE(encoded);
+    const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto path = std::filesystem::temp_directory_path() / ("ukncbtl-profile-" + suffix + ".ini");
+    {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(output);
+        output.write(reinterpret_cast<const char*>(encoded->data()), static_cast<std::streamsize>(encoded->size()));
+        ASSERT_TRUE(output);
+    }
+    const IniDocument document(text);
+    for (const auto key : {L"Plain", L"Double", L"Single", L"EmptyQuotes", L"DoubleSpace", L"Different", L"Unpaired", L"Inline", L"First", L"Path", L"#Hash"})
+    {
+        SCOPED_TRACE(testing::Message() << key);
+        std::array<wchar_t, 256> buffer{};
+        GetPrivateProfileStringW(L"UKNCBTL", key, L"<missing>", buffer.data(), static_cast<DWORD>(buffer.size()), path.c_str());
+        const auto value = document.Get(L"UKNCBTL", key);
+        EXPECT_EQ(value.value_or(L"<missing>"), buffer.data());
+    }
+    WritePrivateProfileStringW(nullptr, nullptr, nullptr, path.c_str());
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}
+
+TEST(IniWindowsCompatibility, RemovingDuplicateKeyMatchesWindowsProfileApi)
+{
+    const std::wstring text = L"[UKNCBTL]\r\nKey=one\r\nKey=two\r\n[Other]\r\nKey=other\r\n";
+    const auto encoded = ini_encoding::Encode(text, ini_encoding::Encoding::utf16_le);
+    ASSERT_TRUE(encoded);
+    const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto path = std::filesystem::temp_directory_path() / ("ukncbtl-profile-delete-" + suffix + ".ini");
+    {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(output);
+        output.write(reinterpret_cast<const char*>(encoded->data()), static_cast<std::streamsize>(encoded->size()));
+        ASSERT_TRUE(output);
+    }
+    IniDocument document(text);
+    EXPECT_TRUE(document.Remove(L"ukncbtl", L"key"));
+    EXPECT_TRUE(WritePrivateProfileStringW(L"UKNCBTL", L"Key", nullptr, path.c_str()));
+    std::array<wchar_t, 256> buffer{};
+    GetPrivateProfileStringW(L"UKNCBTL", L"Key", L"<missing>", buffer.data(), static_cast<DWORD>(buffer.size()), path.c_str());
+    EXPECT_EQ(document.Get(L"UKNCBTL", L"Key").value_or(L"<missing>"), buffer.data());
+    WritePrivateProfileStringW(nullptr, nullptr, nullptr, path.c_str());
+    std::error_code error;
+    std::filesystem::remove(path, error);
+}

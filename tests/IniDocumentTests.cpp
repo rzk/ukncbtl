@@ -53,7 +53,30 @@ TEST(IniDocument, RejectsMalformedInputWithoutChangingDocument)
     EXPECT_FALSE(document.Set(L"section", L"bad=key", L"value"));
     EXPECT_FALSE(document.Set(L"section", L";comment", L"value"));
     EXPECT_FALSE(document.Set(L"section", L"key", L"a\nb"));
-    EXPECT_FALSE(document.Set(L"section", L"key", L" value "));
     EXPECT_FALSE(document.Set(L"section", L"key", std::wstring_view(L"a\0b", 3)));
     EXPECT_EQ(document.Serialize(), original);
+}
+
+TEST(IniDocument, ReadsQuotedValuesAndWritesLiteralQuotesAndWhitespace)
+{
+    IniDocument document(L"[section]\nA=\" two words \"\nB='single'\nC=\"\"\n#key=hash\n");
+    EXPECT_EQ(document.Get(L"section", L"A"), L" two words ");
+    EXPECT_EQ(document.Get(L"section", L"B"), L"single");
+    EXPECT_EQ(document.Get(L"section", L"C"), L"");
+    EXPECT_EQ(document.Get(L"section", L"#key"), L"hash");
+    for (const auto value : {L" value ", L"\"literal\"", L"'literal'", L"\"", L"   "})
+    {
+        ASSERT_TRUE(document.Set(L"section", L"key", value));
+        EXPECT_EQ(IniDocument(document.Serialize()).Get(L"section", L"key"), value);
+    }
+}
+
+TEST(IniDocument, RemovesOnlyFirstMatchingKeyAndPreservesOtherLines)
+{
+    IniDocument document(L"[Section]\r\nKey=one\r\nKey=two\r\n[Other]\r\nKey=other");
+    EXPECT_TRUE(document.Remove(L"section", L"KEY"));
+    EXPECT_EQ(document.Get(L"section", L"key"), L"two");
+    EXPECT_EQ(document.Serialize(), L"[Section]\r\nKey=two\r\n[Other]\r\nKey=other");
+    EXPECT_FALSE(document.Remove(L"section", L"missing"));
+    EXPECT_EQ(document.Get(L"Other", L"Key"), L"other");
 }
