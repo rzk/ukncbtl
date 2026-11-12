@@ -85,6 +85,10 @@ add_library(HardDrive OBJECT emulator/emubase/Hard.cpp)
 ukncbtl_toolchain(HardDrive)
 target_include_directories(HardDrive PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
 
+add_library(FloppyController OBJECT emulator/emubase/Floppy.cpp)
+ukncbtl_toolchain(FloppyController)
+target_include_directories(FloppyController PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+
 add_library(SoundAY STATIC emulator/emubase/SoundAY.cpp)
 ukncbtl_toolchain(SoundAY)
 
@@ -110,6 +114,7 @@ if(BUILD_TESTING)
   ukncbtl_portable_test(CoreHeaderTests tests/CoreHeaderTests.cpp)
   ukncbtl_portable_test(TraceTests tests/TraceTests.cpp)
   ukncbtl_portable_test(HardPortableTests tests/HardPortableTests.cpp $<TARGET_OBJECTS:HardDrive>)
+  ukncbtl_portable_test(FloppyPortableTests tests/FloppyPortableTests.cpp $<TARGET_OBJECTS:FloppyController>)
   ukncbtl_portable_test(ScreenScaleTests tests/ScreenScaleTests.cpp)
   target_link_libraries(ScreenScaleTests PRIVATE ScreenScale)
   ukncbtl_portable_test(SoundAYEdgeTests tests/SoundAYEdgeTests.cpp)
@@ -131,7 +136,7 @@ endfunction()
 
 add_library(EmulatorCore STATIC
   $<TARGET_OBJECTS:Motherboard> $<TARGET_OBJECTS:Disassembler>
-  emulator/emubase/Floppy.cpp $<TARGET_OBJECTS:HardDrive>
+  $<TARGET_OBJECTS:FloppyController> $<TARGET_OBJECTS:HardDrive>
   $<TARGET_OBJECTS:MemoryController> $<TARGET_OBJECTS:Processor>)
 ukncbtl_target(EmulatorCore)
 target_link_libraries(EmulatorCore PUBLIC CpuOverflow SoundAY)

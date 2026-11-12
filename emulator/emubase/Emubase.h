@@ -62,7 +62,7 @@ inline constexpr auto FLOPPY_INDEXLENGTH = 150;      ///< Length of index hole, 
 /// \sa CFloppyController
 struct CFloppyDrive
 {
-    UniqueFile fpFile;       ///< File pointer of the disk image file
+    std::unique_ptr<std::fstream> fpFile; ///< Stream for the disk image file
     bool okNetRT11Image;  ///< true - .rtd image, false - .dsk image
     bool okReadOnly;    ///< Write protection flag
     uint16_t track;         ///< Track number: from 0 to 79
@@ -110,6 +110,7 @@ public:
 
     /// \brief Attach the image to the drive -- insert disk
     bool AttachImage(int drive, const wchar_t* sFileName);
+    bool AttachImage(int drive, const std::filesystem::path& path);
     /// \brief Detach image from the drive -- remove disk
     void DetachImage(int drive);
     /// \brief Check if the drive has an image attached
