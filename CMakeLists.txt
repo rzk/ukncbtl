@@ -44,6 +44,19 @@ function(ukncbtl_toolchain target)
   endif()
 endfunction()
 
+add_library(EmulatorProfiling INTERFACE)
+if(UKNCBTL_ENABLE_TRACY)
+  target_compile_definitions(EmulatorProfiling INTERFACE UKNCBTL_ENABLE_TRACY)
+  target_link_libraries(EmulatorProfiling INTERFACE Tracy::TracyClient)
+endif()
+
+# The decoder depends only on the portable board interface and can be built
+# before the rest of the emulator core has been migrated.
+add_library(VideoDecoder STATIC emulator/VideoDecoder.cpp)
+ukncbtl_toolchain(VideoDecoder)
+target_include_directories(VideoDecoder PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+target_link_libraries(VideoDecoder PUBLIC EmulatorProfiling)
+
 if(BUILD_TESTING)
   include(GoogleTest)
   function(ukncbtl_portable_test target)
@@ -80,20 +93,11 @@ add_library(EmulatorCore STATIC
 ukncbtl_target(EmulatorCore)
 target_link_libraries(EmulatorCore PUBLIC CpuOverflow)
 
-add_library(EmulatorProfiling INTERFACE)
-if(UKNCBTL_ENABLE_TRACY)
-  target_compile_definitions(EmulatorProfiling INTERFACE UKNCBTL_ENABLE_TRACY)
-  target_link_libraries(EmulatorProfiling INTERFACE Tracy::TracyClient)
-endif()
 target_link_libraries(EmulatorCore PUBLIC EmulatorProfiling)
 
 add_library(EmulatorSnapshot STATIC emulator/Snapshot.cpp)
 ukncbtl_target(EmulatorSnapshot)
 target_link_libraries(EmulatorSnapshot PUBLIC EmulatorCore)
-
-add_library(VideoDecoder STATIC emulator/VideoDecoder.cpp)
-ukncbtl_target(VideoDecoder)
-target_link_libraries(VideoDecoder PUBLIC EmulatorCore)
 
 add_library(ScreenScale STATIC emulator/util/ScreenScale.cpp)
 ukncbtl_target(ScreenScale)
@@ -133,7 +137,7 @@ if(BUILD_TESTING)
   ukncbtl_test(SnapshotTests tests/SnapshotTests.cpp)
   target_link_libraries(SnapshotTests PRIVATE EmulatorSnapshot)
   ukncbtl_test(VideoDecoderTests tests/VideoDecoderTests.cpp)
-  target_link_libraries(VideoDecoderTests PRIVATE VideoDecoder)
+  target_link_libraries(VideoDecoderTests PRIVATE VideoDecoder EmulatorCore)
   ukncbtl_test(CommandTests tests/CommandTests.cpp)
   target_link_libraries(CommandTests PRIVATE shell32)
   ukncbtl_test(ConsoleProductTests tests/ConsoleProductTests.cpp)
