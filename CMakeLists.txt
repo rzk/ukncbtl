@@ -107,6 +107,9 @@ target_link_libraries(FrameControl PUBLIC EmulatorCore)
 add_library(HostInput STATIC emulator/Input.cpp)
 ukncbtl_toolchain(HostInput)
 
+add_library(WavPcmFile STATIC emulator/util/WavPcmFile.cpp)
+ukncbtl_toolchain(WavPcmFile)
+
 # The snapshot implementation uses the portable board interface; linking its
 # operations into an executable also requires the emulator core.
 add_library(EmulatorSnapshot STATIC emulator/Snapshot.cpp)
@@ -131,6 +134,9 @@ if(BUILD_TESTING)
   ukncbtl_portable_test(TraceTests tests/TraceTests.cpp)
   ukncbtl_portable_test(InputTests tests/InputTests.cpp)
   target_link_libraries(InputTests PRIVATE HostInput)
+  ukncbtl_portable_test(TapeTests tests/TapeTests.cpp)
+  ukncbtl_portable_test(WavPcmFileTests tests/WavPcmFileTests.cpp)
+  target_link_libraries(WavPcmFileTests PRIVATE WavPcmFile)
   ukncbtl_portable_test(HardPortableTests tests/HardPortableTests.cpp $<TARGET_OBJECTS:HardDrive>)
   ukncbtl_portable_test(FloppyPortableTests tests/FloppyPortableTests.cpp $<TARGET_OBJECTS:FloppyController>)
   ukncbtl_portable_test(PortableCoreTests tests/PortableCoreTests.cpp)
@@ -161,10 +167,10 @@ add_executable(UKNCBTL WIN32
   emulator/Main.cpp emulator/MainWindow.cpp emulator/MemoryView.cpp
   emulator/ScreenView.cpp emulator/ScreenText.cpp emulator/Subtitles.cpp emulator/Settings.cpp emulator/SoundGen.cpp
   emulator/SpriteView.cpp emulator/ViewCalculations.cpp emulator/TapeView.cpp emulator/ToolWindow.cpp
-  emulator/util/BitmapFile.cpp emulator/util/WavPcmFile.cpp emulator/res/UKNCBTL.rc)
+  emulator/util/BitmapFile.cpp emulator/res/UKNCBTL.rc)
 ukncbtl_target(UKNCBTL)
 target_include_directories(UKNCBTL PRIVATE emulator/res)
-target_link_libraries(UKNCBTL PRIVATE FrameControl HostInput EmulatorCore EmulatorSnapshot VideoDecoder ScreenScale vfw32 comctl32 winmm advapi32 shell32 windowscodecs)
+target_link_libraries(UKNCBTL PRIVATE FrameControl HostInput WavPcmFile EmulatorCore EmulatorSnapshot VideoDecoder ScreenScale vfw32 comctl32 winmm advapi32 shell32 windowscodecs)
 target_link_options(UKNCBTL PRIVATE "LINKER:/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='amd64' publicKeyToken='6595b64144ccf1df' language='*'")
 
 # The default renderer is loaded dynamically, so it must be built alongside the
@@ -217,8 +223,6 @@ if(BUILD_TESTING)
   ukncbtl_test(DiskImageTests tests/DiskImageTests.cpp emulator/DiskImage.cpp)
   ukncbtl_test(SoundOutputTests tests/SoundOutputTests.cpp emulator/SoundGen.cpp)
   target_link_libraries(SoundOutputTests PRIVATE winmm EmulatorProfiling)
-  ukncbtl_test(TapeTests tests/TapeTests.cpp)
-  ukncbtl_test(WavPcmFileTests tests/WavPcmFileTests.cpp emulator/util/WavPcmFile.cpp)
   ukncbtl_test(CoreSmokeTests tests/CoreSmokeTests.cpp)
   target_link_libraries(CoreSmokeTests PRIVATE EmulatorCore)
   ukncbtl_test(DisasmCorpusTests tests/DisasmCorpusTests.cpp)

@@ -8,14 +8,13 @@ See the GNU Lesser General Public License for more details.
     You should have received a copy of the GNU Lesser General Public License along with
 UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
-#include "stdafx.h"
 #include "WavPcmFile.h"
 #include "LittleEndian.h"
 #include <algorithm>
 #include <array>
 #include <climits>
 #include <cstring>
-#include <share.h>
+#include <utility>
 
 namespace {
 constexpr std::array<uint8_t, 4> riff{'R', 'I', 'F', 'F'};
@@ -37,11 +36,17 @@ WavPcmFile::~WavPcmFile()
     (void)Close();
 }
 
-std::expected<WavPcmFile, WavError> WavPcmFile::Create(LPCTSTR filename, int sampleRate)
+std::expected<WavPcmFile, WavError> WavPcmFile::Create(const wchar_t* filename, int sampleRate)
 {
-    if (!filename || sampleRate <= 0) return std::unexpected(WavError::invalid_argument);
-    File file(::_tfsopen(filename, _T("w+b"), _SH_DENYWR));
-    if (!file) return std::unexpected(WavError::open_failed);
+    if (!filename) return std::unexpected(WavError::invalid_argument);
+    return Create(std::filesystem::path(filename), sampleRate);
+}
+
+std::expected<WavPcmFile, WavError> WavPcmFile::Create(const std::filesystem::path& filename, int sampleRate)
+{
+    if (filename.empty() || sampleRate <= 0) return std::unexpected(WavError::invalid_argument);
+    auto file = std::make_unique<std::fstream>(filename, std::ios::binary | std::ios::in | std::ios::out | std::ios::trunc);
+    if (!*file) return std::unexpected(WavError::open_failed);
 
     constexpr uint16_t channels = 1, bits = 8, alignment = 1;
     const uint32_t rate = static_cast<uint32_t>(sampleRate);
@@ -58,26 +63,34 @@ std::expected<WavPcmFile, WavError> WavPcmFile::Create(LPCTSTR filename, int sam
     little_endian::write<uint16_t>(bytes.subspan<32, 2>(), alignment);
     little_endian::write<uint16_t>(bytes.subspan<34, 2>(), bits);
     std::ranges::copy(dataId, header.begin() + 36);
-    if (std::fwrite(header.data(), 1, header.size(), file.get()) != header.size())
+    if (!file->write(reinterpret_cast<const char*>(header.data()), static_cast<std::streamsize>(header.size())))
         return std::unexpected(WavError::io_error);
 
     return WavPcmFile(std::move(file), sampleRate, bits, alignment,
                       static_cast<uint32_t>(header.size()), 0, true);
 }
 
-std::expected<WavPcmFile, WavError> WavPcmFile::Open(LPCTSTR filename)
+std::expected<WavPcmFile, WavError> WavPcmFile::Open(const wchar_t* filename)
 {
     if (!filename) return std::unexpected(WavError::invalid_argument);
-    File file(::_tfsopen(filename, _T("rb"), _SH_DENYWR));
-    if (!file) return std::unexpected(WavError::open_failed);
-    if (std::fseek(file.get(), 0, SEEK_END) != 0) return std::unexpected(WavError::io_error);
-    const long fileLength = std::ftell(file.get());
-    if (fileLength < 0 || std::fseek(file.get(), 0, SEEK_SET) != 0)
+    return Open(std::filesystem::path(filename));
+}
+
+std::expected<WavPcmFile, WavError> WavPcmFile::Open(const std::filesystem::path& filename)
+{
+    if (filename.empty()) return std::unexpected(WavError::invalid_argument);
+    auto file = std::make_unique<std::fstream>(filename, std::ios::binary | std::ios::in);
+    if (!*file) return std::unexpected(WavError::open_failed);
+    file->seekg(0, std::ios::end);
+    const auto fileLength = file->tellg();
+    if (fileLength < 0 || fileLength > INT32_MAX)
         return std::unexpected(WavError::io_error);
+    file->seekg(0, std::ios::beg);
+    if (!*file) return std::unexpected(WavError::io_error);
     if (fileLength < 12) return std::unexpected(WavError::invalid_format);
 
     std::array<uint8_t, 12> header{};
-    if (std::fread(header.data(), 1, header.size(), file.get()) != header.size())
+    if (!file->read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size())))
         return std::unexpected(WavError::io_error);
     if (!std::equal(riff.begin(), riff.end(), header.begin()) ||
         !std::equal(wave.begin(), wave.end(), header.begin() + 8))
@@ -95,7 +108,7 @@ std::expected<WavPcmFile, WavError> WavPcmFile::Open(LPCTSTR filename)
     {
         std::array<uint8_t, 8> chunk{};
         if (statedSize - offset < chunk.size()) return std::unexpected(WavError::invalid_format);
-        if (std::fread(chunk.data(), 1, chunk.size(), file.get()) != chunk.size())
+        if (!file->read(reinterpret_cast<char*>(chunk.data()), static_cast<std::streamsize>(chunk.size())))
             return std::unexpected(WavError::io_error);
         offset += static_cast<uint32_t>(chunk.size());
         const uint32_t chunkSize = little_endian::read<uint32_t>(std::span{chunk}.subspan<4, 4>());
@@ -104,7 +117,7 @@ std::expected<WavPcmFile, WavError> WavPcmFile::Open(LPCTSTR filename)
         {
             std::array<uint8_t, 16> format{};
             if (formatSpecified || chunkSize < format.size()) return std::unexpected(WavError::invalid_format);
-            if (std::fread(format.data(), 1, format.size(), file.get()) != format.size())
+            if (!file->read(reinterpret_cast<char*>(format.data()), static_cast<std::streamsize>(format.size())))
                 return std::unexpected(WavError::io_error);
             const auto fields = std::span{format};
             const auto type = little_endian::read<uint16_t>(fields.subspan<0, 2>());
@@ -132,11 +145,13 @@ std::expected<WavPcmFile, WavError> WavPcmFile::Open(LPCTSTR filename)
         offset += chunkSize;
         // Older emulator versions omitted padding on an odd-sized final data chunk.
         if ((chunkSize & 1) && offset < statedSize) ++offset;
-        if (std::fseek(file.get(), static_cast<long>(offset), SEEK_SET) != 0)
+        file->seekg(offset, std::ios::beg);
+        if (!*file)
             return std::unexpected(WavError::io_error);
     }
     if (!formatSpecified || !dataSpecified) return std::unexpected(WavError::invalid_format);
-    if (std::fseek(file.get(), static_cast<long>(dataOffset), SEEK_SET) != 0)
+    file->seekg(dataOffset, std::ios::beg);
+    if (!*file)
         return std::unexpected(WavError::io_error);
     return WavPcmFile(std::move(file), static_cast<int>(sampleFrequency), bitsPerSample,
                       blockAlign, dataOffset, dataSize, false);
@@ -147,8 +162,11 @@ std::expected<void, WavError> WavPcmFile::SetPosition(uint32_t position)
     if (!file_) return std::unexpected(WavError::io_error);
     if (position > Length()) return std::unexpected(WavError::invalid_position);
     const auto offset = static_cast<uint64_t>(dataOffset_) + static_cast<uint64_t>(position) * blockAlign_;
-    if (offset > LONG_MAX) return std::unexpected(WavError::invalid_position);
-    if (std::fseek(file_.get(), static_cast<long>(offset), SEEK_SET) != 0)
+    if (offset > INT32_MAX) return std::unexpected(WavError::invalid_position);
+    file_->clear();
+    if (writing_) file_->seekp(static_cast<std::streamoff>(offset), std::ios::beg);
+    else file_->seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+    if (!*file_)
         return std::unexpected(WavError::io_error);
     position_ = position;
     return {};
@@ -159,7 +177,7 @@ std::expected<uint32_t, WavError> WavPcmFile::ReadOne()
     if (!file_ || writing_) return std::unexpected(WavError::io_error);
     if (position_ >= Length()) return std::unexpected(WavError::end_of_data);
     std::array<uint8_t, 16> data{};
-    if (std::fread(data.data(), 1, blockAlign_, file_.get()) != static_cast<size_t>(blockAlign_))
+    if (!file_->read(reinterpret_cast<char*>(data.data()), blockAlign_))
         return std::unexpected(WavError::io_error);
     ++position_;
     switch (bitsPerSample_)
@@ -175,10 +193,10 @@ std::expected<void, WavError> WavPcmFile::WriteOne(uint32_t value)
 {
     if (!file_ || !writing_) return std::unexpected(WavError::io_error);
     const uint64_t nextSize = (static_cast<uint64_t>(position_) + 1) * blockAlign_;
-    if (static_cast<uint64_t>(dataOffset_) + nextSize + 1 > LONG_MAX)
+    if (static_cast<uint64_t>(dataOffset_) + nextSize + 1 > INT32_MAX)
         return std::unexpected(WavError::invalid_position);
     const auto sample = static_cast<uint8_t>(value >> 24);
-    if (std::fwrite(&sample, 1, 1, file_.get()) != 1) return std::unexpected(WavError::io_error);
+    if (!file_->write(reinterpret_cast<const char*>(&sample), 1)) return std::unexpected(WavError::io_error);
     ++position_;
     dataSize_ = (std::max)(dataSize_, static_cast<uint32_t>(nextSize));
     return {};
@@ -193,17 +211,19 @@ std::expected<void, WavError> WavPcmFile::Close()
         if (dataSize_ & 1)
         {
             const uint8_t padding = 0;
-            ok = std::fseek(file_.get(), static_cast<long>(dataOffset_ + dataSize_), SEEK_SET) == 0 &&
-                 std::fwrite(&padding, 1, 1, file_.get()) == 1;
+            file_->seekp(dataOffset_ + dataSize_, std::ios::beg);
+            ok = static_cast<bool>(*file_) && static_cast<bool>(file_->write(reinterpret_cast<const char*>(&padding), 1));
         }
         std::array<uint8_t, 4> sizeBytes{};
         little_endian::write<uint32_t>(sizeBytes, 36 + dataSize_ + (dataSize_ & 1));
-        ok = ok && std::fseek(file_.get(), 4, SEEK_SET) == 0 &&
-             std::fwrite(sizeBytes.data(), 1, sizeBytes.size(), file_.get()) == sizeBytes.size();
+        if (ok) { file_->seekp(4, std::ios::beg); ok = static_cast<bool>(*file_); }
+        if (ok) ok = static_cast<bool>(file_->write(reinterpret_cast<const char*>(sizeBytes.data()), sizeBytes.size()));
         little_endian::write<uint32_t>(sizeBytes, dataSize_);
-        ok = ok && std::fseek(file_.get(), 40, SEEK_SET) == 0 &&
-             std::fwrite(sizeBytes.data(), 1, sizeBytes.size(), file_.get()) == sizeBytes.size();
+        if (ok) { file_->seekp(40, std::ios::beg); ok = static_cast<bool>(*file_); }
+        if (ok) ok = static_cast<bool>(file_->write(reinterpret_cast<const char*>(sizeBytes.data()), sizeBytes.size()));
     }
-    if (std::fclose(file_.release()) != 0) ok = false;
+    file_->close();
+    if (file_->fail()) ok = false;
+    file_.reset();
     return ok ? std::expected<void, WavError>{} : std::unexpected(WavError::io_error);
 }

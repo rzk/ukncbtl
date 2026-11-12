@@ -10,12 +10,11 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 #pragma once
 
-#include "File.h"
 #include <cstdint>
-#include <cstdio>
 #include <expected>
+#include <filesystem>
+#include <fstream>
 #include <memory>
-#include <tchar.h>
 
 enum class WavError
 {
@@ -30,11 +29,14 @@ enum class WavError
 
 // A PCM WAV stream. Recordings are mono, 8-bit PCM. Read samples are returned
 // as unsigned 32-bit values with silence at 0x80000000, regardless of source depth.
+// Callers must coordinate concurrent access; portable streams do not lock files.
 class WavPcmFile
 {
 public:
-    [[nodiscard]] static std::expected<WavPcmFile, WavError> Create(LPCTSTR filename, int sampleRate);
-    [[nodiscard]] static std::expected<WavPcmFile, WavError> Open(LPCTSTR filename);
+    [[nodiscard]] static std::expected<WavPcmFile, WavError> Create(const std::filesystem::path& filename, int sampleRate);
+    [[nodiscard]] static std::expected<WavPcmFile, WavError> Create(const wchar_t* filename, int sampleRate);
+    [[nodiscard]] static std::expected<WavPcmFile, WavError> Open(const std::filesystem::path& filename);
+    [[nodiscard]] static std::expected<WavPcmFile, WavError> Open(const wchar_t* filename);
 
     WavPcmFile(const WavPcmFile&) = delete;
     WavPcmFile& operator=(const WavPcmFile&) = delete;
@@ -51,7 +53,7 @@ public:
     [[nodiscard]] std::expected<void, WavError> Close();
 
 private:
-    using File = UniqueFile;
+    using File = std::unique_ptr<std::fstream>;
     WavPcmFile(File file, int sampleFrequency, int bitsPerSample, int blockAlign,
                uint32_t dataOffset, uint32_t dataSize, bool writing);
 
