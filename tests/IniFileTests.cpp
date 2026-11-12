@@ -120,4 +120,31 @@ TEST_F(IniFileTest, RejectsOversizedInput)
     ASSERT_FALSE(opened);
     EXPECT_EQ(opened.error(), IniFileError::too_large);
 }
+
+TEST_F(IniFileTest, ReplacesExistingFileAndCleansUpTemporaryFiles)
+{
+    Write({'o', 'l', 'd'});
+    IniFile file;
+    ASSERT_TRUE(file.Document().Set(L"section", L"key", L"new"));
+    ASSERT_TRUE(file.Save(path));
+    const auto reopened = IniFile::Open(path);
+    ASSERT_TRUE(reopened);
+    EXPECT_EQ(reopened->Document().Get(L"section", L"key"), L"new");
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(directory), std::filesystem::directory_iterator{}), 1);
+}
+
+TEST_F(IniFileTest, FailedReplacementLeavesDestinationAndCleansUpTemporaryFiles)
+{
+    ASSERT_TRUE(std::filesystem::create_directory(path));
+    const auto sentinel = path / "untouched";
+    { std::ofstream output(sentinel); ASSERT_TRUE(output); output << "keep"; }
+    IniFile file;
+    ASSERT_TRUE(file.Document().Set(L"section", L"key", L"new"));
+    const auto result = file.Save(path);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), IniFileError::replace_failed);
+    EXPECT_TRUE(std::filesystem::exists(sentinel));
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(directory), std::filesystem::directory_iterator{}), 1);
+    EXPECT_TRUE(std::filesystem::remove(sentinel));
+}
 }

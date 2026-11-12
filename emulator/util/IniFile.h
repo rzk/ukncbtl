@@ -11,14 +11,16 @@ enum class IniFileError
     open_failed,
     read_failed,
     write_failed,
+    replace_failed,
     too_large,
     invalid_text,
     unsupported_encoding,
 };
 
 // A snapshot of an INI file. Callers must coordinate concurrent access.
-// Files larger than 16 MiB are rejected. Save writes in place and is not atomic;
-// a write failure may leave a partial file.
+// Files larger than 16 MiB are rejected. Save writes to a temporary file on
+// the same filesystem before replacing the destination. It does not guarantee
+// durability across power loss or preserve the destination's file metadata.
 class IniFile
 {
 public:
