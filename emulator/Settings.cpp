@@ -15,8 +15,8 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <vector>
 #include <algorithm>
 #include <climits>
-#include <optional>
 #include "util/SettingsCodec.h"
+#include "util/CachedSetting.h"
 
 //////////////////////////////////////////////////////////////////////
 
@@ -172,37 +172,24 @@ BOOL Settings_LoadBinaryValue(LPCTSTR sName, void* pData, int size)
 //////////////////////////////////////////////////////////////////////
 
 
-template <typename T>
-class CachedDwordSetting
+struct WindowsDwordStore
 {
-public:
-    CachedDwordSetting(LPCTSTR name, T defaultValue)
-        : name_(name), defaultValue_(defaultValue) {}
-
-    T Get()
+    static bool Load(const wchar_t* name, std::uint32_t& value)
     {
-        if (!value_)
-        {
-            DWORD stored = static_cast<DWORD>(defaultValue_);
-            Settings_LoadDwordValue(name_, &stored);
-            value_ = static_cast<T>(stored);
-        }
-        return *value_;
+        DWORD stored = value;
+        if (!Settings_LoadDwordValue(name, &stored)) return false;
+        value = stored;
+        return true;
     }
 
-    void Set(T value)
+    static void Save(const wchar_t* name, std::uint32_t value)
     {
-        value_ = value;
-        Settings_SaveDwordValue(name_, static_cast<DWORD>(value));
+        Settings_SaveDwordValue(name, value);
     }
-
-    void Reset() { value_.reset(); }
-
-private:
-    LPCTSTR name_;
-    T defaultValue_;
-    std::optional<T> value_;
 };
+
+template <typename T>
+using CachedDwordSetting = CachedSetting<T, WindowsDwordStore>;
 
 BOOL Settings_GetWindowRect(RECT * pRect)
 {
