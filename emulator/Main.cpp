@@ -12,10 +12,13 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 #include "stdafx.h"
 #include "util/Profiler.h"
+#include "FramePacing.h"
+#include <chrono>
 #include <crtdbg.h>
 #include <CommCtrl.h>
 #include <shellapi.h>
 #include <timeapi.h>
+#include <thread>
 
 #include "Main.h"
 #include "CommandLineOptions.h"
@@ -78,9 +81,6 @@ int APIENTRY _tWinMain(
 
     g_hInst = hInstance; // Store instance handle in our global variable
 
-    LARGE_INTEGER nFrameStartTime;
-    nFrameStartTime.QuadPart = 0;
-
     // Initialize global strings
     LoadString(g_hInst, IDS_APP_TITLE, g_szTitle, MAX_LOADSTRING);
     LoadString(g_hInst, IDC_APPLICATION, g_szWindowClass, MAX_LOADSTRING);
@@ -95,9 +95,6 @@ int APIENTRY _tWinMain(
     if (Option_ShowHelp)
         ::PostMessage(g_hwnd, WM_COMMAND, ID_HELP_COMMAND_LINE_HELP, 0);
 
-    LARGE_INTEGER nPerformanceFrequency;
-    ::QueryPerformanceFrequency(&nPerformanceFrequency);
-
     TIMECAPS caps;
     VERIFY(!::timeGetDevCaps(&caps, sizeof(caps)));
     VERIFY(!::timeBeginPeriod(caps.wPeriodMin));
@@ -107,10 +104,10 @@ int APIENTRY _tWinMain(
     for (;;)
     {
         UKNC_PROFILE_FRAME();
-        ::QueryPerformanceCounter(&nFrameStartTime);
+        const auto frameStartTime = std::chrono::steady_clock::now();
 
         if (!g_okEmulatorRunning)
-            ::Sleep(1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         else
         {
             if (!Emulator_SystemFrame())  // Breakpoint hit
@@ -141,36 +138,14 @@ int APIENTRY _tWinMain(
 
         if (g_okEmulatorRunning && !Settings_GetSound())
         {
-            WORD speed = Settings_GetRealSpeed();
-            if (speed == 0)
-                ;  // Speed MAX, consume 100% of one CPU core
-            else
+            const auto target = frame_pacing::Target(Settings_GetRealSpeed(), FRAMERATE);
+            if (target)
             {
                 UKNC_PROFILE_SCOPE("Frame pacing wait");
-                LONGLONG nFrameDelay;
-                switch (speed)
-                {
-                case 0x7ffd: nFrameDelay = 1000ll / FRAMERATE * 10; break;  // Speed 10%
-                case 0x7ffe: nFrameDelay = 1000ll / FRAMERATE * 4;  break;  // Speed 25%
-                case 0x7fff: nFrameDelay = 1000ll / FRAMERATE * 2;  break;  // Speed 50%
-                case 2:      nFrameDelay = 1000ll / FRAMERATE / 2;  break;  // Speed 200%
-                case 3:      nFrameDelay = 1000ll / FRAMERATE / 4;  break;  // Speed 400%
-                default:  // Speed 100%
-                    nFrameDelay = 1000ll / FRAMERATE;  // 1000 millisec / 50 = 20 millisec
-                    break;
-                }
-
-                for (;;)
-                {
-                    LARGE_INTEGER nFrameFinishTime;  // Frame start time
-                    ::QueryPerformanceCounter(&nFrameFinishTime);
-                    LONGLONG nTimeElapsed = (nFrameFinishTime.QuadPart - nFrameStartTime.QuadPart)
-                            * 1000ll / nPerformanceFrequency.QuadPart;
-                    if (nTimeElapsed <= 0 || nTimeElapsed >= nFrameDelay)
-                        break;
-                    LONGLONG nDelayRemaining = nFrameDelay - nTimeElapsed;
-                    ::Sleep((nDelayRemaining <= 2) ? 0 : (DWORD)(nDelayRemaining / 2));
-                }
+                const auto elapsed = std::chrono::duration_cast<frame_pacing::Duration>(
+                    std::chrono::steady_clock::now() - frameStartTime);
+                if (const auto remaining = frame_pacing::Remaining(*target, elapsed))
+                    std::this_thread::sleep_for(*remaining);
             }
         }
 

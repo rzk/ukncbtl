@@ -280,7 +280,7 @@ add_executable(UKNCBTL WIN32
   emulator/util/BitmapFile.cpp emulator/res/UKNCBTL.rc)
 ukncbtl_target(UKNCBTL)
 target_include_directories(UKNCBTL PRIVATE emulator/res)
-target_link_libraries(UKNCBTL PRIVATE FrameControl FrameTiming HostInput WavPcmFile EmulatorCore EmulatorSnapshot VideoDecoder ScreenScale vfw32 comctl32 winmm advapi32 shell32 windowscodecs)
+target_link_libraries(UKNCBTL PRIVATE FrameControl FrameTiming FramePacing HostInput WavPcmFile EmulatorCore EmulatorSnapshot VideoDecoder ScreenScale vfw32 comctl32 winmm advapi32 shell32 windowscodecs)
 target_link_libraries(UKNCBTL PRIVATE DiskImageFile)
 target_link_libraries(UKNCBTL PRIVATE PrinterOutput)
 target_link_libraries(UKNCBTL PRIVATE RomFile)
