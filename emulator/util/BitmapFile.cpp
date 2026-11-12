@@ -12,6 +12,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 #include "stdafx.h"
 #include "BitmapFile.h"
+#include "BmpFile.h"
 
 #include <wincodec.h>
 #include <wincodecsdk.h>
@@ -174,6 +175,9 @@ bool BitmapFile_SaveImageFile(
 {
     ASSERT(sFileName != nullptr);
 
+    if (format == BitmapFileFormatBmp)
+        return sFileName && bmp_file::Save(std::filesystem::path(sFileName), pixels, width, height).has_value();
+
     IWICImagingFactory * piFactory = BitmapFile_factory.get();
     ASSERT(piFactory != nullptr);
     if (piFactory == nullptr || sFileName == nullptr || width <= 0 || height <= 0 ||
@@ -184,8 +188,6 @@ bool BitmapFile_SaveImageFile(
     GUID containerFormatGuid = GUID_ContainerFormatPng;
     switch (format)
     {
-    case BitmapFileFormatBmp:
-        containerFormatGuid = GUID_ContainerFormatBmp; break;
     case BitmapFileFormatTiff:
         containerFormatGuid = GUID_ContainerFormatTiff; break;
     default:
