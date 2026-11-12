@@ -21,6 +21,14 @@ See [performance.md](performance.md) for offline dependencies, tests and
 benchmarks. The commands above describe the baseline, not the intended future
 toolchain. Record the build configuration and platform with every comparison.
 
+The legacy application can optionally use the experimental portable settings
+backend by configuring with `-DUKNCBTL_USE_PORTABLE_SETTINGS=ON`. The default
+remains `OFF` while migration is in progress. The portable backend reads UTF-8
+and BOM-marked UTF-16LE files; it does not recognize legacy Windows code-page
+encodings. Use a separate UTF-8 or UTF-16LE settings file for this experiment:
+an unmarked code-page file can be rejected or misinterpreted as UTF-8. Saves
+replace the file and do not preserve its original filesystem metadata.
+
 ## Migration checklist
 
 For each applicable item, check Windows, Linux and macOS separately before

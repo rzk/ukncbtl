@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(UKNCBTL_BUILD_LEGACY "Build the existing Windows/MSVC application during migration" ${WIN32})
+option(UKNCBTL_USE_PORTABLE_SETTINGS "Use the experimental portable settings backend in the legacy application" OFF)
 if(UKNCBTL_BUILD_LEGACY)
   if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "The legacy application currently requires Windows and MSVC; set UKNCBTL_BUILD_LEGACY=OFF for portable targets")
@@ -201,6 +202,10 @@ add_executable(UKNCBTL WIN32
 ukncbtl_target(UKNCBTL)
 target_include_directories(UKNCBTL PRIVATE emulator/res)
 target_link_libraries(UKNCBTL PRIVATE FrameControl FrameTiming HostInput WavPcmFile EmulatorCore EmulatorSnapshot VideoDecoder ScreenScale vfw32 comctl32 winmm advapi32 shell32 windowscodecs)
+if(UKNCBTL_USE_PORTABLE_SETTINGS)
+  target_compile_definitions(UKNCBTL PRIVATE UKNCBTL_PORTABLE_SETTINGS)
+  target_link_libraries(UKNCBTL PRIVATE SettingsStore)
+endif()
 target_link_options(UKNCBTL PRIVATE "LINKER:/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='amd64' publicKeyToken='6595b64144ccf1df' language='*'")
 
 # The default renderer is loaded dynamically, so it must be built alongside the
@@ -231,6 +236,10 @@ if(BUILD_TESTING)
   target_compile_definitions(ConsoleProductTests PRIVATE PRODUCT)
   set_target_properties(ConsoleProductTests PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
   ukncbtl_test(SettingsTests tests/SettingsTests.cpp emulator/Settings.cpp)
+  if(UKNCBTL_USE_PORTABLE_SETTINGS)
+    target_compile_definitions(SettingsTests PRIVATE UKNCBTL_PORTABLE_SETTINGS)
+    target_link_libraries(SettingsTests PRIVATE SettingsStore)
+  endif()
   # Exercise the same application settings API against the new store without
   # changing the production backend before legacy INI migration is complete.
   add_executable(SettingsPortableTests tests/SettingsTests.cpp emulator/Settings.cpp)
