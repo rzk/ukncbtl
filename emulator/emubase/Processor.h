@@ -26,7 +26,7 @@ class CMemoryController;
 class CProcessor
 {
 public:  // Constructor / initialization
-    explicit CProcessor(LPCTSTR name);
+    explicit CProcessor(const wchar_t* name);
     /// \brief Link the processor and memory controller
     void        AttachMemoryController(CMemoryController* ctl) { m_pMemoryController = ctl; }
     void        SetHALTPin(bool value) { m_haltpin = value; }
@@ -34,7 +34,7 @@ public:  // Constructor / initialization
     void        SetACLOPin(bool value);
     void        MemoryError();
     /// \brief Get the processor name, assigned in the constructor
-    LPCTSTR     GetName() const { return m_name.data(); }
+    const wchar_t* GetName() const { return m_name.data(); }
 
 public:
     static void Init();  ///< Initialize static tables
@@ -44,7 +44,7 @@ protected:  // Statics
     static std::unique_ptr<ExecuteMethodRef[]> m_pExecuteMethodMap;
 
 protected:  // Processor state
-    std::array<TCHAR, 5> m_name{};          ///< Processor name (DO NOT use it inside the processor code!!!)
+    std::array<wchar_t, 5> m_name{};        ///< Processor name (DO NOT use it inside the processor code!!!)
     uint16_t    m_internalTick;     ///< How many ticks waiting to the end of current instruction
     uint16_t    m_psw;              ///< Processor Status Word (PSW)
     std::array<uint16_t, 8> m_R{};             ///< Registers (R0..R5, R6=SP, R7=PC)

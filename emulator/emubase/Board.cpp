@@ -1,4 +1,4 @@
-﻿/*  This file is part of UKNCBTL.
+/*  This file is part of UKNCBTL.
     UKNCBTL is free software: you can redistribute it and/or modify it under the terms
 of the GNU Lesser General Public License as published by the Free Software Foundation,
 either version 3 of the License, or (at your option) any later version.
@@ -10,11 +10,13 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 /// \file Board.cpp  Motherboard class implementation
 
-#include "stdafx.h"
 #include "util/Profiler.h"
 #include "Emubase.h"
 #include "Board.h"
 #include "ImageSerialization.h"
+#include <algorithm>
+#include <cassert>
+#include <cstddef>
 
 
 //////////////////////////////////////////////////////////////////////
@@ -27,7 +29,7 @@ static constexpr BusAddressRange ProcessorTimerAddressRanges[] =
 class CBusDeviceProcessorTimer : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Processor timer"); }
+    const wchar_t* GetName() const override { return L"Processor timer"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return ProcessorTimerAddressRanges; }
 };
 
@@ -39,7 +41,7 @@ static constexpr BusAddressRange CpuChannelsAddressRanges[] =
 class CBusDeviceCpuChannels : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("CPU-PPU channels"); }
+    const wchar_t* GetName() const override { return L"CPU-PPU channels"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return CpuChannelsAddressRanges; }
 };
 
@@ -50,7 +52,7 @@ static constexpr BusAddressRange PpuChannelsAddressRanges[] =
 class CBusDevicePpuChannels : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("CPU-PPU channels"); }
+    const wchar_t* GetName() const override { return L"CPU-PPU channels"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return PpuChannelsAddressRanges; }
 };
 
@@ -61,7 +63,7 @@ static constexpr BusAddressRange NetworkAdapterAddressRanges[] =
 class CBusDeviceNetworkAdapter : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Network adapter"); }
+    const wchar_t* GetName() const override { return L"Network adapter"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return NetworkAdapterAddressRanges; }
 };
 
@@ -72,7 +74,7 @@ static constexpr BusAddressRange SerialPortAddressRanges[] =
 class CBusDeviceSerialPort : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Serial port"); }
+    const wchar_t* GetName() const override { return L"Serial port"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return SerialPortAddressRanges; }
 };
 
@@ -83,7 +85,7 @@ static constexpr BusAddressRange CpuMemoryAccessAddressRanges[] =
 class CBusDeviceCpuMemoryAccess : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Memory access"); }
+    const wchar_t* GetName() const override { return L"Memory access"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return CpuMemoryAccessAddressRanges; }
 };
 
@@ -95,7 +97,7 @@ static constexpr BusAddressRange PpuMemoryAccessAddressRanges[] =
 class CBusDevicePpuMemoryAccess : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Memory access"); }
+    const wchar_t* GetName() const override { return L"Memory access"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return PpuMemoryAccessAddressRanges; }
 };
 
@@ -106,7 +108,7 @@ static constexpr BusAddressRange ProgrammablePortAddressRanges[] =
 class CBusDeviceProgrammablePort : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Programmable port"); }
+    const wchar_t* GetName() const override { return L"Programmable port"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return ProgrammablePortAddressRanges; }
 };
 
@@ -117,7 +119,7 @@ static constexpr BusAddressRange KeyboardAddressRanges[] =
 class CBusDeviceKeyboard : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Keyboard"); }
+    const wchar_t* GetName() const override { return L"Keyboard"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return KeyboardAddressRanges; }
 };
 
@@ -128,7 +130,7 @@ static constexpr BusAddressRange FloppyControllerAddressRanges[] =
 class CBusDeviceFloppyController : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Floppy controller"); }
+    const wchar_t* GetName() const override { return L"Floppy controller"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return FloppyControllerAddressRanges; }
 };
 
@@ -139,7 +141,7 @@ static constexpr BusAddressRange HardDriveAddressRanges[] =
 class CBusDeviceHardDrive : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Hard drive"); }
+    const wchar_t* GetName() const override { return L"Hard drive"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return HardDriveAddressRanges; }
 };
 
@@ -173,8 +175,8 @@ CMotherboard::CMotherboard ()
     m_okSoundAY = m_okSoundCovox = false;
 
     // Create devices
-    m_pCPU = std::make_unique<CProcessor>(_T("CPU"));
-    m_pPPU = std::make_unique<CProcessor>(_T("PPU"));
+    m_pCPU = std::make_unique<CProcessor>(L"CPU");
+    m_pPPU = std::make_unique<CProcessor>(L"PPU");
     m_pFirstMemCtl = std::make_unique<CFirstMemoryController>();
     m_pSecondMemCtl = std::make_unique<CSecondMemoryController>();
     m_pFloppyCtl = std::make_unique<CFloppyController>();
@@ -212,9 +214,9 @@ CMotherboard::CMotherboard ()
     m_ppuDeviceOwners[5] = std::make_unique<CBusDeviceFloppyController>();
     m_ppuDeviceOwners[6] = std::make_unique<CBusDeviceHardDrive>();
 
-    for (size_t i = 0; i < m_cpuDeviceOwners.size(); ++i)
+    for (std::size_t i = 0; i < m_cpuDeviceOwners.size(); ++i)
         m_pCpuDevices[i] = m_cpuDeviceOwners[i].get();
-    for (size_t i = 0; i < m_ppuDeviceOwners.size(); ++i)
+    for (std::size_t i = 0; i < m_ppuDeviceOwners.size(); ++i)
         m_pPpuDevices[i] = m_ppuDeviceOwners[i].get();
 
     m_pFirstMemCtl->AttachDevices(m_pCpuDevices);
@@ -288,7 +290,7 @@ void CMotherboard::LoadROM(std::span<const uint8_t, 32768> buffer)  // Load 32 K
 
 void CMotherboard::LoadROMCartridge(int cartno, std::span<const uint8_t, 24 * 1024> buffer)  // Load 24 KB ROM cartridge image
 {
-    ASSERT(cartno == 1 || cartno == 2);  // Only two cartridges, #1 and #2
+    assert(cartno == 1 || cartno == 2);  // Only two cartridges, #1 and #2
 
     int cartindex = cartno - 1;
     if (m_pROMCart[cartindex] == nullptr)
@@ -299,7 +301,7 @@ void CMotherboard::LoadROMCartridge(int cartno, std::span<const uint8_t, 24 * 10
 
 void CMotherboard::LoadRAM(int plan, std::span<const uint8_t, 32768> buffer)  // Load 32 KB RAM image from the buffer
 {
-    ASSERT(plan >= 0 && plan <= 2);
+    assert(plan >= 0 && plan <= 2);
     std::ranges::copy(buffer, m_pRAM[plan].get());
 }
 
@@ -314,13 +316,13 @@ void CMotherboard::SetNetStation(uint16_t station)
 
 bool CMotherboard::IsFloppyImageAttached(int slot) const
 {
-    ASSERT(slot >= 0 && slot < 4);
+    assert(slot >= 0 && slot < 4);
     return m_pFloppyCtl->IsAttached(slot);
 }
 
 bool CMotherboard::IsFloppyReadOnly(int slot) const
 {
-    ASSERT(slot >= 0 && slot < 4);
+    assert(slot >= 0 && slot < 4);
     return m_pFloppyCtl->IsReadOnly(slot);
 }
 
@@ -329,15 +331,20 @@ bool CMotherboard::IsFloppyEngineOn() const
     return m_pFloppyCtl->IsEngineOn();
 }
 
-bool CMotherboard::AttachFloppyImage(int slot, LPCTSTR sFileName)
+bool CMotherboard::AttachFloppyImage(int slot, const wchar_t* sFileName)
 {
-    ASSERT(slot >= 0 && slot < 4);
-    return m_pFloppyCtl->AttachImage(slot, sFileName);
+    return sFileName && AttachFloppyImage(slot, std::filesystem::path(sFileName));
+}
+
+bool CMotherboard::AttachFloppyImage(int slot, const std::filesystem::path& path)
+{
+    assert(slot >= 0 && slot < 4);
+    return m_pFloppyCtl->AttachImage(slot, path);
 }
 
 void CMotherboard::DetachFloppyImage(int slot)
 {
-    ASSERT(slot >= 0 && slot < 4);
+    assert(slot >= 0 && slot < 4);
     m_pFloppyCtl->DetachImage(slot);
 }
 
@@ -346,14 +353,14 @@ void CMotherboard::DetachFloppyImage(int slot)
 
 bool CMotherboard::IsROMCartridgeLoaded(int cartno) const
 {
-    ASSERT(cartno == 1 || cartno == 2);  // Only two cartridges, #1 and #2
+    assert(cartno == 1 || cartno == 2);  // Only two cartridges, #1 and #2
     int cartindex = cartno - 1;
     return (m_pROMCart[cartindex] != nullptr);
 }
 
 void CMotherboard::UnloadROMCartridge(int cartno)
 {
-    ASSERT(cartno == 1 || cartno == 2);  // Only two cartridges, #1 and #2
+    assert(cartno == 1 || cartno == 2);  // Only two cartridges, #1 and #2
     int cartindex = cartno - 1;
     m_pROMCart[cartindex].reset();
 }
@@ -363,24 +370,29 @@ void CMotherboard::UnloadROMCartridge(int cartno)
 
 bool CMotherboard::IsHardImageAttached(int slot) const
 {
-    ASSERT(slot >= 1 && slot <= 2);
+    assert(slot >= 1 && slot <= 2);
     return (m_pHardDrives[slot - 1] != nullptr);
 }
 
 bool CMotherboard::IsHardImageReadOnly(int slot) const
 {
-    ASSERT(slot >= 1 && slot <= 2);
+    assert(slot >= 1 && slot <= 2);
     CHardDrive* pHardDrive = m_pHardDrives[slot - 1].get();
     if (pHardDrive == nullptr) return false;
     return pHardDrive->IsReadOnly();
 }
 
-bool CMotherboard::AttachHardImage(int slot, LPCTSTR sFileName)
+bool CMotherboard::AttachHardImage(int slot, const wchar_t* sFileName)
 {
-    ASSERT(slot >= 1 && slot <= 2);
+    return sFileName && AttachHardImage(slot, std::filesystem::path(sFileName));
+}
+
+bool CMotherboard::AttachHardImage(int slot, const std::filesystem::path& path)
+{
+    assert(slot >= 1 && slot <= 2);
 
     auto drive = std::make_unique<CHardDrive>();
-    if (!drive->AttachImage(sFileName))
+    if (!drive->AttachImage(path))
         return false;
 
     drive->Reset();
@@ -390,14 +402,14 @@ bool CMotherboard::AttachHardImage(int slot, LPCTSTR sFileName)
 }
 void CMotherboard::DetachHardImage(int slot)
 {
-    ASSERT(slot >= 1 && slot <= 2);
+    assert(slot >= 1 && slot <= 2);
 
     m_pHardDrives[slot - 1].reset();
 }
 
 uint16_t CMotherboard::GetHardPortWord(int slot, uint16_t port)
 {
-    ASSERT(slot >= 1 && slot <= 2);
+    assert(slot >= 1 && slot <= 2);
 
     if (m_pHardDrives[slot - 1] == nullptr) return 0;
     port = (uint16_t) (~(port >> 1) & 7) | 0x1f0;
@@ -406,7 +418,7 @@ uint16_t CMotherboard::GetHardPortWord(int slot, uint16_t port)
 }
 void CMotherboard::SetHardPortWord(int slot, uint16_t port, uint16_t data)
 {
-    ASSERT(slot >= 1 && slot <= 2);
+    assert(slot >= 1 && slot <= 2);
 
     if (m_pHardDrives[slot - 1] == nullptr) return;
     port = (uint16_t) (~(port >> 1) & 7) | 0x1f0;
@@ -419,20 +431,20 @@ void CMotherboard::SetHardPortWord(int slot, uint16_t port, uint16_t data)
 
 uint16_t CMotherboard::GetROMWord(uint16_t offset) const
 {
-    ASSERT(offset < 32768);
+    assert(offset < 32768);
     offset &= 0xFFFE;
     return static_cast<uint16_t>(m_pROM[offset] | (m_pROM[offset + 1] << 8));
 }
 uint8_t CMotherboard::GetROMByte(uint16_t offset) const
 {
-    ASSERT(offset < 32768);
+    assert(offset < 32768);
     return m_pROM[offset];
 }
 
 uint16_t CMotherboard::GetROMCartWord(int cartno, uint16_t offset) const
 {
-    ASSERT(cartno == 1 || cartno == 2);
-    ASSERT(offset < 24 * 1024 - 1);
+    assert(cartno == 1 || cartno == 2);
+    assert(offset < 24 * 1024 - 1);
     int cartindex = cartno - 1;
     if (m_pROMCart[cartindex] == nullptr)
         return 0177777;
@@ -442,8 +454,8 @@ uint16_t CMotherboard::GetROMCartWord(int cartno, uint16_t offset) const
 }
 uint8_t CMotherboard::GetROMCartByte(int cartno, uint16_t offset) const
 {
-    ASSERT(cartno == 1 || cartno == 2);
-    ASSERT(offset < 24 * 1024);
+    assert(cartno == 1 || cartno == 2);
+    assert(offset < 24 * 1024);
     int cartindex = cartno - 1;
     if (m_pROMCart[cartindex] == nullptr)
         return 0377;
@@ -981,8 +993,8 @@ void CMotherboard::SaveToImage(std::span<uint8_t, UKNCIMAGE_SIZE> image)
     // PPU memory/IO controller status
     m_pSecondMemCtl->SaveToImage(image.subspan<352, 64>());
 
-    constexpr size_t romSize = 32 * 1024;
-    constexpr size_t ramSize = 64 * 1024;
+    constexpr std::size_t romSize = 32 * 1024;
+    constexpr std::size_t ramSize = 64 * 1024;
     std::ranges::copy(std::span{m_pROM.get(), romSize}, image.subspan<UKNCIMAGE_HEADER_SIZE, romSize>().begin());
     std::span<uint8_t> ramImage = image.subspan<UKNCIMAGE_HEADER_SIZE + romSize>();
     for (const auto& plane : m_pRAM)
@@ -1033,8 +1045,8 @@ void CMotherboard::LoadFromImage(std::span<const uint8_t, UKNCIMAGE_SIZE> image)
     // PPU memory/IO controller status
     m_pSecondMemCtl->LoadFromImage(image.subspan<352, 64>());
 
-    constexpr size_t romSize = 32 * 1024;
-    constexpr size_t ramSize = 64 * 1024;
+    constexpr std::size_t romSize = 32 * 1024;
+    constexpr std::size_t ramSize = 64 * 1024;
     std::ranges::copy(image.subspan<UKNCIMAGE_HEADER_SIZE, romSize>(), m_pROM.get());
     std::span<const uint8_t> ramImage = image.subspan<UKNCIMAGE_HEADER_SIZE + romSize>();
     for (const auto& plane : m_pRAM)
@@ -1048,7 +1060,7 @@ void CMotherboard::ChanWriteByCPU(uint8_t chan, uint8_t data)
 {
     uint8_t oldp_ready = m_chanppurx[chan].ready;
     chan &= 3;
-    ASSERT(chan < 3);
+    assert(chan < 3);
 
     m_chanppurx[chan].data = data;
     m_chanppurx[chan].ready = 1;
@@ -1068,7 +1080,7 @@ void CMotherboard::ChanWriteByPPU(uint8_t chan, uint8_t data)
 {
     uint8_t oldc_ready = m_chancpurx[chan].ready;
     chan &= 3;
-    ASSERT(chan < 2);
+    assert(chan < 2);
 
     m_chancpurx[chan].data = data;
     m_chancpurx[chan].ready = 1;
@@ -1086,7 +1098,7 @@ uint8_t CMotherboard::ChanReadByCPU(uint8_t chan)
     uint8_t res, oldp_ready = m_chanpputx[chan].ready;
 
     chan &= 3;
-    ASSERT(chan < 2);
+    assert(chan < 2);
 
     res = m_chancpurx[chan].data;
     m_chancpurx[chan].ready = 0;
@@ -1105,7 +1117,7 @@ uint8_t CMotherboard::ChanReadByPPU(uint8_t chan)
     uint8_t res, oldc_ready = m_chancputx[chan].ready;
 
     chan &= 3;
-    ASSERT(chan < 3);
+    assert(chan < 3);
 
     //if((chan==0)&&(m_chan0disabled))
     //    return 0;
@@ -1138,14 +1150,14 @@ uint8_t CMotherboard::ChanReadByPPU(uint8_t chan)
 uint8_t CMotherboard::ChanRxStateGetCPU(uint8_t chan)
 {
     chan &= 3;
-    ASSERT(chan < 2);
+    assert(chan < 2);
     return (m_chancpurx[chan].ready << 7) | (m_chancpurx[chan].irq << 6);
 }
 
 uint8_t CMotherboard::ChanTxStateGetCPU(uint8_t chan)
 {
     chan &= 3;
-    ASSERT(chan < 3);
+    assert(chan < 3);
     return (m_chancputx[chan].ready << 7) | (m_chancputx[chan].irq << 6);
 }
 
@@ -1167,7 +1179,7 @@ void CMotherboard::ChanRxStateSetCPU(uint8_t chan, uint8_t state)
 {
     uint8_t oldc_irq = m_chancpurx[chan].irq;
     chan &= 3;
-    ASSERT(chan < 2);
+    assert(chan < 2);
 
     if (state & 0100) //irq
         m_chancpurx[chan].irq = 1;
@@ -1187,7 +1199,7 @@ void CMotherboard::ChanTxStateSetCPU(uint8_t chan, uint8_t state)
 {
     uint8_t oldc_irq = m_chancputx[chan].irq;
     chan &= 3;
-    ASSERT(chan < 3);
+    assert(chan < 3);
 
     if (state & 0100) //irq
         m_chancputx[chan].irq = 1;

@@ -1,4 +1,4 @@
-﻿/*  This file is part of UKNCBTL.
+/*  This file is part of UKNCBTL.
     UKNCBTL is free software: you can redistribute it and/or modify it under the terms
 of the GNU Lesser General Public License as published by the Free Software Foundation,
 either version 3 of the License, or (at your option) any later version.
@@ -15,76 +15,21 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <array>
 #include "util/File.h"
 
+#include "Disasm.h"
+#include "SoundAY.h"
 #include "Board.h"
 #include "Processor.h"
 #include "Memory.h"
 #include <optional>
 #include <expected>
+#include <filesystem>
+#include <fstream>
 #include <span>
 #include <string>
 
 
 //////////////////////////////////////////////////////////////////////
 // Disassembler
-
-/// \brief Disassemble one instruction of KM1801VM2 processor
-/// \param[in]  memory Instruction words; missing extension words are treated as zero
-/// \param[in]  addr    Address of the instruction
-struct DisassembledInstruction
-{
-    std::basic_string<TCHAR> mnemonic;
-    std::basic_string<TCHAR> argument;
-    uint16_t length = 0;
-};
-
-/// \return The decoded instruction, or no value when memory is empty
-[[nodiscard]] std::optional<DisassembledInstruction> DisassembleInstruction(
-    std::span<const uint16_t> memory, uint16_t addr);
-
-/// \brief Check if the instruction is a jump with a known target, for the jump arrow
-/// \param[in]  memory   Memory image: the instruction and the word after it (the offset or the address of the target)
-/// \param[in]  address  Address of the instruction
-/// \return Distance in words to the known target, or no value
-[[nodiscard]] std::optional<int> Disasm_CheckForJump(std::span<const uint16_t> memory, uint16_t address);
-
-// Hints of the current instruction: up to three lines of text and the jump prediction
-inline constexpr auto DISASM_HINT_LINES = 3;
-
-struct DisasmHint
-{
-    std::array<TcharString, DISASM_HINT_LINES> lines{};
-    int count = 0;
-    bool isJump = false;
-    bool jumpPredict = false;
-};
-
-/// \brief Prepare the hints of the instruction at PC
-/// \param[in]  memory   Memory image: the instruction and the two words after it
-/// \param[in]  processor Processor, the instruction is at its PC
-/// \param[in]  memoryController Memory controller of the processor
-/// \return The hint text and jump prediction
-[[nodiscard]] DisasmHint Disasm_GetHint(std::span<const uint16_t> memory, const CProcessor& processor,
-                                        const CMemoryController& memoryController);
-
-/// Prepare the regular instruction hint independently of the jump hint.
-[[nodiscard]] DisasmHint Disasm_GetInstructionHint(std::span<const uint16_t> memory,
-    const CProcessor& processor, const CMemoryController& memoryController);
-
-struct DisasmJumpHint
-{
-    TcharString text;
-    bool predict = false;
-};
-/// Prepare the jump condition and its prediction.
-[[nodiscard]] DisasmJumpHint Disasm_GetJumpConditionHint(std::span<const uint16_t> memory,
-    const CProcessor& processor, const CMemoryController& memoryController);
-
-/// \brief Convert two words of a FIS floating point number (DEC single precision) to a string
-/// \param[in]  high        High word: sign, 8-bit exponent (bias 128), high 7 bits of the mantissa
-/// \param[in]  low         Low word: low 16 bits of the mantissa
-/// \return Shortest representation (up to nine digits) preserving the 24-bit mantissa
-[[nodiscard]] TcharString Disasm_FloatToString(uint16_t high, uint16_t low);
-
 
 //////////////////////////////////////////////////////////////////////
 // CFloppy
@@ -117,7 +62,7 @@ inline constexpr auto FLOPPY_INDEXLENGTH = 150;      ///< Length of index hole, 
 /// \sa CFloppyController
 struct CFloppyDrive
 {
-    UniqueFile fpFile;       ///< File pointer of the disk image file
+    std::unique_ptr<std::fstream> fpFile; ///< Stream for the disk image file
     bool okNetRT11Image;  ///< true - .rtd image, false - .dsk image
     bool okReadOnly;    ///< Write protection flag
     uint16_t track;         ///< Track number: from 0 to 79
@@ -164,7 +109,8 @@ public:
     void Reset();       ///< Reset the device
 
     /// \brief Attach the image to the drive -- insert disk
-    bool AttachImage(int drive, LPCTSTR sFileName);
+    bool AttachImage(int drive, const wchar_t* sFileName);
+    bool AttachImage(int drive, const std::filesystem::path& path);
     /// \brief Detach image from the drive -- remove disk
     void DetachImage(int drive);
     /// \brief Check if the drive has an image attached
@@ -195,7 +141,7 @@ inline constexpr auto IDE_DISK_SECTOR_SIZE = 512;
 class CHardDrive
 {
 protected:
-    UniqueFile m_fpFile;           ///< File pointer for the attached HDD image
+    std::unique_ptr<std::fstream> m_fpFile; ///< Stream for the attached HDD image
     bool    m_okReadOnly;       ///< Flag indicating that the HDD image file is read-only
     bool    m_okInverted;       ///< Flag indicating that the HDD image has inverted bits
     uint8_t m_status;           ///< IDE status register, see IDE_STATUS_XXX constants
@@ -221,7 +167,8 @@ public:
     /// \brief Reset the device.
     void Reset();
     /// \brief Attach HDD image file to the device
-    bool AttachImage(LPCTSTR sFileName);
+    bool AttachImage(const wchar_t* sFileName);
+    bool AttachImage(const std::filesystem::path& path);
     /// \brief Detach HDD image file from the device
     void DetachImage();
     /// \brief Check if the attached hard drive image is read-only
@@ -247,40 +194,3 @@ private:
     void ContinueWrite();
     void IdentifyDrive();       ///< Prepare m_buffer for the IDENTIFY DRIVE command
 };
-
-
-//////////////////////////////////////////////////////////////////////
-
-class CSoundAY
-{
-protected:
-    int index;
-    int ready;
-    std::array<unsigned, 16> Regs{};
-    int32_t lastEnable;
-    int32_t PeriodA, PeriodB, PeriodC, PeriodN, PeriodE;
-    int32_t CountA, CountB, CountC, CountN, CountE;
-    uint32_t VolA, VolB, VolC, VolE;
-    uint8_t EnvelopeA, EnvelopeB, EnvelopeC;
-    uint8_t OutputA, OutputB, OutputC, OutputN;
-    int8_t CountEnv;
-    uint8_t Hold, Alternate, Attack, Holding;
-    int32_t RNG;
-protected:
-    static std::array<unsigned int, 32> VolTable;
-
-public:
-    CSoundAY();
-    void Reset();
-
-public:
-    void SetReg(int r, int v);
-    void Callback(std::span<uint8_t> stream);
-
-protected:
-    static void BuildMixerTable();
-    void RenderChunk(std::span<uint8_t> stream);
-};
-
-
-//////////////////////////////////////////////////////////////////////

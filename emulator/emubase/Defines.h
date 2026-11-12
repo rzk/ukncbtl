@@ -11,6 +11,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 /// \file Defines.h  PDP11-like processor defines
 
 #pragma once
+#include <cstdint>
 
 
 //////////////////////////////////////////////////////////////////////

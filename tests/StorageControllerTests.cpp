@@ -42,7 +42,12 @@ public:
     void Dirty() { m_trackchanged=true; }
     bool Changed() const { return m_trackchanged; }
     auto Position() const { return std::array<uint16_t,3>{m_drive,m_track,m_side}; }
-    void Reopen(const wchar_t* path,const wchar_t* mode) { m_pDrive->fpFile.reset(); m_pDrive->fpFile.reset(_wfopen(path,mode)); ASSERT_NE(nullptr,m_pDrive->fpFile); }
+    void Reopen(const wchar_t* path,const wchar_t* mode) {
+        const auto flags = std::ios::binary | std::ios::in |
+            (std::wstring_view(mode) == L"r+b" ? std::ios::out : std::ios::openmode{});
+        m_pDrive->fpFile = std::make_unique<std::fstream>(std::filesystem::path(path), flags);
+        ASSERT_TRUE(*m_pDrive->fpFile);
+    }
     bool Queued() const { return m_writeflag || m_shiftflag; }
 };
 constexpr uint16_t Select0=02003|FLOPPY_CMD_ENGINESTART;
@@ -236,7 +241,7 @@ TEST_F(FloppySequences, MarkerFollowsQueuedWordAndClearsOnLaterWrites) {
 class FailedFlush : public FloppySequences,public testing::WithParamInterface<int> {};
 TEST_P(FailedFlush, RetainsTrackAndSelectionUntilStreamCanBeWritten) {
     f.Raw()[96]=0x7a; f.Dirty(); const auto raw=f.Raw(); const auto position=f.Position();
-    // A valid read-only stream injects a real fwrite failure without closing a live FILE.
+    // A valid read-only stream injects a real write failure.
     f.Reopen(file.Path(),L"rb");
     switch(GetParam()) {
     case 0: f.Reset(); break;

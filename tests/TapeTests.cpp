@@ -1,7 +1,7 @@
-#include "stdafx.h"
 #include <gtest/gtest.h>
 #include "TapeTransport.h"
 #include <array>
+#include <climits>
 #include <vector>
 
 namespace {

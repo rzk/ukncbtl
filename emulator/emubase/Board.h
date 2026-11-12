@@ -15,6 +15,8 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "Defines.h"
 #include <memory>
 #include <array>
+#include <cassert>
+#include <filesystem>
 #include <span>
 
 class CProcessor;
@@ -68,51 +70,51 @@ struct kbd_row
 //   samples    Number of samples to play.
 // Output:
 //   result     Bit to put in tape input port.
-using TAPEREADCALLBACK = bool (CALLBACK*)(unsigned int samples);
+using TAPEREADCALLBACK = bool (*)(unsigned int samples);
 
 // Tape emulator callback used to write a data to tape.
 // Input:
 //   value      Sample value to write.
-using TAPEWRITECALLBACK = void (CALLBACK*)(int value, unsigned int samples);
+using TAPEWRITECALLBACK = void (*)(int value, unsigned int samples);
 
 // Sound generator callback function type
-using SOUNDGENCALLBACK = void (CALLBACK*)(unsigned short L, unsigned short R);
+using SOUNDGENCALLBACK = void (*)(unsigned short L, unsigned short R);
 
 // Network port callback for receiving
 // Output:
 //   pbyte      Byte received
 //   result     true means we have a new byte, false means not ready yet
-using NETWORKINCALLBACK = bool (CALLBACK*)(uint8_t* pbyte);
+using NETWORKINCALLBACK = bool (*)(uint8_t* pbyte);
 
 // Network port callback for translating
 // Input:
 //   byte       A byte to translate
 // Output:
 //   result     true means we translated the byte successfully, false means we have an error
-using NETWORKOUTCALLBACK = bool (CALLBACK*)(uint8_t byte);
+using NETWORKOUTCALLBACK = bool (*)(uint8_t byte);
 
 // Serial port callback for receiving
 // Output:
 //   pbyte      Byte received
 //   result     true means we have a new byte, false means not ready yet
-using SERIALINCALLBACK = bool (CALLBACK*)(uint8_t* pbyte);
+using SERIALINCALLBACK = bool (*)(uint8_t* pbyte);
 
 // Serial port callback for translating
 // Input:
 //   byte       A byte to translate
 // Output:
 //   result     true means we translated the byte successfully, false means we have an error
-using SERIALOUTCALLBACK = bool (CALLBACK*)(uint8_t byte);
+using SERIALOUTCALLBACK = bool (*)(uint8_t byte);
 
 // Parallel port output callback
 // Input:
 //   byte       An output byte
 // Output:
 //   result     true means OK, false means we have an error
-using PARALLELOUTCALLBACK = bool (CALLBACK*)(uint8_t byte);
+using PARALLELOUTCALLBACK = bool (*)(uint8_t byte);
 
 // Terminal out callback -- CPU sends character by channel 0
-using TERMINALOUTCALLBACK = void (CALLBACK*)(uint8_t byte);
+using TERMINALOUTCALLBACK = void (*)(uint8_t byte);
 
 // Instruction execution callback -- called by CPU/PPU just before an instruction is executed,
 // memory and registers are still in pre-execution state
@@ -120,7 +122,7 @@ using TERMINALOUTCALLBACK = void (CALLBACK*)(uint8_t byte);
 //   pProc      Processor executing the instruction (CPU or PPU), see CProcessor::GetName()
 //   address    Address of the instruction, PC value before the fetch
 //   opcode     First word of the instruction as fetched
-using INSTRUCTIONCALLBACK = void (CALLBACK*)(const CProcessor* pProc, uint16_t address, uint16_t opcode);
+using INSTRUCTIONCALLBACK = void (*)(const CProcessor* pProc, uint16_t address, uint16_t opcode);
 
 // Interrupt callback -- called by CPU/PPU when an interrupt or trap has been taken: the old PC/PSW
 // are saved and the new PC/PSW are loaded from the vector
@@ -129,7 +131,7 @@ using INSTRUCTIONCALLBACK = void (CALLBACK*)(const CProcessor* pProc, uint16_t a
 //              pProc->GetPC() / GetPSW() are the handler address and PSW, IsHaltMode() is the handler mode
 //   oldPc      PC where the interrupt appeared: the address of the code that was interrupted
 //   vector     Interrupt vector address; for HALT mode interrupts it includes the SEL register high byte
-using INTERRUPTCALLBACK = void (CALLBACK*)(const CProcessor* pProc, uint16_t oldPc, uint16_t vector);
+using INTERRUPTCALLBACK = void (*)(const CProcessor* pProc, uint16_t oldPc, uint16_t vector);
 
 class CFloppyController;
 class CHardDrive;
@@ -148,7 +150,7 @@ class CBusDevice
 {
 public:
     /// \brief Name of the device
-    virtual LPCTSTR GetName() const = 0;
+    virtual const wchar_t* GetName() const = 0;
     /// \brief Device address ranges
     virtual std::span<const BusAddressRange> GetAddressRanges() const = 0;
 
@@ -271,7 +273,8 @@ public:  // System control
     void        MouseMove(int16_t dx, int16_t dy, bool btnLeft, bool btnRight);
 
     /// \brief Attach floppy image to the slot -- insert the disk.
-    bool        AttachFloppyImage(int slot, LPCTSTR sFileName);
+    bool        AttachFloppyImage(int slot, const wchar_t* sFileName);
+    bool        AttachFloppyImage(int slot, const std::filesystem::path& path);
     /// \brief Empty the floppy slot -- remove the disk.
     void        DetachFloppyImage(int slot);
     /// \brief Check if the floppy attached.
@@ -293,7 +296,8 @@ public:  // System control
     void        UnloadROMCartridge(int cartno);
 
     /// \brief Attach hard drive image to the slot.
-    bool        AttachHardImage(int slot, LPCTSTR sFileName);
+    bool        AttachHardImage(int slot, const wchar_t* sFileName);
+    bool        AttachHardImage(int slot, const std::filesystem::path& path);
     /// \brief Empty hard drive slot.
     void        DetachHardImage(int slot);
     /// \brief Check if the hard drive attached.
@@ -381,25 +385,25 @@ private:
 
 inline uint16_t CMotherboard::GetRAMWord(int plan, uint16_t offset) const
 {
-    ASSERT(plan >= 0 && plan <= 2);
+    assert(plan >= 0 && plan <= 2);
     offset &= 0xFFFE;
     return static_cast<uint16_t>(m_pRAM[plan][offset] | (m_pRAM[plan][offset + 1] << 8));
 }
 inline uint8_t CMotherboard::GetRAMByte(int plan, uint16_t offset) const
 {
-    ASSERT(plan >= 0 && plan <= 2);
+    assert(plan >= 0 && plan <= 2);
     return m_pRAM[plan][offset];
 }
 inline void CMotherboard::SetRAMWord(int plan, uint16_t offset, uint16_t word)
 {
-    ASSERT(plan >= 0 && plan <= 2);
+    assert(plan >= 0 && plan <= 2);
     offset &= 0xFFFE;
     m_pRAM[plan][offset] = static_cast<uint8_t>(word);
     m_pRAM[plan][offset + 1] = static_cast<uint8_t>(word >> 8);
 }
 inline void CMotherboard::SetRAMByte(int plan, uint16_t offset, uint8_t byte)
 {
-    ASSERT(plan >= 0 && plan <= 2);
+    assert(plan >= 0 && plan <= 2);
     m_pRAM[plan][offset] = byte;
 }
 

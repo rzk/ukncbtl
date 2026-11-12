@@ -1,10 +1,45 @@
 # ukncbtl
 UKNCBTL — UKNC Back to Life! emulator, Windows x86-64 version.
 
+### Portable build during the SDL migration
+
+The portable CMake build currently contains the headless emulator core, video
+decoder, screen scaler, snapshots, WAV service and a subset of the tests; it does **not**
+build a cross-platform frontend yet. The legacy application still requires
+the Windows toolchain documented below. The intended portable toolchain is
+CMake, Ninja and a Clang toolchain with a C++23 standard library. On Windows,
+Clang also needs a Windows SDK, compatible C++ standard library and linker
+environment. The project does not yet claim a verified cross-platform release.
+
+With the toolchain available on `PATH`, configure and run the portable tests:
+
+```sh
+cmake -S . -B build/portable -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF
+cmake --build build/portable
+ctest --test-dir build/portable --output-on-failure
+```
+
+On Windows set both `CMAKE_C_COMPILER` and `CMAKE_CXX_COMPILER` to `clang-cl`
+from an environment that provides the SDK, standard library and linker. Clang's
+`clang` driver must also be on `PATH` to assemble the CPU overflow routines;
+alternatively set `UKNCBTL_CLANG_ASSEMBLER` to its full path. GoogleTest is fetched at its
+pinned commit; offline builds can use `FETCHCONTENT_SOURCE_DIR_GOOGLETEST` as
+described in [testing and performance](docs/performance.md). The portable
+build defaults to enabled tests; `BUILD_TESTING=OFF` configures without test
+targets. Benchmarks, Tracy and ASan remain legacy-only for now. The migration
+checklist is in [docs/sdl-migration-baseline.md](docs/sdl-migration-baseline.md).
+
+The overflow assembly has x86-64 and ARM64 implementations for Windows, Linux
+and macOS. CMake selects a single target architecture; macOS universal builds
+must currently be made as separate architecture builds. Windows x86-64 has
+been executed locally; the other combinations still require native CI or hardware
+verification even though their objects have been cross-assembled.
+
 ### Building on Windows
 
 Install Visual Studio 2026 with the Desktop development with C++ workload and a
-Windows SDK. Use its bundled CMake (4.1 or newer for the Visual Studio 2026
+Windows SDK, and install LLVM/Clang with `clang` on `PATH` for the CPU assembly.
+Use its bundled CMake (4.1 or newer for the Visual Studio 2026
 generator), for example from a Visual Studio Developer PowerShell:
 
 ```powershell

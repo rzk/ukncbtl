@@ -12,6 +12,8 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 #include "stdafx.h"
 #include "RamChanges.h"
+#include "FrameControl.h"
+#include "FrameTiming.h"
 #include "util/Profiler.h"
 #include <cstdio>
 #include <algorithm>
@@ -57,10 +59,7 @@ HANDLE m_hEmulatorComPort = INVALID_HANDLE_VALUE;
 bool m_okEmulatorParallel = false;
 UniqueFile m_parallelOutput;
 
-long m_nFrameCount = 0;
-uint32_t m_dwTickCount = 0;
-uint32_t m_dwEmulatorUptime = 0;  // UKNC uptime, seconds, from turn on or reset, increments every 25 frames
-long m_nUptimeFrameCount = 0;
+static frame_timing::Tracker frameTiming(FRAMERATE);
 
 uint8_t* g_pEmulatorRam[3] = { nullptr, nullptr, nullptr };  // RAM values - for change tracking
 uint8_t* g_pEmulatorChangedRam[3] = { nullptr, nullptr, nullptr };  // RAM change flags
@@ -162,8 +161,7 @@ bool Emulator_Init()
         g_pBoard->SetSoundGenCallback(SoundGen_FeedDAC);
     }
 
-    m_nUptimeFrameCount = 0;
-    m_dwEmulatorUptime = 0;
+    frameTiming.ResetUptime();
 
     // Allocate memory for old RAM values
     for (int i = 0; i < 3; i++)
@@ -238,22 +236,16 @@ void Emulator_Start()
     MainWindow_UpdateWindowTitle();
     MainWindow_UpdateMenu();
 
-    m_nFrameCount = 0;
-    m_dwTickCount = GetTickCount();
+    frameTiming.Start(frame_timing::Clock::now());
 
     // For proper breakpoint processing
-    if (!cpuBreakpoints.Addresses().empty() || !ppuBreakpoints.Addresses().empty())
-    {
-        g_pBoard->GetCPU()->ClearInternalTick();
-        g_pBoard->GetPPU()->ClearInternalTick();
-    }
+    frame_control::PrepareRun(*g_pBoard, cpuBreakpoints, ppuBreakpoints);
 }
 void Emulator_Stop()
 {
     g_okEmulatorRunning = false;
 
-    Emulator_SetTempCPUBreakpoint(0177777);
-    Emulator_SetTempPPUBreakpoint(0177777);
+    frame_control::CancelTemporaryBreakpoints(cpuBreakpoints, ppuBreakpoints);
 
     if (m_parallelOutput)
         std::fflush(m_parallelOutput.get());
@@ -276,8 +268,7 @@ void Emulator_Reset()
 
     Emulator_ClearHistory();
 
-    m_nUptimeFrameCount = 0;
-    m_dwEmulatorUptime = 0;
+    frameTiming.ResetUptime();
 
     MainWindow_UpdateAllViews();
 }
@@ -675,45 +666,28 @@ bool Emulator_SystemFrame()
     if (Settings_GetMouse())
         ScreenView_UpdateMouse();
 
-    g_pBoard->SetCPUBreakpoints(cpuBreakpoints.Addresses());
-    g_pBoard->SetPPUBreakpoints(ppuBreakpoints.Addresses());
-
-    if (!g_pBoard->SystemFrame())  // Breakpoint hit
-    {
-        Emulator_SetTempCPUBreakpoint(0177777);
-        Emulator_SetTempPPUBreakpoint(0177777);
+    if (!frame_control::RunFrame(*g_pBoard, cpuBreakpoints, ppuBreakpoints))
         return false;
-    }
 
     // Calculate frames per second
-    m_nFrameCount++;
-    uint32_t dwCurrentTicks = GetTickCount();
-    uint32_t nTicksElapsed = dwCurrentTicks - m_dwTickCount;
-    if (nTicksElapsed >= 1000)
+    const auto timing = frameTiming.OnFrame(frame_timing::Clock::now());
+    if (timing.speedPercent)
     {
-        double dFramesPerSecond = m_nFrameCount * 1000.0 / nTicksElapsed;
-        double dSpeed = dFramesPerSecond / FRAMERATE * 100;
         TCHAR buffer[16];
-        FormatBuffer(buffer, _T("{:03.0f}%"), dSpeed);
+        FormatBuffer(buffer, _T("{:03.0f}%"), *timing.speedPercent);
         MainWindow_SetStatusbarText(StatusbarPartFPS, buffer);
 
         bool floppyEngine = g_pBoard->IsFloppyEngineOn();
         MainWindow_SetStatusbarText(StatusbarPartFloppyEngine, floppyEngine ? _T("Motor") : nullptr);
 
-        m_nFrameCount = 0;
-        m_dwTickCount = dwCurrentTicks;
     }
 
     // Calculate emulator uptime
-    m_nUptimeFrameCount++;
-    if (m_nUptimeFrameCount >= FRAMERATE)
+    if (timing.uptimeAdvanced)
     {
-        m_dwEmulatorUptime++;
-        m_nUptimeFrameCount = 0;
-
-        int seconds = (int) (m_dwEmulatorUptime % 60);
-        int minutes = (int) (m_dwEmulatorUptime / 60 % 60);
-        int hours   = (int) (m_dwEmulatorUptime / 3600 % 60);
+        int seconds = (int) (frameTiming.Uptime() % 60);
+        int minutes = (int) (frameTiming.Uptime() / 60 % 60);
+        int hours   = (int) (frameTiming.Uptime() / 3600 % 60);
 
         TCHAR buffer[20];
         FormatBuffer(buffer, _T("Uptime: {:02}:{:02}:{:02}"), hours, minutes, seconds);
@@ -722,7 +696,7 @@ bool Emulator_SystemFrame()
 
     // Update "Sound" indicator every 5 frames
     m_nEmulatorSoundChanges += g_pBoard->GetSoundChanges();
-    if (m_nUptimeFrameCount % 5 == 0)
+    if (frameTiming.FramesWithinSecond() % 5 == 0)
     {
         bool soundOn = m_nEmulatorSoundChanges > 0;
         MainWindow_SetStatusbarText(StatusbarPartSound, soundOn ? _T("Sound") : nullptr);
@@ -733,13 +707,13 @@ bool Emulator_SystemFrame()
     if (Option_AutoBoot > 0)
     {
         BYTE digitKeyScan = m_arrDigitKeyScans[Option_AutoBoot];
-        if (m_dwEmulatorUptime == 2 && m_nUptimeFrameCount == 6)
+        if (frameTiming.Uptime() == 2 && frameTiming.FramesWithinSecond() == 6)
             ScreenView_KeyEvent(digitKeyScan, TRUE);  // Press the digit key
-        else if (m_dwEmulatorUptime == 2 && m_nUptimeFrameCount == 10)
+        else if (frameTiming.Uptime() == 2 && frameTiming.FramesWithinSecond() == 10)
             ScreenView_KeyEvent(digitKeyScan, FALSE);  // Release the digit key
-        else if (m_dwEmulatorUptime == 2 && m_nUptimeFrameCount == 16)
+        else if (frameTiming.Uptime() == 2 && frameTiming.FramesWithinSecond() == 16)
             ScreenView_KeyEvent(0153, TRUE);  // Press "Enter"
-        else if (m_dwEmulatorUptime == 2 && m_nUptimeFrameCount == 20)
+        else if (frameTiming.Uptime() == 2 && frameTiming.FramesWithinSecond() == 20)
         {
             ScreenView_KeyEvent(0153, FALSE);  // Release "Enter"
             Option_AutoBoot = 0;  // All done
@@ -751,7 +725,7 @@ bool Emulator_SystemFrame()
 
 uint32_t Emulator_GetUptime()
 {
-    return m_dwEmulatorUptime;
+    return frameTiming.Uptime();
 }
 
 // Update cached values after Run or Step
@@ -841,13 +815,16 @@ void Emulator_PrepareScreenToText(std::span<uint32_t> pixels, std::span<const ui
 
 bool Emulator_SaveImage(LPCTSTR sFilePath)
 {
-    return snapshot::Save(sFilePath, *g_pBoard, m_dwEmulatorUptime);
+    return snapshot::Save(sFilePath, *g_pBoard, frameTiming.Uptime());
 }
 
 bool Emulator_LoadImage(LPCTSTR sFilePath)
 {
-    return snapshot::Load(sFilePath, *g_pBoard, m_dwEmulatorUptime,
-                          instructionHistory, Emulator_Stop);
+    auto uptime = frameTiming.Uptime();
+    if (!snapshot::Load(sFilePath, *g_pBoard, uptime, instructionHistory, Emulator_Stop))
+        return false;
+    frameTiming.SetUptime(uptime);
+    return true;
 }
 
 //////////////////////////////////////////////////////////////////////

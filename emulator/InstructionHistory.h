@@ -5,7 +5,6 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <tchar.h>
 
 inline constexpr int INSTR_HISTORY_SIZE = 256;
 
@@ -46,23 +45,23 @@ public:
     void RecordInterrupt(bool cpu, uint16_t oldPc, uint16_t vector, uint16_t newPc, uint16_t newPsw)
     { Add(cpu, {oldPc, {vector, newPc, newPsw}, newPsw, true}); }
 
-    [[nodiscard]] static const TCHAR* InterruptName(uint16_t vector)
+    [[nodiscard]] static const wchar_t* InterruptName(uint16_t vector)
     {
         // Ignore the SEL register high byte on HALT-mode vectors.
         switch (vector & 0377)
         {
-        case 0000: return _T("START");
-        case 0004: return _T("BUS");
-        case 0010: return _T("RSVD");
-        case 0014: return _T("BPT/TBIT");
-        case 0020: return _T("IOT");
-        case 0024: return _T("ACLO");
-        case 0030: return _T("EMT");
-        case 0034: return _T("TRAP");
-        case 0100: return _T("EVNT");
-        case 0170: return _T("HALT");
-        case 0174: return _T("HALT BUS");
-        default: return _T("VIRQ");
+        case 0000: return L"START";
+        case 0004: return L"BUS";
+        case 0010: return L"RSVD";
+        case 0014: return L"BPT/TBIT";
+        case 0020: return L"IOT";
+        case 0024: return L"ACLO";
+        case 0030: return L"EMT";
+        case 0034: return L"TRAP";
+        case 0100: return L"EVNT";
+        case 0170: return L"HALT";
+        case 0174: return L"HALT BUS";
+        default: return L"VIRQ";
         }
     }
 

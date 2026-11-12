@@ -1,4 +1,3 @@
-#include "stdafx.h"
 #include "Input.h"
 #include <algorithm>
 namespace input
@@ -103,7 +102,7 @@ uint8_t HitTest(std::span<const uint16_t> rectangles, int x, int y, int originX,
 {
     const int64_t localX = int64_t{x} - originX;
     const int64_t localY = int64_t{y} - originY;
-    for (size_t i = 0; i + 4 < rectangles.size(); i += 5)
+    for (std::size_t i = 0; i + 4 < rectangles.size(); i += 5)
     {
         if (localX >= rectangles[i] && localX < int64_t{rectangles[i]} + rectangles[i + 2] &&
             localY >= rectangles[i + 1] && localY < int64_t{rectangles[i + 1]} + rectangles[i + 3])

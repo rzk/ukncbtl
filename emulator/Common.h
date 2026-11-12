@@ -18,6 +18,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <string_view>
 #include "util/Octal.h"
 #include "util/TextFormat.h"
+#include "util/Trace.h"
 
 using TcharString = std::basic_string<TCHAR>;
 
@@ -74,12 +75,6 @@ void DebugPrintFormat(std::wformat_string<Args...> format, Args&&... args)
 }
 void DebugLogClear();
 void DebugLogCloseFile();
-void DebugLog(LPCTSTR message);
-template<class... Args>
-void DebugLogFormat(std::wformat_string<Args...> format, Args&&... args)
-{
-    DebugLog(std::format(format, std::forward<Args>(args)...).c_str());
-}
 
 
 //////////////////////////////////////////////////////////////////////
