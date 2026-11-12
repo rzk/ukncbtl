@@ -76,6 +76,11 @@ add_library(Processor OBJECT emulator/emubase/Processor.cpp)
 ukncbtl_toolchain(Processor)
 target_include_directories(Processor PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
 
+add_library(Motherboard OBJECT emulator/emubase/Board.cpp)
+ukncbtl_toolchain(Motherboard)
+target_include_directories(Motherboard PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+target_link_libraries(Motherboard PRIVATE EmulatorProfiling)
+
 add_library(SoundAY STATIC emulator/emubase/SoundAY.cpp)
 ukncbtl_toolchain(SoundAY)
 
@@ -120,7 +125,7 @@ function(ukncbtl_target target)
 endfunction()
 
 add_library(EmulatorCore STATIC
-  emulator/emubase/Board.cpp $<TARGET_OBJECTS:Disassembler>
+  $<TARGET_OBJECTS:Motherboard> $<TARGET_OBJECTS:Disassembler>
   emulator/emubase/Floppy.cpp emulator/emubase/Hard.cpp
   $<TARGET_OBJECTS:MemoryController> $<TARGET_OBJECTS:Processor>)
 ukncbtl_target(EmulatorCore)

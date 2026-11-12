@@ -107,7 +107,7 @@ public:
     void Reset();       ///< Reset the device
 
     /// \brief Attach the image to the drive -- insert disk
-    bool AttachImage(int drive, LPCTSTR sFileName);
+    bool AttachImage(int drive, const wchar_t* sFileName);
     /// \brief Detach image from the drive -- remove disk
     void DetachImage(int drive);
     /// \brief Check if the drive has an image attached
@@ -164,7 +164,7 @@ public:
     /// \brief Reset the device.
     void Reset();
     /// \brief Attach HDD image file to the device
-    bool AttachImage(LPCTSTR sFileName);
+    bool AttachImage(const wchar_t* sFileName);
     /// \brief Detach HDD image file from the device
     void DetachImage();
     /// \brief Check if the attached hard drive image is read-only
