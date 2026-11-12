@@ -13,7 +13,7 @@ enum DisasmSubtitleType
 };
 struct DisasmSubtitleItem
 {
-    uint16_t address;
+    std::uint16_t address;
     int type;
     std::wstring comment;
 };
@@ -22,5 +22,5 @@ namespace subtitles
 enum class ParseError { Empty, BigEndian, InvalidAddress };
 // Owns comment strings; input may be released or changed after parsing.
 std::expected<std::vector<DisasmSubtitleItem>, ParseError> Parse(std::wstring_view text);
-const DisasmSubtitleItem* Find(std::span<const DisasmSubtitleItem> items, uint16_t address, int mask);
+const DisasmSubtitleItem* Find(std::span<const DisasmSubtitleItem> items, std::uint16_t address, int mask);
 }

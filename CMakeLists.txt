@@ -127,6 +127,10 @@ ukncbtl_toolchain(PrinterOutput)
 add_library(DebugLogFile STATIC emulator/util/DebugLogFile.cpp)
 ukncbtl_toolchain(DebugLogFile)
 
+add_library(Subtitles STATIC emulator/Subtitles.cpp)
+ukncbtl_toolchain(Subtitles)
+target_include_directories(Subtitles PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+
 add_library(IniDocument STATIC emulator/util/IniDocument.cpp)
 ukncbtl_toolchain(IniDocument)
 
@@ -199,6 +203,8 @@ if(BUILD_TESTING)
   target_link_libraries(PrinterOutputTests PRIVATE PrinterOutput)
   ukncbtl_portable_test(DebugLogFileTests tests/DebugLogFileTests.cpp)
   target_link_libraries(DebugLogFileTests PRIVATE DebugLogFile)
+  ukncbtl_portable_test(SubtitleTests tests/SubtitleTests.cpp)
+  target_link_libraries(SubtitleTests PRIVATE Subtitles)
   ukncbtl_portable_test(HardPortableTests tests/HardPortableTests.cpp $<TARGET_OBJECTS:HardDrive>)
   ukncbtl_portable_test(FloppyPortableTests tests/FloppyPortableTests.cpp $<TARGET_OBJECTS:FloppyController>)
   ukncbtl_portable_test(PortableCoreTests tests/PortableCoreTests.cpp)
@@ -227,7 +233,7 @@ add_executable(UKNCBTL WIN32
   emulator/Dialogs.cpp emulator/DisasmView.cpp emulator/InstrHistoryView.cpp
   emulator/DisplayListView.cpp emulator/Emulator.cpp emulator/KeyboardView.cpp
   emulator/Main.cpp emulator/MainWindow.cpp emulator/MemoryView.cpp
-  emulator/ScreenView.cpp emulator/ScreenText.cpp emulator/Subtitles.cpp emulator/Settings.cpp emulator/SoundGen.cpp
+  emulator/ScreenView.cpp emulator/ScreenText.cpp emulator/Settings.cpp emulator/SoundGen.cpp
   emulator/SpriteView.cpp emulator/ViewCalculations.cpp emulator/TapeView.cpp emulator/ToolWindow.cpp
   emulator/util/BitmapFile.cpp emulator/res/UKNCBTL.rc)
 ukncbtl_target(UKNCBTL)
@@ -236,6 +242,7 @@ target_link_libraries(UKNCBTL PRIVATE FrameControl FrameTiming HostInput WavPcmF
 target_link_libraries(UKNCBTL PRIVATE DiskImageFile)
 target_link_libraries(UKNCBTL PRIVATE PrinterOutput)
 target_link_libraries(UKNCBTL PRIVATE DebugLogFile)
+target_link_libraries(UKNCBTL PRIVATE Subtitles)
 if(UKNCBTL_USE_PORTABLE_SETTINGS)
   target_compile_definitions(UKNCBTL PRIVATE UKNCBTL_PORTABLE_SETTINGS)
   target_link_libraries(UKNCBTL PRIVATE SettingsStore)
@@ -286,7 +293,6 @@ if(BUILD_TESTING)
   ukncbtl_test(CommonTextTests tests/CommonTextTests.cpp emulator/util/CommonText.cpp)
   ukncbtl_test(SpriteTests tests/SpriteTests.cpp)
   ukncbtl_test(ViewCalculationTests tests/ViewCalculationTests.cpp emulator/ViewCalculations.cpp)
-  ukncbtl_test(SubtitleTests tests/SubtitleTests.cpp emulator/Subtitles.cpp)
   ukncbtl_test(ScreenTextTests tests/ScreenTextTests.cpp emulator/ScreenText.cpp)
   ukncbtl_test(TextFormatTests tests/TextFormatTests.cpp)
   ukncbtl_test(ImageScaleEdgeTests tests/ImageScaleEdgeTests.cpp third_party/RenderVfw/RenderVfw.cpp)

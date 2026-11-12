@@ -4,21 +4,20 @@
 #include <expected>
 #include <limits>
 #include <string_view>
-#include <tchar.h>
 
 enum class OctalError { empty, invalid_digit, out_of_range };
 
-[[nodiscard]] inline std::expected<uint16_t, OctalError> ParseOctalValue(std::basic_string_view<TCHAR> text)
+[[nodiscard]] inline std::expected<std::uint16_t, OctalError> ParseOctalValue(std::wstring_view text)
 {
     if (text.empty()) return std::unexpected(OctalError::empty);
-    uint32_t value = 0;
-    for (const TCHAR ch : text)
+    std::uint32_t value = 0;
+    for (const wchar_t ch : text)
     {
-        if (ch < _T('0') || ch > _T('7')) return std::unexpected(OctalError::invalid_digit);
-        const auto digit = static_cast<uint32_t>(ch - _T('0'));
-        if (value > ((std::numeric_limits<uint16_t>::max)() - digit) / 8)
+        if (ch < L'0' || ch > L'7') return std::unexpected(OctalError::invalid_digit);
+        const auto digit = static_cast<std::uint32_t>(ch - L'0');
+        if (value > ((std::numeric_limits<std::uint16_t>::max)() - digit) / 8)
             return std::unexpected(OctalError::out_of_range);
         value = value * 8 + digit;
     }
-    return static_cast<uint16_t>(value);
+    return static_cast<std::uint16_t>(value);
 }

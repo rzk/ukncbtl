@@ -1,6 +1,6 @@
-#include "stdafx.h"
 #include <gtest/gtest.h>
 #include "Subtitles.h"
+#include <iterator>
 
 TEST(Subtitles, RejectsEmptyAndBigEndian)
 {

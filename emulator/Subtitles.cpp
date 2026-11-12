@@ -1,7 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include "Subtitles.h"
 #include "util/Octal.h"
+#include <utility>
 
 namespace subtitles
 {
@@ -45,7 +45,7 @@ std::expected<std::vector<DisasmSubtitleItem>, ParseError> Parse(std::wstring_vi
     return items;
 }
 
-const DisasmSubtitleItem* Find(std::span<const DisasmSubtitleItem> items, uint16_t address, int mask)
+const DisasmSubtitleItem* Find(std::span<const DisasmSubtitleItem> items, std::uint16_t address, int mask)
 {
     for (const auto& item : items)
         if (item.address == address && (item.type & mask) != 0) return &item;
