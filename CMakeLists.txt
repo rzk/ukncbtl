@@ -108,6 +108,9 @@ target_link_libraries(FrameControl PUBLIC EmulatorCore)
 add_library(FrameTiming STATIC emulator/FrameTiming.cpp)
 ukncbtl_toolchain(FrameTiming)
 
+add_library(FramePacing STATIC emulator/FramePacing.cpp)
+ukncbtl_toolchain(FramePacing)
+
 add_library(HostInput STATIC emulator/Input.cpp)
 ukncbtl_toolchain(HostInput)
 
@@ -216,6 +219,8 @@ if(BUILD_TESTING)
   ukncbtl_portable_test(StereoPcmBatchTests tests/StereoPcmBatchTests.cpp)
   ukncbtl_portable_test(FrameTimingTests tests/FrameTimingTests.cpp)
   target_link_libraries(FrameTimingTests PRIVATE FrameTiming)
+  ukncbtl_portable_test(FramePacingTests tests/FramePacingTests.cpp)
+  target_link_libraries(FramePacingTests PRIVATE FramePacing)
   ukncbtl_portable_test(InputTests tests/InputTests.cpp)
   target_link_libraries(InputTests PRIVATE HostInput)
   ukncbtl_portable_test(TapeTests tests/TapeTests.cpp)
