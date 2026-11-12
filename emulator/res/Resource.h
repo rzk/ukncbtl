@@ -23,7 +23,6 @@
 #define IDD_SETTINGS                    145
 #define IDD_SETTINGS_COLORS             146
 #define IDD_SETTINGS_OSD                147
-#define IDR_UKNC_ROM                    148
 #define IDB_KEYBOARDMASK                150
 #define IDD_CONFIGDLG                   151
 #define IDD_COMMANDLINEHELP             152

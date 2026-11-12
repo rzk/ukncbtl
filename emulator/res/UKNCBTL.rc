@@ -341,7 +341,6 @@ IDB_KEYBOARDMASK        BITMAP                  "keyboardmask.bmp"
 // BIN
 //
 
-IDR_UKNC_ROM            BIN                     "uknc_rom.bin"
 
 /////////////////////////////////////////////////////////////////////////////
 //

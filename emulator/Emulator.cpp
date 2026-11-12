@@ -16,6 +16,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "FrameTiming.h"
 #include "PrinterOutput.h"
 #include "RomFile.h"
+#include "EmbeddedRom.h"
 #include "util/Profiler.h"
 #include <algorithm>
 #include <array>
@@ -80,23 +81,10 @@ bool Emulator_LoadUkncRom()
 {
     std::array<uint8_t, 32768> data{};
 
-    const auto external = rom_file::ReadPrefix(std::filesystem::path(FILE_NAME_UKNC_ROM), std::span{data}.first(32256));
+    const auto external = rom_file::ReadPrefix(std::filesystem::path(FILE_NAME_UKNC_ROM), std::span{data}.first(embedded_rom::Size));
     if (!external && external.error() != rom_file::Error::open_failed) return false;
-    if (!external)  // External ROM could not be opened; use the embedded resource.
-    {
-        HRSRC hRes = nullptr;
-        DWORD dwDataSize = 0;
-        HGLOBAL hResLoaded = nullptr;
-        void * pResData = nullptr;
-        if ((hRes = ::FindResource(nullptr, MAKEINTRESOURCE(IDR_UKNC_ROM), _T("BIN"))) == nullptr ||
-            (dwDataSize = ::SizeofResource(nullptr, hRes)) < 32256 ||
-            (hResLoaded = ::LoadResource(nullptr, hRes)) == nullptr ||
-            (pResData = ::LockResource(hResLoaded)) == nullptr)
-        {
-            return false;
-        }
-        std::copy_n(static_cast<const uint8_t*>(pResData), 32256, data.begin());
-    }
+    if (!external)  // External ROM could not be opened; use the embedded image.
+        std::ranges::copy(embedded_rom::Bytes(), data.begin());
 
     g_pBoard->LoadROM(data);
 

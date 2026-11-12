@@ -127,6 +127,17 @@ ukncbtl_toolchain(PrinterOutput)
 add_library(RomFile STATIC emulator/RomFile.cpp)
 ukncbtl_toolchain(RomFile)
 
+set(embedded_rom_input "${PROJECT_SOURCE_DIR}/emulator/res/uknc_rom.bin")
+set(embedded_rom_data "${CMAKE_CURRENT_BINARY_DIR}/embedded_rom_data.inc")
+add_custom_command(OUTPUT "${embedded_rom_data}"
+  COMMAND "${CMAKE_COMMAND}" "-DINPUT=${embedded_rom_input}" "-DOUTPUT=${embedded_rom_data}"
+    -P "${PROJECT_SOURCE_DIR}/cmake/EmbedRom.cmake"
+  DEPENDS "${embedded_rom_input}" "${PROJECT_SOURCE_DIR}/cmake/EmbedRom.cmake"
+  VERBATIM)
+add_library(EmbeddedRom STATIC emulator/EmbeddedRom.cpp "${embedded_rom_data}")
+ukncbtl_toolchain(EmbeddedRom)
+target_include_directories(EmbeddedRom PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+
 add_library(MemoryDump STATIC emulator/MemoryDump.cpp)
 ukncbtl_toolchain(MemoryDump)
 
@@ -218,6 +229,9 @@ if(BUILD_TESTING)
   target_link_libraries(PrinterOutputTests PRIVATE PrinterOutput)
   ukncbtl_portable_test(RomFileTests tests/RomFileTests.cpp)
   target_link_libraries(RomFileTests PRIVATE RomFile)
+  configure_file("${embedded_rom_input}" "${CMAKE_CURRENT_BINARY_DIR}/embedded_rom_test.bin" COPYONLY)
+  ukncbtl_portable_test(EmbeddedRomTests tests/EmbeddedRomTests.cpp)
+  target_link_libraries(EmbeddedRomTests PRIVATE EmbeddedRom RomFile)
   ukncbtl_portable_test(MemoryDumpTests tests/MemoryDumpTests.cpp)
   target_link_libraries(MemoryDumpTests PRIVATE MemoryDump)
   ukncbtl_portable_test(DisplayListDumpTests tests/DisplayListDumpTests.cpp)
@@ -265,6 +279,7 @@ target_link_libraries(UKNCBTL PRIVATE FrameControl FrameTiming HostInput WavPcmF
 target_link_libraries(UKNCBTL PRIVATE DiskImageFile)
 target_link_libraries(UKNCBTL PRIVATE PrinterOutput)
 target_link_libraries(UKNCBTL PRIVATE RomFile)
+target_link_libraries(UKNCBTL PRIVATE EmbeddedRom)
 target_link_libraries(UKNCBTL PRIVATE MemoryDump)
 target_link_libraries(UKNCBTL PRIVATE DisplayListDump)
 target_link_libraries(UKNCBTL PRIVATE DebugLogFile)
