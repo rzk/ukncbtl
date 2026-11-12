@@ -15,10 +15,10 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "emubase/Emubase.h"
 #include "SoundGen.h"
 #include "SoundBackend.h"
+#include "StereoPcmBatch.h"
 #include "mmsystem.h"
 #include <algorithm>
 #include <atomic>
-#include <bit>
 #include <array>
 
 //////////////////////////////////////////////////////////////////////
@@ -44,9 +44,7 @@ bool sound::SetBackend(const Backend& replacement)
 HWAVEOUT hWaveOut;
 
 WAVEFORMATEX wfx;
-static std::array<char, BUFSIZE> buffer{};
-
-int bufcurpos;
+static sound::StereoPcmBatch<BUFSIZE / 4> buffer;
 
 
 //////////////////////////////////////////////////////////////////////
@@ -93,7 +91,7 @@ void SoundGen_Initialize(WORD volume)
 
     backend.volume(hWaveOut, ((DWORD)volume << 16) | ((DWORD)volume));
 
-    bufcurpos = 0;
+    buffer.Reset();
 
     m_SoundGenInitialized = true;
 }
@@ -143,12 +141,7 @@ void CALLBACK SoundGen_FeedDAC(unsigned short L, unsigned short R)
     if (!m_SoundGenInitialized)
         return;
 
-    const uint32_t word = (static_cast<uint32_t>(R) << 16) | L;
-    const auto bytes = std::bit_cast<std::array<char, sizeof(word)>>(word);
-    std::ranges::copy(bytes, buffer.begin() + bufcurpos);
-    bufcurpos += 4;
-
-    if (bufcurpos >= BUFSIZE)
+    if (buffer.Push(L, R))
     {
         UKNC_PROFILE_SCOPE("Audio submit");
         WAVEHDR* current = &waveBlocks[waveCurrentBlock];
@@ -156,23 +149,23 @@ void CALLBACK SoundGen_FeedDAC(unsigned short L, unsigned short R)
         if ((current->dwFlags & WHDR_PREPARED) &&
             backend.unprepare(hWaveOut, current, sizeof(WAVEHDR)) != MMSYSERR_NOERROR)
         {
-            bufcurpos = 0;
+            buffer.Reset();
             return; // Do not overwrite a buffer still owned by the backend.
         }
 
-        std::ranges::copy(buffer, current->lpData);
+        std::ranges::copy(buffer.Bytes(), current->lpData);
         current->dwBufferLength = BLOCK_SIZE;
 
         if (backend.prepare(hWaveOut, current, sizeof(WAVEHDR)) != MMSYSERR_NOERROR)
         {
-            bufcurpos = 0;
+            buffer.Reset();
             return;
         }
         waveFreeBlockCount.fetch_sub(1);
         if (backend.write(hWaveOut, current, sizeof(WAVEHDR)) != MMSYSERR_NOERROR)
         {
             waveFreeBlockCount.fetch_add(1);
-            bufcurpos = 0;
+            buffer.Reset();
             return;
         }
 
@@ -186,7 +179,7 @@ void CALLBACK SoundGen_FeedDAC(unsigned short L, unsigned short R)
         if (waveCurrentBlock >= BLOCK_COUNT)
             waveCurrentBlock = 0;
 
-        bufcurpos = 0;
+        buffer.Reset();
     }
 }
 
