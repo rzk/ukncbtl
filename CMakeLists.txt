@@ -68,6 +68,10 @@ add_library(Disassembler OBJECT emulator/emubase/Disasm.cpp)
 ukncbtl_toolchain(Disassembler)
 target_include_directories(Disassembler PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
 
+add_library(MemoryController OBJECT emulator/emubase/Memory.cpp)
+ukncbtl_toolchain(MemoryController)
+target_include_directories(MemoryController PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+
 add_library(SoundAY STATIC emulator/emubase/SoundAY.cpp)
 ukncbtl_toolchain(SoundAY)
 
@@ -114,7 +118,7 @@ endfunction()
 add_library(EmulatorCore STATIC
   emulator/emubase/Board.cpp $<TARGET_OBJECTS:Disassembler>
   emulator/emubase/Floppy.cpp emulator/emubase/Hard.cpp
-  emulator/emubase/Memory.cpp emulator/emubase/Processor.cpp)
+  $<TARGET_OBJECTS:MemoryController> emulator/emubase/Processor.cpp)
 ukncbtl_target(EmulatorCore)
 target_link_libraries(EmulatorCore PUBLIC CpuOverflow SoundAY)
 
