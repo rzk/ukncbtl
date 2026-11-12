@@ -15,6 +15,7 @@ enum class IniFileError
     too_large,
     invalid_text,
     unsupported_encoding,
+    invalid_entry,
 };
 
 // A snapshot of an INI file. Callers must coordinate concurrent access.

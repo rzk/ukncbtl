@@ -123,6 +123,10 @@ add_library(IniFile STATIC emulator/util/IniFile.cpp)
 ukncbtl_toolchain(IniFile)
 target_link_libraries(IniFile PUBLIC IniDocument IniEncoding)
 
+add_library(SettingsStore STATIC emulator/util/SettingsStore.cpp)
+ukncbtl_toolchain(SettingsStore)
+target_link_libraries(SettingsStore PUBLIC IniFile)
+
 # The snapshot implementation uses the portable board interface; linking its
 # operations into an executable also requires the emulator core.
 add_library(EmulatorSnapshot STATIC emulator/Snapshot.cpp)
@@ -153,6 +157,8 @@ if(BUILD_TESTING)
   target_link_libraries(IniEncodingTests PRIVATE IniEncoding IniDocument)
   ukncbtl_portable_test(IniFileTests tests/IniFileTests.cpp)
   target_link_libraries(IniFileTests PRIVATE IniFile)
+  ukncbtl_portable_test(SettingsStoreTests tests/SettingsStoreTests.cpp)
+  target_link_libraries(SettingsStoreTests PRIVATE SettingsStore)
   ukncbtl_portable_test(StereoPcmBatchTests tests/StereoPcmBatchTests.cpp)
   ukncbtl_portable_test(FrameTimingTests tests/FrameTimingTests.cpp)
   target_link_libraries(FrameTimingTests PRIVATE FrameTiming)
