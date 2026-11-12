@@ -92,11 +92,19 @@ target_include_directories(FloppyController PRIVATE "${PROJECT_SOURCE_DIR}/emula
 add_library(SoundAY STATIC emulator/emubase/SoundAY.cpp)
 ukncbtl_toolchain(SoundAY)
 
+add_library(EmulatorCore STATIC
+  $<TARGET_OBJECTS:Motherboard> $<TARGET_OBJECTS:Disassembler>
+  $<TARGET_OBJECTS:FloppyController> $<TARGET_OBJECTS:HardDrive>
+  $<TARGET_OBJECTS:MemoryController> $<TARGET_OBJECTS:Processor>)
+ukncbtl_toolchain(EmulatorCore)
+target_link_libraries(EmulatorCore PUBLIC CpuOverflow SoundAY EmulatorProfiling)
+
 # The snapshot implementation uses the portable board interface; linking its
 # operations into an executable also requires the emulator core.
 add_library(EmulatorSnapshot STATIC emulator/Snapshot.cpp)
 ukncbtl_toolchain(EmulatorSnapshot)
 target_include_directories(EmulatorSnapshot PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+target_link_libraries(EmulatorSnapshot PUBLIC EmulatorCore)
 
 if(BUILD_TESTING)
   include(GoogleTest)
@@ -115,6 +123,8 @@ if(BUILD_TESTING)
   ukncbtl_portable_test(TraceTests tests/TraceTests.cpp)
   ukncbtl_portable_test(HardPortableTests tests/HardPortableTests.cpp $<TARGET_OBJECTS:HardDrive>)
   ukncbtl_portable_test(FloppyPortableTests tests/FloppyPortableTests.cpp $<TARGET_OBJECTS:FloppyController>)
+  ukncbtl_portable_test(PortableCoreTests tests/PortableCoreTests.cpp)
+  target_link_libraries(PortableCoreTests PRIVATE EmulatorCore EmulatorSnapshot VideoDecoder)
   ukncbtl_portable_test(ScreenScaleTests tests/ScreenScaleTests.cpp)
   target_link_libraries(ScreenScaleTests PRIVATE ScreenScale)
   ukncbtl_portable_test(SoundAYEdgeTests tests/SoundAYEdgeTests.cpp)
@@ -133,15 +143,6 @@ function(ukncbtl_target target)
   target_compile_definitions(${target} PRIVATE UNICODE _UNICODE NOMINMAX)
   target_precompile_headers(${target} PRIVATE "${PROJECT_SOURCE_DIR}/emulator/stdafx.h")
 endfunction()
-
-add_library(EmulatorCore STATIC
-  $<TARGET_OBJECTS:Motherboard> $<TARGET_OBJECTS:Disassembler>
-  $<TARGET_OBJECTS:FloppyController> $<TARGET_OBJECTS:HardDrive>
-  $<TARGET_OBJECTS:MemoryController> $<TARGET_OBJECTS:Processor>)
-ukncbtl_target(EmulatorCore)
-target_link_libraries(EmulatorCore PUBLIC CpuOverflow SoundAY)
-
-target_link_libraries(EmulatorCore PUBLIC EmulatorProfiling)
 
 add_executable(UKNCBTL WIN32
   emulator/Common.cpp emulator/util/CommonText.cpp emulator/ConsoleView.cpp emulator/DebugView.cpp

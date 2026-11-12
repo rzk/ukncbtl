@@ -16,6 +16,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <memory>
 #include <array>
 #include <cassert>
+#include <filesystem>
 #include <span>
 
 class CProcessor;
@@ -273,6 +274,7 @@ public:  // System control
 
     /// \brief Attach floppy image to the slot -- insert the disk.
     bool        AttachFloppyImage(int slot, const wchar_t* sFileName);
+    bool        AttachFloppyImage(int slot, const std::filesystem::path& path);
     /// \brief Empty the floppy slot -- remove the disk.
     void        DetachFloppyImage(int slot);
     /// \brief Check if the floppy attached.
@@ -295,6 +297,7 @@ public:  // System control
 
     /// \brief Attach hard drive image to the slot.
     bool        AttachHardImage(int slot, const wchar_t* sFileName);
+    bool        AttachHardImage(int slot, const std::filesystem::path& path);
     /// \brief Empty hard drive slot.
     void        DetachHardImage(int slot);
     /// \brief Check if the hard drive attached.
