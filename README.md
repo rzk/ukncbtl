@@ -3,7 +3,7 @@ UKNCBTL — UKNC Back to Life! emulator, Windows x86-64 version.
 
 ### Portable build during the SDL migration
 
-The portable CMake build currently contains the video decoder library and a
+The portable CMake build currently contains the video decoder and screen scaler libraries and a
 subset of the tests; it does **not** build the emulator yet. The legacy application still requires
 the Windows toolchain documented below. The intended portable toolchain is
 CMake, Ninja and a Clang toolchain with a C++23 standard library. On Windows,
