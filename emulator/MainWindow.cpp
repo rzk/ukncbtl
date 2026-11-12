@@ -376,7 +376,8 @@ void MainWindow_RestoreSettings()
     // Restore Parallel
     if (Settings_GetParallel())
     {
-        Emulator_SetParallel(TRUE);
+        if (!Emulator_SetParallel(TRUE))
+            Settings_SetParallel(FALSE);
     }
 }
 
@@ -1440,8 +1441,7 @@ void MainWindow_DoEmulatorParallel()
     BOOL okParallel = Settings_GetParallel();
     if (!okParallel)
     {
-        Emulator_SetParallel(TRUE);
-        Settings_SetParallel(TRUE);
+        Settings_SetParallel(Emulator_SetParallel(TRUE) ? TRUE : FALSE);
     }
     else
     {

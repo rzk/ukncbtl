@@ -59,6 +59,7 @@ HANDLE m_hEmulatorComPort = INVALID_HANDLE_VALUE;
 
 bool m_okEmulatorParallel = false;
 static PrinterOutput m_parallelOutput;
+static void Emulator_ReportPrinterFailure();
 
 static frame_timing::Tracker frameTiming(FRAMERATE);
 
@@ -212,6 +213,8 @@ void Emulator_Done()
 
     g_pBoard->SetParallelOutCallback(nullptr);
     (void)m_parallelOutput.Close();
+    if (m_parallelOutput.TakeError())
+        AlertWarning(_T("Failed to write or close the printer output file."));
     m_okEmulatorParallel = false;
 
     g_boardOwner.reset();
@@ -250,6 +253,7 @@ void Emulator_Stop()
 
     if (m_parallelOutput.IsOpen())
         (void)m_parallelOutput.Flush();
+    Emulator_ReportPrinterFailure();
 
     // Reset title bar message
     MainWindow_UpdateWindowTitle();
@@ -634,27 +638,46 @@ bool CALLBACK Emulator_ParallelOut_Callback(BYTE byte)
     return m_parallelOutput.Write(byte);
 }
 
-void Emulator_SetParallel(bool parallelOnOff)
+static void Emulator_ReportPrinterFailure()
+{
+    if (!m_parallelOutput.TakeError()) return;
+    g_pBoard->SetParallelOutCallback(nullptr);
+    (void)m_parallelOutput.Close();
+    (void)m_parallelOutput.TakeError(); // Report a related close failure only once.
+    m_okEmulatorParallel = false;
+    Settings_SetParallel(FALSE);
+    MainWindow_UpdateMenu();
+    AlertWarning(_T("Printer output failed. Parallel output has been disabled."));
+}
+
+bool Emulator_SetParallel(bool parallelOnOff)
 {
     if (m_okEmulatorParallel == parallelOnOff)
-        return;
+        return true;
 
     if (!parallelOnOff)
     {
         g_pBoard->SetParallelOutCallback(nullptr);
         (void)m_parallelOutput.Close();
+        m_okEmulatorParallel = false;
+        if (m_parallelOutput.TakeError())
+        {
+            AlertWarning(_T("Failed to write or close the printer output file."));
+            return false;
+        }
     }
     else
     {
         if (!m_parallelOutput.Open("printer.log"))
         {
             AlertWarning(_T("Failed to open the printer output file."));
-            return;
+            return false;
         }
         g_pBoard->SetParallelOutCallback(Emulator_ParallelOut_Callback);
     }
 
     m_okEmulatorParallel = parallelOnOff;
+    return true;
 }
 
 bool Emulator_SystemFrame()
@@ -666,7 +689,9 @@ bool Emulator_SystemFrame()
     if (Settings_GetMouse())
         ScreenView_UpdateMouse();
 
-    if (!frame_control::RunFrame(*g_pBoard, cpuBreakpoints, ppuBreakpoints))
+    const bool frameCompleted = frame_control::RunFrame(*g_pBoard, cpuBreakpoints, ppuBreakpoints);
+    Emulator_ReportPrinterFailure();
+    if (!frameCompleted)
         return false;
 
     // Calculate frames per second

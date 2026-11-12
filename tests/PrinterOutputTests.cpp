@@ -75,4 +75,20 @@ TEST_F(PrinterOutputTest, FailedOpenCanBeRetriedAndClosedOperationsAreSafe)
     EXPECT_TRUE(output.Close());
     EXPECT_EQ(Read(), (std::vector<std::uint8_t>{0xff}));
 }
+
+TEST_F(PrinterOutputTest, WriteAndFlushFailuresAreReportedOnceAndDoNotPreventRetry)
+{
+    PrinterOutput output;
+    EXPECT_FALSE(output.TakeError());
+    EXPECT_FALSE(output.Write(42));
+    EXPECT_FALSE(output.Flush());
+    EXPECT_TRUE(output.TakeError());
+    EXPECT_FALSE(output.TakeError());
+    ASSERT_TRUE(output.Open(path));
+    ASSERT_TRUE(output.Write(17));
+    ASSERT_TRUE(output.Flush());
+    ASSERT_TRUE(output.Close());
+    EXPECT_FALSE(output.TakeError());
+    EXPECT_EQ(Read(), (std::vector<std::uint8_t>{17}));
+}
 }

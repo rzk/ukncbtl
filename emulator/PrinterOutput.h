@@ -14,7 +14,10 @@ public:
     [[nodiscard]] bool Flush();
     [[nodiscard]] bool Close();
     [[nodiscard]] bool IsOpen() const { return file_.is_open(); }
+    // Returns and clears any write, flush or close failure since the last call.
+    [[nodiscard]] bool TakeError();
 
 private:
     std::ofstream file_;
+    bool error_ = false;
 };

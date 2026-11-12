@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PrinterOutput.h"
+#include <utility>
 
 bool PrinterOutput::Open(const std::filesystem::path& path)
 {
@@ -11,16 +12,20 @@ bool PrinterOutput::Open(const std::filesystem::path& path)
 
 bool PrinterOutput::Write(std::uint8_t value)
 {
-    if (!file_.is_open()) return false;
+    if (!file_.is_open()) { error_ = true; return false; }
     file_.put(static_cast<char>(value));
-    return static_cast<bool>(file_);
+    const bool ok = static_cast<bool>(file_);
+    error_ |= !ok;
+    return ok;
 }
 
 bool PrinterOutput::Flush()
 {
-    if (!file_.is_open()) return false;
+    if (!file_.is_open()) { error_ = true; return false; }
     file_.flush();
-    return static_cast<bool>(file_);
+    const bool ok = static_cast<bool>(file_);
+    error_ |= !ok;
+    return ok;
 }
 
 bool PrinterOutput::Close()
@@ -28,6 +33,12 @@ bool PrinterOutput::Close()
     if (!file_.is_open()) return true;
     file_.close();
     const bool ok = static_cast<bool>(file_);
+    error_ |= !ok;
     file_.clear();
     return ok;
+}
+
+bool PrinterOutput::TakeError()
+{
+    return std::exchange(error_, false);
 }
