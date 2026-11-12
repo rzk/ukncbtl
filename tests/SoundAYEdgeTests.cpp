@@ -1,7 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include <gtest/gtest.h>
-#include "emubase/Emubase.h"
+#include "emubase/SoundAY.h"
 #include <algorithm>
 #include <array>
 #include <vector>

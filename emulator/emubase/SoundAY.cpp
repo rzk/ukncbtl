@@ -14,9 +14,9 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 // Based on various code snippets by Ville Hallik, Michael Cuddy,
 // Tatsuyuki Satoh, Fabrice Frances, Nicola Salmoria.
 
-#include "stdafx.h"
-#include "Emubase.h"
+#include "SoundAY.h"
 #include <algorithm>
+#include <cstddef>
 #include <limits>
 
 static constexpr auto MAX_OUTPUT = 0x0ffff;
@@ -210,7 +210,7 @@ void CSoundAY::SetReg(int r, int v)
 void CSoundAY::Callback(std::span<uint8_t> stream)
 {
     // The mixer uses signed counters; split very large buffers so their updates cannot overflow.
-    constexpr auto maxChunk = static_cast<size_t>((std::numeric_limits<int32_t>::max)() / 8);
+    constexpr auto maxChunk = static_cast<std::size_t>((std::numeric_limits<int32_t>::max)() / 8);
     while (!stream.empty())
     {
         const auto chunk = stream.first((std::min)(stream.size(), maxChunk));
