@@ -42,6 +42,9 @@ is never detected automatically. On Windows, command-line paths are limited by
 the process's narrow-character encoding; use ASCII paths if necessary. Import
 is not yet exposed in the application UI.
 
+Debug `trace.log` output is UTF-8 without a byte-order mark. Earlier Windows
+builds wrote text using the system's active code page.
+
 ## Migration checklist
 
 For each applicable item, check Windows, Linux and macOS separately before

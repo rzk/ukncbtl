@@ -92,14 +92,7 @@ void DebugLog(LPCTSTR message)
 {
     if (!traceLog.Open() || !message) return;
 
-    // Size the conversion in characters, including the terminator. Formatting
-    // has no fixed buffer limit, so the output sink must not truncate it either.
-    const int length = WideCharToMultiByte(CP_ACP, 0, message, -1, nullptr, 0, nullptr, nullptr);
-    if (length <= 1) return;
-    std::string text(static_cast<size_t>(length), '\0');
-    if (!WideCharToMultiByte(CP_ACP, 0, message, -1, text.data(), length, nullptr, nullptr)) return;
-
-    (void)traceLog.Append(std::string_view(text.data(), static_cast<size_t>(length - 1)));
+    (void)traceLog.AppendText(message);
 }
 
 

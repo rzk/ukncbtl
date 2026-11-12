@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "DebugLogFile.h"
+#include "IniEncoding.h"
 #include <utility>
 
 DebugLogFile::DebugLogFile(std::filesystem::path path) : path_(std::move(path)) {}
@@ -27,6 +28,14 @@ bool DebugLogFile::Append(std::string_view bytes)
     if (!bytes.empty()) file_.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     file_.flush();
     return static_cast<bool>(file_);
+}
+
+bool DebugLogFile::AppendText(std::wstring_view text)
+{
+    const auto encoded = ini_encoding::Encode(text, ini_encoding::Encoding::utf8);
+    if (!encoded) return false;
+    if (encoded->empty()) return Append({});
+    return Append(std::string_view(reinterpret_cast<const char*>(encoded->data()), encoded->size()));
 }
 
 void DebugLogFile::Close()
