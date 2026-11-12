@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "SettingsStore.h"
+#include "SettingsCodec.h"
 #include <utility>
 
 namespace
@@ -45,4 +46,43 @@ std::expected<void, IniFileError> SettingsStore::Remove(std::wstring_view key) c
     if (!file) return std::unexpected(file.error());
     if (!*file || !(*file)->Document().Remove(Section, key)) return {};
     return (*file)->Save(path_);
+}
+
+std::expected<std::optional<std::uint32_t>, IniFileError> SettingsStore::GetDword(std::wstring_view key) const
+{
+    const auto text = Get(key);
+    if (!text) return std::unexpected(text.error());
+    return *text && (*text)->size() < 64 ? settings_codec::DecodeDword(**text) : std::nullopt;
+}
+
+std::expected<void, IniFileError> SettingsStore::SetDword(std::wstring_view key, std::uint32_t value) const
+{
+    return Set(key, std::to_wstring(value));
+}
+
+std::expected<std::optional<std::uint32_t>, IniFileError> SettingsStore::GetColor(std::wstring_view key) const
+{
+    const auto text = Get(key);
+    if (!text) return std::unexpected(text.error());
+    return *text && (*text)->size() < 64 ? settings_codec::DecodeColor(**text) : std::nullopt;
+}
+
+std::expected<void, IniFileError> SettingsStore::SetColor(std::wstring_view key, std::uint32_t value) const
+{
+    return Set(key, settings_codec::EncodeColor(value));
+}
+
+std::expected<bool, IniFileError> SettingsStore::GetBinary(std::wstring_view key, std::span<std::uint8_t> output) const
+{
+    const auto text = Get(key);
+    if (!text) return std::unexpected(text.error());
+    return *text && settings_codec::DecodeBinary(**text, output);
+}
+
+std::expected<void, IniFileError> SettingsStore::SetBinary(std::wstring_view key, std::span<const std::uint8_t> value) const
+{
+    // Hex encoding doubles the size. An encoded value larger than the file
+    // limit cannot be saved, so reject it before allocating the string.
+    if (value.size() > IniFile::MaxBytes / 2) return std::unexpected(IniFileError::too_large);
+    return Set(key, settings_codec::EncodeBinary(value));
 }

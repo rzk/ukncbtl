@@ -3,6 +3,7 @@
 
 #include "IniDocument.h"
 #include "IniEncoding.h"
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 
@@ -25,6 +26,7 @@ enum class IniFileError
 class IniFile
 {
 public:
+    static constexpr std::size_t MaxBytes = 16 * 1024 * 1024;
     // New documents use UTF-8 without a BOM.
     IniFile() = default;
     [[nodiscard]] static std::expected<IniFile, IniFileError> Open(const std::filesystem::path& path);

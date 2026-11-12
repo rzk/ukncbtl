@@ -139,53 +139,90 @@ BOOL Settings_LoadStringValue(LPCTSTR sName, LPTSTR sBuffer, int nBufferLengthCh
 
 BOOL Settings_SaveDwordValue(LPCTSTR sName, DWORD dwValue)
 {
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    return sName && SettingsStore{m_Settings_IniPath}.SetDword(sName, dwValue).has_value();
+#else
     TCHAR buffer[12];
     FormatBuffer(buffer, _T("{}"), dwValue);
 
     return Settings_SaveStringValue(sName, buffer);
+#endif
 }
 BOOL Settings_LoadDwordValue(LPCTSTR sName, DWORD* dwValue)
 {
     if (!dwValue) return FALSE;
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    if (!sName) return FALSE;
+    const auto value = SettingsStore{m_Settings_IniPath}.GetDword(sName);
+    if (!value || !*value) return FALSE;
+    *dwValue = **value;
+    return TRUE;
+#else
     TCHAR buffer[64];
     if (!Settings_LoadStringValue(sName, buffer, 64)) return FALSE;
     const auto value = settings_codec::DecodeDword(buffer);
     if (!value) return FALSE;
     *dwValue = *value;
     return TRUE;
+#endif
 }
 BOOL Settings_SaveColorValue(LPCTSTR sName, COLORREF color)
 {
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    return sName && SettingsStore{m_Settings_IniPath}.SetColor(sName, color).has_value();
+#else
     const auto text = settings_codec::EncodeColor(color);
     return Settings_SaveStringValue(sName, text.c_str());
+#endif
 }
 BOOL Settings_LoadColorValue(LPCTSTR sName, COLORREF* pColor)
 {
     if (!pColor) return FALSE;
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    if (!sName) return FALSE;
+    const auto color = SettingsStore{m_Settings_IniPath}.GetColor(sName);
+    if (!color || !*color) return FALSE;
+    *pColor = **color;
+    return TRUE;
+#else
     TCHAR buffer[64];
     if (!Settings_LoadStringValue(sName, buffer, 64)) return FALSE;
     const auto color = settings_codec::DecodeColor(buffer);
     if (!color) return FALSE;
     *pColor = *color;
     return TRUE;
+#endif
 }
 
 BOOL Settings_SaveBinaryValue(LPCTSTR sName, const void* pData, int size)
 {
     if (size < 0 || (size > 0 && !pData)) return FALSE;
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    if (!sName) return FALSE;
+    return SettingsStore{m_Settings_IniPath}.SetBinary(sName,
+        std::span{static_cast<const uint8_t*>(pData), static_cast<size_t>(size)}).has_value();
+#else
     const auto text = settings_codec::EncodeBinary(
         std::span{static_cast<const uint8_t*>(pData), static_cast<size_t>(size)});
     return Settings_SaveStringValue(sName, text.c_str());
+#endif
 }
 
 BOOL Settings_LoadBinaryValue(LPCTSTR sName, void* pData, int size)
 {
     if (size < 0 || (size > 0 && !pData) || size > (INT_MAX - 2) / 2) return FALSE;
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    if (!sName) return FALSE;
+    const auto result = SettingsStore{m_Settings_IniPath}.GetBinary(sName,
+        std::span{static_cast<uint8_t*>(pData), static_cast<size_t>(size)});
+    return result && *result;
+#else
     // One extra character detects a value longer than the requested object.
     std::vector<TCHAR> buffer(static_cast<size_t>(size) * 2 + 2, 0);
     if (!Settings_LoadStringValue(sName, buffer.data(), static_cast<int>(buffer.size()))) return FALSE;
     return settings_codec::DecodeBinary(buffer.data(),
         std::span{static_cast<uint8_t*>(pData), static_cast<size_t>(size)});
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////

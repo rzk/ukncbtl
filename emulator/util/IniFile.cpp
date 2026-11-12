@@ -11,8 +11,6 @@
 
 namespace
 {
-constexpr std::size_t MaxIniBytes = 16 * 1024 * 1024;
-
 // Creating the directory is an exclusive operation. Its unique name avoids
 // opening or deleting an existing file even when multiple writers race.
 class TemporaryDirectory
@@ -64,7 +62,7 @@ std::expected<IniFile, IniFileError> IniFile::Open(const std::filesystem::path& 
     while (file.read(chunk.data(), chunk.size()) || file.gcount() > 0)
     {
         const auto count = static_cast<std::size_t>(file.gcount());
-        if (count > MaxIniBytes - bytes.size()) return std::unexpected(IniFileError::too_large);
+        if (count > MaxBytes - bytes.size()) return std::unexpected(IniFileError::too_large);
         bytes.insert(bytes.end(), chunk.begin(), chunk.begin() + count);
     }
     if (file.bad() || !file.eof()) return std::unexpected(IniFileError::read_failed);
@@ -80,7 +78,7 @@ std::expected<void, IniFileError> IniFile::Save(const std::filesystem::path& pat
 {
     const auto encoded = ini_encoding::Encode(document_.Serialize(), encoding_);
     if (!encoded) return std::unexpected(EncodingError(encoded.error()));
-    if (encoded->size() > MaxIniBytes) return std::unexpected(IniFileError::too_large);
+    if (encoded->size() > MaxBytes) return std::unexpected(IniFileError::too_large);
     const auto temporary = CreateTemporaryDirectory(path);
     if (!temporary) return std::unexpected(temporary.error());
     const TemporaryDirectory cleanup(*temporary);
