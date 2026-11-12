@@ -28,6 +28,10 @@ and BOM-marked UTF-16LE files; it does not recognize legacy Windows code-page
 encodings. Use a separate UTF-8 or UTF-16LE settings file for this experiment:
 an unmarked code-page file can be rejected or misinterpreted as UTF-8. Saves
 replace the file and do not preserve its original filesystem metadata.
+The portable file API can explicitly decode Windows-1251 and Windows-1252
+through `IniFile::OpenLegacy`; it returns a UTF-8 snapshot that can be saved to
+a separate path. This import is not yet exposed by the application, and the
+caller must know the source code page; it is never detected automatically.
 
 ## Migration checklist
 

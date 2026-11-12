@@ -51,9 +51,8 @@ IniFileError EncodingError(ini_encoding::Error error)
     return error == ini_encoding::Error::unsupported_encoding
         ? IniFileError::unsupported_encoding : IniFileError::invalid_text;
 }
-}
 
-std::expected<IniFile, IniFileError> IniFile::Open(const std::filesystem::path& path)
+std::expected<std::vector<std::uint8_t>, IniFileError> ReadBytes(const std::filesystem::path& path)
 {
     std::ifstream file(path, std::ios::binary);
     if (!file) return std::unexpected(IniFileError::open_failed);
@@ -62,15 +61,35 @@ std::expected<IniFile, IniFileError> IniFile::Open(const std::filesystem::path& 
     while (file.read(chunk.data(), chunk.size()) || file.gcount() > 0)
     {
         const auto count = static_cast<std::size_t>(file.gcount());
-        if (count > MaxBytes - bytes.size()) return std::unexpected(IniFileError::too_large);
+        if (count > IniFile::MaxBytes - bytes.size()) return std::unexpected(IniFileError::too_large);
         bytes.insert(bytes.end(), chunk.begin(), chunk.begin() + count);
     }
     if (file.bad() || !file.eof()) return std::unexpected(IniFileError::read_failed);
-    const auto decoded = ini_encoding::Decode(bytes);
+    return bytes;
+}
+}
+
+std::expected<IniFile, IniFileError> IniFile::Open(const std::filesystem::path& path)
+{
+    const auto bytes = ReadBytes(path);
+    if (!bytes) return std::unexpected(bytes.error());
+    const auto decoded = ini_encoding::Decode(*bytes);
     if (!decoded) return std::unexpected(EncodingError(decoded.error()));
     IniFile result;
     result.document_ = IniDocument(decoded->text);
     result.encoding_ = decoded->encoding;
+    return result;
+}
+
+std::expected<IniFile, IniFileError> IniFile::OpenLegacy(
+    const std::filesystem::path& path, ini_encoding::LegacyEncoding encoding)
+{
+    const auto bytes = ReadBytes(path);
+    if (!bytes) return std::unexpected(bytes.error());
+    const auto decoded = ini_encoding::DecodeLegacy(*bytes, encoding);
+    if (!decoded) return std::unexpected(EncodingError(decoded.error()));
+    IniFile result;
+    result.document_ = IniDocument(*decoded);
     return result;
 }
 

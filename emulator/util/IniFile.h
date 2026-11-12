@@ -30,6 +30,10 @@ public:
     // New documents use UTF-8 without a BOM.
     IniFile() = default;
     [[nodiscard]] static std::expected<IniFile, IniFileError> Open(const std::filesystem::path& path);
+    // Explicitly decode an old code-page file as a UTF-8 snapshot. OpenLegacy
+    // never modifies the source; callers choose where to save the result.
+    [[nodiscard]] static std::expected<IniFile, IniFileError> OpenLegacy(
+        const std::filesystem::path& path, ini_encoding::LegacyEncoding encoding);
     [[nodiscard]] std::expected<void, IniFileError> Save(const std::filesystem::path& path) const;
 
     [[nodiscard]] IniDocument& Document() { return document_; }

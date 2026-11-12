@@ -8,6 +8,25 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <vector>
+
+TEST(IniWindowsCompatibility, LegacyCodePageTablesMatchWindows)
+{
+    std::vector<std::uint8_t> bytes;
+    for (int byte = 1; byte <= 255; ++byte) bytes.push_back(static_cast<std::uint8_t>(byte));
+    for (const auto& [codePage, encoding] : std::array{
+             std::pair{1251u, ini_encoding::LegacyEncoding::windows_1251},
+             std::pair{1252u, ini_encoding::LegacyEncoding::windows_1252}})
+    {
+        std::wstring windows(bytes.size(), L'\0');
+        const auto count = MultiByteToWideChar(codePage, 0, reinterpret_cast<const char*>(bytes.data()),
+            static_cast<int>(bytes.size()), windows.data(), static_cast<int>(windows.size()));
+        ASSERT_EQ(count, static_cast<int>(bytes.size()));
+        const auto portable = ini_encoding::DecodeLegacy(bytes, encoding);
+        ASSERT_TRUE(portable);
+        EXPECT_EQ(*portable, windows);
+    }
+}
 
 TEST(IniWindowsCompatibility, ReadsRepresentativeValuesLikeWindowsProfileApi)
 {

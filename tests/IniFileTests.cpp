@@ -12,7 +12,7 @@ class IniFileTest : public testing::Test
 {
 protected:
     std::filesystem::path directory;
-    std::filesystem::path path;
+    std::filesystem::path path, imported;
 
     void SetUp() override
     {
@@ -20,11 +20,13 @@ protected:
         directory = std::filesystem::temp_directory_path() / ("ukncbtl-ini-" + suffix);
         ASSERT_TRUE(std::filesystem::create_directory(directory));
         path = directory / std::filesystem::path(u8"\u65e5\u672c.ini");
+        imported = directory / "imported.ini";
     }
     void TearDown() override
     {
         std::error_code error;
         std::filesystem::remove(path, error);
+        std::filesystem::remove(imported, error);
         std::filesystem::remove(directory, error);
     }
     void Write(const std::vector<std::uint8_t>& bytes)
@@ -146,5 +148,21 @@ TEST_F(IniFileTest, FailedReplacementLeavesDestinationAndCleansUpTemporaryFiles)
     EXPECT_TRUE(std::filesystem::exists(sentinel));
     EXPECT_EQ(std::distance(std::filesystem::directory_iterator(directory), std::filesystem::directory_iterator{}), 1);
     EXPECT_TRUE(std::filesystem::remove(sentinel));
+}
+
+TEST_F(IniFileTest, ExplicitLegacyImportProducesUtf8WithoutChangingSource)
+{
+    const std::vector<std::uint8_t> legacy{
+        '[','U','K','N','C','B','T','L',']','\r','\n','P','a','t','h','=',0xcf,0xf0,0xe8,0xe2,0xe5,0xf2,'\r','\n'};
+    Write(legacy);
+    const auto opened = IniFile::OpenLegacy(path, ini_encoding::LegacyEncoding::windows_1251);
+    ASSERT_TRUE(opened);
+    EXPECT_EQ(opened->Encoding(), ini_encoding::Encoding::utf8);
+    EXPECT_EQ(opened->Document().Get(L"UKNCBTL", L"Path"), L"\u041f\u0440\u0438\u0432\u0435\u0442");
+    ASSERT_TRUE(opened->Save(imported));
+    EXPECT_EQ(Read(), legacy);
+    const auto converted = IniFile::Open(imported);
+    ASSERT_TRUE(converted);
+    EXPECT_EQ(converted->Document().Get(L"UKNCBTL", L"Path"), L"\u041f\u0440\u0438\u0432\u0435\u0442");
 }
 }
