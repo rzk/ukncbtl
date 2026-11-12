@@ -62,6 +62,12 @@ ukncbtl_toolchain(ScreenScale)
 target_include_directories(ScreenScale PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
 target_link_libraries(ScreenScale PUBLIC EmulatorProfiling)
 
+# Build the disassembler without the legacy precompiled header. Its hint
+# functions resolve their memory-controller references when linked into core.
+add_library(Disassembler OBJECT emulator/emubase/Disasm.cpp)
+ukncbtl_toolchain(Disassembler)
+target_include_directories(Disassembler PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+
 if(BUILD_TESTING)
   include(GoogleTest)
   function(ukncbtl_portable_test target)
@@ -94,7 +100,7 @@ function(ukncbtl_target target)
 endfunction()
 
 add_library(EmulatorCore STATIC
-  emulator/emubase/Board.cpp emulator/emubase/Disasm.cpp
+  emulator/emubase/Board.cpp $<TARGET_OBJECTS:Disassembler>
   emulator/emubase/Floppy.cpp emulator/emubase/Hard.cpp
   emulator/emubase/Memory.cpp emulator/emubase/Processor.cpp emulator/emubase/SoundAY.cpp)
 ukncbtl_target(EmulatorCore)
