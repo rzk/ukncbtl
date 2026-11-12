@@ -260,9 +260,11 @@ void CProcessor::Done()
 //////////////////////////////////////////////////////////////////////
 
 
-CProcessor::CProcessor (LPCTSTR name)
+CProcessor::CProcessor (const wchar_t* name)
 {
-    _tcsncpy_s(m_name.data(), m_name.size(), name != nullptr ? name : _T(""), _TRUNCATE);
+    if (name != nullptr)
+        for (size_t i = 0; i + 1 < m_name.size() && name[i] != L'\0'; ++i)
+            m_name[i] = name[i];
     m_R.fill({});
     m_psw = m_savepsw = 0777;
     m_savepc = 0177777;

@@ -27,7 +27,7 @@ static constexpr BusAddressRange ProcessorTimerAddressRanges[] =
 class CBusDeviceProcessorTimer : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Processor timer"); }
+    const wchar_t* GetName() const override { return L"Processor timer"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return ProcessorTimerAddressRanges; }
 };
 
@@ -39,7 +39,7 @@ static constexpr BusAddressRange CpuChannelsAddressRanges[] =
 class CBusDeviceCpuChannels : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("CPU-PPU channels"); }
+    const wchar_t* GetName() const override { return L"CPU-PPU channels"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return CpuChannelsAddressRanges; }
 };
 
@@ -50,7 +50,7 @@ static constexpr BusAddressRange PpuChannelsAddressRanges[] =
 class CBusDevicePpuChannels : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("CPU-PPU channels"); }
+    const wchar_t* GetName() const override { return L"CPU-PPU channels"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return PpuChannelsAddressRanges; }
 };
 
@@ -61,7 +61,7 @@ static constexpr BusAddressRange NetworkAdapterAddressRanges[] =
 class CBusDeviceNetworkAdapter : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Network adapter"); }
+    const wchar_t* GetName() const override { return L"Network adapter"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return NetworkAdapterAddressRanges; }
 };
 
@@ -72,7 +72,7 @@ static constexpr BusAddressRange SerialPortAddressRanges[] =
 class CBusDeviceSerialPort : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Serial port"); }
+    const wchar_t* GetName() const override { return L"Serial port"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return SerialPortAddressRanges; }
 };
 
@@ -83,7 +83,7 @@ static constexpr BusAddressRange CpuMemoryAccessAddressRanges[] =
 class CBusDeviceCpuMemoryAccess : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Memory access"); }
+    const wchar_t* GetName() const override { return L"Memory access"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return CpuMemoryAccessAddressRanges; }
 };
 
@@ -95,7 +95,7 @@ static constexpr BusAddressRange PpuMemoryAccessAddressRanges[] =
 class CBusDevicePpuMemoryAccess : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Memory access"); }
+    const wchar_t* GetName() const override { return L"Memory access"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return PpuMemoryAccessAddressRanges; }
 };
 
@@ -106,7 +106,7 @@ static constexpr BusAddressRange ProgrammablePortAddressRanges[] =
 class CBusDeviceProgrammablePort : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Programmable port"); }
+    const wchar_t* GetName() const override { return L"Programmable port"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return ProgrammablePortAddressRanges; }
 };
 
@@ -117,7 +117,7 @@ static constexpr BusAddressRange KeyboardAddressRanges[] =
 class CBusDeviceKeyboard : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Keyboard"); }
+    const wchar_t* GetName() const override { return L"Keyboard"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return KeyboardAddressRanges; }
 };
 
@@ -128,7 +128,7 @@ static constexpr BusAddressRange FloppyControllerAddressRanges[] =
 class CBusDeviceFloppyController : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Floppy controller"); }
+    const wchar_t* GetName() const override { return L"Floppy controller"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return FloppyControllerAddressRanges; }
 };
 
@@ -139,7 +139,7 @@ static constexpr BusAddressRange HardDriveAddressRanges[] =
 class CBusDeviceHardDrive : public CBusDevice
 {
 public:
-    virtual LPCTSTR GetName() const { return _T("Hard drive"); }
+    const wchar_t* GetName() const override { return L"Hard drive"; }
     std::span<const BusAddressRange> GetAddressRanges() const override { return HardDriveAddressRanges; }
 };
 
@@ -173,8 +173,8 @@ CMotherboard::CMotherboard ()
     m_okSoundAY = m_okSoundCovox = false;
 
     // Create devices
-    m_pCPU = std::make_unique<CProcessor>(_T("CPU"));
-    m_pPPU = std::make_unique<CProcessor>(_T("PPU"));
+    m_pCPU = std::make_unique<CProcessor>(L"CPU");
+    m_pPPU = std::make_unique<CProcessor>(L"PPU");
     m_pFirstMemCtl = std::make_unique<CFirstMemoryController>();
     m_pSecondMemCtl = std::make_unique<CSecondMemoryController>();
     m_pFloppyCtl = std::make_unique<CFloppyController>();
@@ -329,7 +329,7 @@ bool CMotherboard::IsFloppyEngineOn() const
     return m_pFloppyCtl->IsEngineOn();
 }
 
-bool CMotherboard::AttachFloppyImage(int slot, LPCTSTR sFileName)
+bool CMotherboard::AttachFloppyImage(int slot, const wchar_t* sFileName)
 {
     ASSERT(slot >= 0 && slot < 4);
     return m_pFloppyCtl->AttachImage(slot, sFileName);
@@ -375,7 +375,7 @@ bool CMotherboard::IsHardImageReadOnly(int slot) const
     return pHardDrive->IsReadOnly();
 }
 
-bool CMotherboard::AttachHardImage(int slot, LPCTSTR sFileName)
+bool CMotherboard::AttachHardImage(int slot, const wchar_t* sFileName)
 {
     ASSERT(slot >= 1 && slot <= 2);
 
