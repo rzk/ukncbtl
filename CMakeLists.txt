@@ -116,6 +116,9 @@ ukncbtl_toolchain(WavPcmFile)
 add_library(IniDocument STATIC emulator/util/IniDocument.cpp)
 ukncbtl_toolchain(IniDocument)
 
+add_library(IniEncoding STATIC emulator/util/IniEncoding.cpp)
+ukncbtl_toolchain(IniEncoding)
+
 # The snapshot implementation uses the portable board interface; linking its
 # operations into an executable also requires the emulator core.
 add_library(EmulatorSnapshot STATIC emulator/Snapshot.cpp)
@@ -142,6 +145,8 @@ if(BUILD_TESTING)
   ukncbtl_portable_test(CachedSettingTests tests/CachedSettingTests.cpp)
   ukncbtl_portable_test(IniDocumentTests tests/IniDocumentTests.cpp)
   target_link_libraries(IniDocumentTests PRIVATE IniDocument)
+  ukncbtl_portable_test(IniEncodingTests tests/IniEncodingTests.cpp)
+  target_link_libraries(IniEncodingTests PRIVATE IniEncoding IniDocument)
   ukncbtl_portable_test(StereoPcmBatchTests tests/StereoPcmBatchTests.cpp)
   ukncbtl_portable_test(FrameTimingTests tests/FrameTimingTests.cpp)
   target_link_libraries(FrameTimingTests PRIVATE FrameTiming)
