@@ -15,14 +15,13 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "FrameControl.h"
 #include "FrameTiming.h"
 #include "PrinterOutput.h"
+#include "RomFile.h"
 #include "util/Profiler.h"
-#include <cstdio>
 #include <algorithm>
 #include <array>
 #include <format>
 #include <memory>
 #include <vector>
-#include <share.h>
 #include "Main.h"
 #include "Emulator.h"
 #include "Views.h"
@@ -81,17 +80,9 @@ bool Emulator_LoadUkncRom()
 {
     std::array<uint8_t, 32768> data{};
 
-    UniqueFile fpFile(::_tfsopen(FILE_NAME_UKNC_ROM, _T("rb"), _SH_DENYWR));
-    if (fpFile != nullptr)
-    {
-        size_t dwBytesRead = ::fread(data.data(), 1, 32256, fpFile.get());
-        fpFile.reset();
-        if (dwBytesRead != 32256)
-        {
-            return false;
-        }
-    }
-    else  // uknc_rom.bin not found, use ROM image from resources
+    const auto external = rom_file::ReadPrefix(std::filesystem::path(FILE_NAME_UKNC_ROM), std::span{data}.first(32256));
+    if (!external && external.error() != rom_file::Error::open_failed) return false;
+    if (!external)  // External ROM could not be opened; use the embedded resource.
     {
         HRSRC hRes = nullptr;
         DWORD dwDataSize = 0;
@@ -590,18 +581,19 @@ uint16_t Emulator_GetChangeRamStatus(int addrtype, uint16_t address)
 
 bool Emulator_LoadROMCartridge(int slot, LPCTSTR sFilePath)
 {
-    // Open file
-    UniqueFile fpFile(::_tfsopen(sFilePath, _T("rb"), _SH_DENYWR));
-    if (!fpFile)
+    if (!sFilePath || !*sFilePath)
     {
         AlertWarning(_T("Failed to load ROM cartridge image."));
         return false;
     }
-
-    // Allocate memory
     std::array<BYTE, 24 * 1024> image{};
-    if (::fread(image.data(), 1, image.size(), fpFile.get()) != image.size())
+    const auto loaded = rom_file::ReadPrefix(std::filesystem::path(sFilePath), image);
+    if (!loaded)
+    {
+        if (loaded.error() == rom_file::Error::open_failed)
+            AlertWarning(_T("Failed to load ROM cartridge image."));
         return false;
+    }
     g_pBoard->LoadROMCartridge(slot, std::span<const uint8_t, 24 * 1024>{image});
 
     //TODO: Save the file name for a future SaveImage() call
