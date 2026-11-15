@@ -14,6 +14,9 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "BitmapFile.h"
 #include "BmpFile.h"
 #include "ImagePixels.h"
+#ifdef UKNCBTL_SDL3_PNG
+#include "PngFile.h"
+#endif
 
 #include <wincodec.h>
 #include <wincodecsdk.h>
@@ -178,6 +181,11 @@ bool BitmapFile_SaveImageFile(
 
     if (format == BitmapFileFormatBmp)
         return sFileName && bmp_file::Save(std::filesystem::path(sFileName), pixels, width, height).has_value();
+
+#ifdef UKNCBTL_SDL3_PNG
+    if (format != BitmapFileFormatTiff)
+        return sFileName && png_file::Save(std::filesystem::path(sFileName), pixels, width, height).has_value();
+#endif
 
     IWICImagingFactory * piFactory = BitmapFile_factory.get();
     ASSERT(piFactory != nullptr);

@@ -49,6 +49,8 @@ SDL3 migration targets can be enabled with `-DUKNCBTL_ENABLE_SDL3=ON`. CMake
 fetches SDL 3.4.16 with a verified source hash; an offline checkout can be
 provided with `FETCHCONTENT_SOURCE_DIR_SDL3`. The headless SDL smoke test checks
 surface creation and PNG round trips without opening a window.
+When enabled for the legacy application, this option also routes PNG screenshot
+saves through SDL; TIFF and embedded image loading still use Windows codecs.
 
 ## Migration checklist
 

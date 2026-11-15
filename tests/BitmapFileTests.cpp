@@ -86,6 +86,14 @@ TEST_F(BitmapEdges, MissingParentFailsAndLaterSaveSucceeds) {
 TEST_F(BitmapEdges, UnknownFormatFallsBackToPng) {
     ASSERT_TRUE(Save(static_cast<BitmapFileFormat>(99))); EXPECT_TRUE(HasExpectedPixels(path.data()));
 }
+#ifdef UKNCBTL_SDL3_PNG
+TEST_F(BitmapEdges, PngSaveDoesNotRequireWindowsCodecInitialization) {
+    BitmapFile_Done();
+    ASSERT_TRUE(Save());
+    BitmapFile_Init();
+    EXPECT_TRUE(HasExpectedPixels(path.data()));
+}
+#endif
 TEST_F(BitmapEdges, DoneIsIdempotentAndInitializationCanBeRepeated) {
     BitmapFile_Done(); BitmapFile_Done(); BitmapFile_Init(); ASSERT_TRUE(Save());
     BitmapFile_Done(); BitmapFile_Init(); ASSERT_TRUE(Save());
