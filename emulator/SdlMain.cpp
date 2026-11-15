@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "EmbeddedRom.h"
 #include "ScreenshotImage.h"
+#include "SdlKeyboard.h"
 #include "SdlScreenRenderer.h"
 #include "VideoDecoder.h"
 #include "emubase/Board.h"
@@ -89,6 +90,12 @@ int Run(bool smokeTest)
     constexpr auto palette = StandardPalette();
     std::vector<std::uint32_t> pixels(video::Width * video::Height);
     sdl_screen::Renderer screen(*renderer);
+    sdl_keyboard::Keyboard keyboard;
+    sdl_keyboard::Delivery keyDelivery;
+    const auto releaseKeys = [&] {
+        (void)keyboard.ReleaseAll();
+        for (const auto event : keyDelivery.Reset()) board.KeyboardEvent(event.scan, event.pressed);
+    };
     bool running = true;
     bool done = false;
     unsigned frames = 0;
@@ -99,6 +106,16 @@ int Run(bool smokeTest)
         while (SDL_PollEvent(&event))
         {
             ImGui_ImplSDL3_ProcessEvent(&event);
+            if ((event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) &&
+                event.key.windowID == SDL_GetWindowID(window.get()))
+            {
+                const auto key = keyboard.Transition(event.key.scancode, event.type == SDL_EVENT_KEY_DOWN,
+                    event.key.repeat, !running || ImGui::GetIO().WantCaptureKeyboard,
+                    (board.GetKeyboardRegister() & KEYB_LAT) != 0);
+                if (key) keyDelivery.Push(*key);
+            }
+            if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST && event.window.windowID == SDL_GetWindowID(window.get()))
+                releaseKeys();
             if (event.type == SDL_EVENT_QUIT ||
                 (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(window.get())))
                 done = true;
@@ -107,20 +124,25 @@ int Run(bool smokeTest)
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
+        if (ImGui::GetIO().WantCaptureKeyboard) releaseKeys();
         float menuHeight = 0;
         if (ImGui::BeginMainMenuBar())
         {
             menuHeight = ImGui::GetWindowHeight();
             if (ImGui::BeginMenu("Emulator"))
             {
-                if (ImGui::MenuItem(running ? "Pause" : "Run")) running = !running;
-                if (ImGui::MenuItem("Reset")) board.Reset();
+                if (ImGui::MenuItem(running ? "Pause" : "Run")) { running = !running; if (!running) releaseKeys(); }
+                if (ImGui::MenuItem("Reset")) { releaseKeys(); board.Reset(); }
                 if (ImGui::MenuItem("Quit")) done = true;
                 ImGui::EndMenu();
             }
             ImGui::EndMainMenuBar();
         }
-        if (running && !board.SystemFrame()) { SDL_Log("Emulator frame failed"); return 1; }
+        if (running)
+        {
+            if (const auto key = keyDelivery.Next()) board.KeyboardEvent(key->scan, key->pressed);
+            if (!board.SystemFrame()) { SDL_Log("Emulator frame failed"); return 1; }
+        }
         if (!video::RenderRgb(board, pixels, palette)) return 1;
         const auto image = screenshot_image::Prepare(pixels, 1);
         if (!image) return 1;
