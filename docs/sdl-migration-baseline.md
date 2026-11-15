@@ -52,6 +52,10 @@ surface creation and PNG round trips without opening a window.
 When enabled for the legacy application, this option routes PNG screenshot
 saves through SDL and removes the application's Windows image codec dependency;
 otherwise PNG saves still use Windows codecs.
+The SDL screenshot clipboard adapter offers BMP and PNG data and requires an
+initialized SDL video subsystem with event processing. It is not yet connected
+to the legacy clipboard command. Its automated tests use SDL's dummy video
+driver; system clipboard interoperability still needs platform testing.
 
 ## Migration checklist
 
