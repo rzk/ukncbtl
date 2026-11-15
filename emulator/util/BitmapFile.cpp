@@ -13,11 +13,10 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "stdafx.h"
 #include "BitmapFile.h"
 #include "BmpFile.h"
-#include "ImagePixels.h"
 #ifdef UKNCBTL_SDL3_PNG
 #include "PngFile.h"
-#endif
-
+#else
+#include "ImagePixels.h"
 #include <wincodec.h>
 #include <wincodecsdk.h>
 #include <vector>
@@ -27,18 +26,14 @@ template <typename T> struct ComRelease
 {
     void operator()(T* value) const { if (value != nullptr) value->Release(); }
 };
-#pragma comment(lib, "WindowsCodecs.lib")
-
-
-//////////////////////////////////////////////////////////////////////
-// Globals
-
 static std::unique_ptr<IWICImagingFactory, ComRelease<IWICImagingFactory>> BitmapFile_factory;
 static bool BitmapFile_comInitialized = false;
+#endif
 
 
 void BitmapFile_Init()
 {
+#ifndef UKNCBTL_SDL3_PNG
     if (BitmapFile_factory)
         return;
     const HRESULT initialized = BitmapFile_comInitialized ? S_FALSE : CoInitialize(nullptr);
@@ -49,14 +44,17 @@ void BitmapFile_Init()
     if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
                                    IID_PPV_ARGS(&factory))))
         BitmapFile_factory.reset(factory);
+#endif
 }
 
 void BitmapFile_Done()
 {
+#ifndef UKNCBTL_SDL3_PNG
     BitmapFile_factory.reset();
     if (BitmapFile_comInitialized)
         CoUninitialize();
     BitmapFile_comInitialized = false;
+#endif
 }
 
 
@@ -75,8 +73,7 @@ bool BitmapFile_SaveImageFile(
 
 #ifdef UKNCBTL_SDL3_PNG
     return sFileName && png_file::Save(std::filesystem::path(sFileName), pixels, width, height).has_value();
-#endif
-
+#else
     IWICImagingFactory * piFactory = BitmapFile_factory.get();
     ASSERT(piFactory != nullptr);
     if (piFactory == nullptr || sFileName == nullptr || width <= 0 || height <= 0 ||
@@ -110,6 +107,7 @@ bool BitmapFile_SaveImageFile(
     if (!image_pixels::ToTopDownBgr24(pixels, pixelBuffer, width, height)) return false;
     return SUCCEEDED(frame->WritePixels(height, cbStride, cbBufferSize, pixelBuffer.data())) &&
            SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
+#endif
 }
 
 

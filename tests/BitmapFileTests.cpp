@@ -54,11 +54,25 @@ class BitmapEdges : public testing::Test {
 protected:
     std::array<TCHAR,MAX_PATH> path{};
     const std::array<uint32_t,4> pixels{0x00ff0000,0x0000ff00,0x000000ff,0x00ffffff};
+#ifdef UKNCBTL_SDL3_PNG
+    bool decoderComInitialized = false;
+#endif
     void SetUp() override {
         std::array<TCHAR,MAX_PATH> directory{}; ASSERT_NE(0,GetTempPath(MAX_PATH,directory.data()));
-        ASSERT_NE(0,GetTempFileName(directory.data(),L"bme",0,path.data())); BitmapFile_Init();
+        ASSERT_NE(0,GetTempFileName(directory.data(),L"bme",0,path.data()));
+#ifdef UKNCBTL_SDL3_PNG
+        decoderComInitialized = SUCCEEDED(CoInitialize(nullptr));
+        ASSERT_TRUE(decoderComInitialized);
+#endif
+        BitmapFile_Init();
     }
-    void TearDown() override { BitmapFile_Done(); DeleteFile(path.data()); }
+    void TearDown() override {
+        BitmapFile_Done();
+#ifdef UKNCBTL_SDL3_PNG
+        if (decoderComInitialized) CoUninitialize();
+#endif
+        DeleteFile(path.data());
+    }
     bool Save(BitmapFileFormat format=BitmapFileFormatPng) { return BitmapFile_SaveImageFile(pixels,path.data(),format,2,2); }
 };
 TEST_F(BitmapEdges, ShortPixelSpanDoesNotOverwriteExistingImage) {
@@ -110,10 +124,18 @@ TEST_F(BitmapEdges, DoneIsIdempotentAndInitializationCanBeRepeated) {
 }
 TEST_F(BitmapEdges, RepeatedInitBalancesComInitialization) {
     BitmapFile_Init(); BitmapFile_Done();
+#ifdef UKNCBTL_SDL3_PNG
+    CoUninitialize(); // Drop the test decoder's apartment before probing.
+    decoderComInitialized = false;
+#endif
     const HRESULT changed=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
     EXPECT_TRUE(SUCCEEDED(changed)) << std::hex << changed;
     if(SUCCEEDED(changed)) CoUninitialize();
     else if(changed==RPC_E_CHANGED_MODE) CoUninitialize(); // Clean up the leaked reference on regression failure.
+#ifdef UKNCBTL_SDL3_PNG
+    decoderComInitialized = SUCCEEDED(CoInitialize(nullptr)); // Restore it for TearDown.
+    EXPECT_TRUE(decoderComInitialized);
+#endif
 }
 TEST(BitmapLifecycle, ExistingMultithreadedApartmentRemainsOwnedByCaller) {
     const HRESULT initialized=CoInitializeEx(nullptr,COINIT_MULTITHREADED); ASSERT_TRUE(SUCCEEDED(initialized));
