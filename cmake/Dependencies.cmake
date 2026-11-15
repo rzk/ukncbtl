@@ -17,6 +17,13 @@ if(UKNCBTL_ENABLE_SDL3)
   FetchContent_MakeAvailable(SDL3)
 endif()
 
+if(UKNCBTL_ENABLE_IMGUI)
+  FetchContent_Declare(imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG f1cc2ae15e53a861a874c3034aae6798fde194ab) # v1.92.9b
+  FetchContent_MakeAvailable(imgui)
+endif()
+
 # Pin release commits so repeated builds use the same sources. FetchContent's
 # FETCHCONTENT_SOURCE_DIR_<NAME> overrides also support offline checkouts.
 if(BUILD_TESTING)

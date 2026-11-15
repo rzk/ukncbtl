@@ -60,6 +60,11 @@ The SDL screen renderer can draw prepared frames into an SDL renderer and is
 tested with SDL's software renderer. It is not yet connected to a frontend or
 the emulator's event loop; hardware rendering and platform display behavior
 still need testing.
+Dear ImGui and its SDL3 platform and SDL renderer backends can be built with
+`-DUKNCBTL_ENABLE_SDL3=ON -DUKNCBTL_ENABLE_IMGUI=ON`. CMake pins Dear ImGui
+v1.92.9b to a release commit; `FETCHCONTENT_SOURCE_DIR_IMGUI` supports an
+offline checkout. A dummy-video test exercises UI rendering over a prepared
+frame and SDL keyboard events. This is a foundation, not a complete frontend.
 
 ## Migration checklist
 
