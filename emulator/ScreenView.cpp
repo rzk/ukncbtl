@@ -18,6 +18,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <windowsx.h>
 #include "Input.h"
 #include "ScreenText.h"
+#include "ScreenshotImage.h"
 #include "Main.h"
 #include "Views.h"
 #include "Emulator.h"
@@ -574,15 +575,14 @@ BOOL ScreenView_SaveScreenshot(LPCTSTR sFileName, int screenshotMode)
     std::vector<uint32_t> bits(UKNC_SCREEN_WIDTH * UKNC_SCREEN_HEIGHT);
     Emulator_PrepareScreenRGB32(bits, ScreenView_GetPalette());
 
-    const auto [scrwidth, scrheight, description] = screen_scale::GetMode(screenshotMode);
-    std::vector<uint32_t> scrBits(static_cast<size_t>(scrwidth) * scrheight);
-    if (!screen_scale::Apply(screenshotMode, bits, scrBits))
+    const auto image = screenshot_image::Prepare(bits, screenshotMode);
+    if (!image)
         return FALSE;
 
     const auto imageFormat = screenshot_format::FromPath(std::filesystem::path(sFileName)) == screenshot_format::Format::bmp
         ? BitmapFileFormatBmp : BitmapFileFormatPng;
     BOOL result = BitmapFile_SaveImageFile(
-            scrBits, sFileName, imageFormat, scrwidth, scrheight);
+            image->pixels, sFileName, imageFormat, image->width, image->height);
 
     return result;
 }
@@ -593,10 +593,11 @@ HGLOBAL ScreenView_GetScreenshotAsDIB(int screenshotMode)
 
     Emulator_PrepareScreenRGB32(bits, ScreenView_GetPalette());
 
-    const auto [scrwidth, scrheight, description] = screen_scale::GetMode(screenshotMode);
-    std::vector<uint32_t> scrBits(static_cast<size_t>(scrwidth) * scrheight);
-    if (!screen_scale::Apply(screenshotMode, bits, scrBits))
+    const auto image = screenshot_image::Prepare(bits, screenshotMode);
+    if (!image)
         return nullptr;
+    const auto scrwidth = image->width;
+    const auto scrheight = image->height;
 
     BITMAPINFOHEADER bi{};
     bi.biSize = sizeof(BITMAPINFOHEADER);
@@ -623,7 +624,7 @@ HGLOBAL ScreenView_GetScreenshotAsDIB(int screenshotMode)
     p += sizeof(BITMAPINFOHEADER);
     for (int line = 0; line < scrheight; line++)
     {
-        const auto row = std::span{scrBits}.subspan(static_cast<size_t>(scrheight - line - 1) * scrwidth, scrwidth);
+        const auto row = std::span{image->pixels}.subspan(static_cast<size_t>(scrheight - line - 1) * scrwidth, scrwidth);
         ::CopyMemory(p, row.data(), row.size_bytes());
         p += row.size_bytes();
     }
