@@ -13,6 +13,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "stdafx.h"
 #include "BitmapFile.h"
 #include "BmpFile.h"
+#include "ImagePixels.h"
 
 #include <wincodec.h>
 #include <wincodecsdk.h>
@@ -217,17 +218,7 @@ bool BitmapFile_SaveImageFile(
     const UINT cbStride = static_cast<UINT>(width) * 3;
     const UINT cbBufferSize = static_cast<UINT>(height) * cbStride;
     std::vector<BYTE> pixelBuffer(cbBufferSize);
-    for (int line = 0; line < height; line++)
-    {
-        BYTE* pDst = pixelBuffer.data() + static_cast<size_t>(line) * cbStride;
-        for (int x = 0; x < width; x++)
-        {
-            const uint32_t pixel = pixels[static_cast<size_t>(height - line - 1) * width + x];
-            *pDst++ = static_cast<BYTE>(pixel);
-            *pDst++ = static_cast<BYTE>(pixel >> 8);
-            *pDst++ = static_cast<BYTE>(pixel >> 16);
-        }
-    }
+    if (!image_pixels::ToTopDownBgr24(pixels, pixelBuffer, width, height)) return false;
     return SUCCEEDED(frame->WritePixels(height, cbStride, cbBufferSize, pixelBuffer.data())) &&
            SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
 }
