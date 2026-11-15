@@ -74,8 +74,7 @@ bool BitmapFile_SaveImageFile(
         return sFileName && bmp_file::Save(std::filesystem::path(sFileName), pixels, width, height).has_value();
 
 #ifdef UKNCBTL_SDL3_PNG
-    if (format != BitmapFileFormatTiff)
-        return sFileName && png_file::Save(std::filesystem::path(sFileName), pixels, width, height).has_value();
+    return sFileName && png_file::Save(std::filesystem::path(sFileName), pixels, width, height).has_value();
 #endif
 
     IWICImagingFactory * piFactory = BitmapFile_factory.get();
@@ -85,18 +84,9 @@ bool BitmapFile_SaveImageFile(
         static_cast<uint64_t>(width) * height > pixels.size())
         return false;
 
-    GUID containerFormatGuid = GUID_ContainerFormatPng;
-    switch (format)
-    {
-    case BitmapFileFormatTiff:
-        containerFormatGuid = GUID_ContainerFormatTiff; break;
-    default:
-        containerFormatGuid = GUID_ContainerFormatPng;
-    }
-
     WICPixelFormatGUID formatGUID = GUID_WICPixelFormat24bppBGR;
     IWICBitmapEncoder* rawEncoder = nullptr;
-    if (FAILED(piFactory->CreateEncoder(containerFormatGuid, nullptr, &rawEncoder))) return false;
+    if (FAILED(piFactory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &rawEncoder))) return false;
     std::unique_ptr<IWICBitmapEncoder, ComRelease<IWICBitmapEncoder>> encoder(rawEncoder);
     IWICStream* rawStream = nullptr;
     if (FAILED(piFactory->CreateStream(&rawStream))) return false;

@@ -24,7 +24,6 @@ enum BitmapFileFormat
 {
     BitmapFileFormatBmp = 1,
     BitmapFileFormatPng = 2,
-    BitmapFileFormatTiff = 3,
 };
 
 // Save the image as .PNG file

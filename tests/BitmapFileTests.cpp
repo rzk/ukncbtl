@@ -5,6 +5,8 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <vector>
 #include <wincodec.h>
@@ -65,7 +67,7 @@ TEST_F(BitmapEdges, ShortPixelSpanDoesNotOverwriteExistingImage) {
     EXPECT_TRUE(HasExpectedPixels(path.data()));
 }
 TEST_F(BitmapEdges, AllFormatsRoundTripAndReleaseFileForDeletion) {
-    for(auto format : {BitmapFileFormatBmp,BitmapFileFormatPng,BitmapFileFormatTiff}) {
+    for(auto format : {BitmapFileFormatBmp,BitmapFileFormatPng}) {
         ASSERT_TRUE(Save(format)); EXPECT_TRUE(HasExpectedPixels(path.data())); EXPECT_TRUE(DeleteFile(path.data()));
     }
 }
@@ -84,7 +86,15 @@ TEST_F(BitmapEdges, MissingParentFailsAndLaterSaveSucceeds) {
     EXPECT_FALSE(BitmapFile_SaveImageFile(pixels,missing.c_str(),BitmapFileFormatPng,2,2)); EXPECT_TRUE(Save());
 }
 TEST_F(BitmapEdges, UnknownFormatFallsBackToPng) {
-    ASSERT_TRUE(Save(static_cast<BitmapFileFormat>(99))); EXPECT_TRUE(HasExpectedPixels(path.data()));
+    for (auto format : {3, 99}) {
+        ASSERT_TRUE(Save(static_cast<BitmapFileFormat>(format)));
+        std::ifstream file(std::filesystem::path(path.data()), std::ios::binary);
+        std::array<unsigned char, 8> signature{};
+        ASSERT_TRUE(file.read(reinterpret_cast<char*>(signature.data()), signature.size()));
+        constexpr std::array<unsigned char, 8> pngSignature{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a};
+        EXPECT_EQ(signature, pngSignature);
+        EXPECT_TRUE(HasExpectedPixels(path.data()));
+    }
 }
 #ifdef UKNCBTL_SDL3_PNG
 TEST_F(BitmapEdges, PngSaveDoesNotRequireWindowsCodecInitialization) {
