@@ -22,6 +22,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "Views.h"
 #include "Emulator.h"
 #include "util/BitmapFile.h"
+#include "util/ScreenshotFormat.h"
 #include "util/ScreenScale.h"
 #include "emubase/Emubase.h"
 
@@ -578,10 +579,8 @@ BOOL ScreenView_SaveScreenshot(LPCTSTR sFileName, int screenshotMode)
     if (!screen_scale::Apply(screenshotMode, bits, scrBits))
         return FALSE;
 
-    LPCTSTR sFileNameExt = _tcsrchr(sFileName, _T('.'));
-    BitmapFileFormat imageFormat = BitmapFileFormatPng;
-    if (sFileNameExt != nullptr && _tcsicmp(sFileNameExt, _T(".bmp")) == 0)
-        imageFormat = BitmapFileFormatBmp;
+    const auto imageFormat = screenshot_format::FromPath(std::filesystem::path(sFileName)) == screenshot_format::Format::bmp
+        ? BitmapFileFormatBmp : BitmapFileFormatPng;
     BOOL result = BitmapFile_SaveImageFile(
             scrBits, sFileName, imageFormat, scrwidth, scrheight);
 
