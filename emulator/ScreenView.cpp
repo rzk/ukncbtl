@@ -629,11 +629,11 @@ HGLOBAL ScreenView_GetScreenshotAsDIB(int screenshotMode)
     }
     ::CopyMemory(p, &bi, sizeof(BITMAPINFOHEADER));
     p += sizeof(BITMAPINFOHEADER);
-    for (int line = 0; line < scrheight; line++)
+    if (!screenshot_image::CopyTopDown(*image, std::span{reinterpret_cast<std::byte*>(p), static_cast<size_t>(bi.biSizeImage)}))
     {
-        const auto row = std::span{image->pixels}.subspan(static_cast<size_t>(scrheight - line - 1) * scrwidth, scrwidth);
-        ::CopyMemory(p, row.data(), row.size_bytes());
-        p += row.size_bytes();
+        ::GlobalUnlock(hDIB);
+        ::GlobalFree(hDIB);
+        return nullptr;
     }
     ::GlobalUnlock(hDIB);
 

@@ -3,6 +3,8 @@
 #include "VideoDecoder.h"
 #include <gtest/gtest.h>
 #include <array>
+#include <climits>
+#include <cstddef>
 #include <vector>
 
 TEST(ScreenshotImage, CopiesScreenInExpectedRowOrder)
@@ -41,4 +43,27 @@ TEST(ScreenshotImage, RejectsShortInput)
     const std::array<std::uint32_t, 1> source{};
     EXPECT_FALSE(screenshot_image::Prepare(source, 0));
     EXPECT_FALSE(screenshot_image::Prepare({}, 3));
+}
+
+TEST(ScreenshotImage, CopiesTopDownPixelsAndPreservesExtraOutput)
+{
+    const screenshot_image::Image image{2, 2, {0x11ff0000, 0x2200ff00, 0x330000ff, 0x44ffffff}};
+    std::array<std::uint32_t, 6> output{1, 1, 1, 1, 1, 1};
+    ASSERT_TRUE(screenshot_image::CopyTopDown(image, std::as_writable_bytes(std::span{output}.subspan<1, 4>())));
+    EXPECT_EQ(output, (std::array<std::uint32_t, 6>{1, 0x330000ff, 0x44ffffff, 0x11ff0000, 0x2200ff00, 1}));
+}
+
+TEST(ScreenshotImage, RejectsInvalidTopDownCopiesWithoutWriting)
+{
+    std::array<std::uint32_t, 4> output{1, 2, 3, 4};
+    const auto unchanged = output;
+    for (const auto [width, height] : {std::pair{0, 2}, std::pair{-1, 2}, std::pair{3, 2}, std::pair{INT_MAX, INT_MAX}})
+    {
+        const screenshot_image::Image image{width, height, {1, 2, 3, 4}};
+        EXPECT_FALSE(screenshot_image::CopyTopDown(image, std::as_writable_bytes(std::span{output})));
+        EXPECT_EQ(output, unchanged);
+    }
+    const screenshot_image::Image image{2, 2, {1, 2, 3, 4}};
+    EXPECT_FALSE(screenshot_image::CopyTopDown(image, std::as_writable_bytes(std::span{output}.first<3>())));
+    EXPECT_EQ(output, unchanged);
 }
