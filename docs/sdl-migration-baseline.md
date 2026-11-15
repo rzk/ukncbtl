@@ -45,6 +45,11 @@ is not yet exposed in the application UI.
 Debug `trace.log` output is UTF-8 without a byte-order mark. Earlier Windows
 builds wrote text using the system's active code page.
 
+SDL3 migration targets can be enabled with `-DUKNCBTL_ENABLE_SDL3=ON`. CMake
+fetches SDL 3.4.16 with a verified source hash; an offline checkout can be
+provided with `FETCHCONTENT_SOURCE_DIR_SDL3`. The headless SDL smoke test checks
+surface creation and PNG round trips without opening a window.
+
 ## Migration checklist
 
 For each applicable item, check Windows, Linux and macOS separately before
