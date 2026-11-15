@@ -27,8 +27,6 @@ enum BitmapFileFormat
     BitmapFileFormatTiff = 3,
 };
 
-HBITMAP BitmapFile_LoadPngFromResource(LPCTSTR lpName);
-
 // Save the image as .PNG file
 bool BitmapFile_SaveImageFile(
     std::span<const uint32_t> pixels,
