@@ -231,6 +231,14 @@ ukncbtl_toolchain(EmulatorSnapshot)
 target_include_directories(EmulatorSnapshot PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
 target_link_libraries(EmulatorSnapshot PUBLIC EmulatorCore)
 
+if(UKNCBTL_ENABLE_IMGUI)
+  add_executable(ukncbtl-sdl emulator/SdlMain.cpp)
+  ukncbtl_toolchain(ukncbtl-sdl)
+  target_include_directories(ukncbtl-sdl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer ScreenshotImage
+    EmbeddedRom EmulatorCore VideoDecoder)
+endif()
+
 if(BUILD_TESTING)
   include(GoogleTest)
   add_test(NAME IniImportCli COMMAND ${CMAKE_COMMAND}
@@ -268,6 +276,9 @@ if(BUILD_TESTING)
   if(UKNCBTL_ENABLE_IMGUI)
     ukncbtl_portable_test(ImGuiSdlTests tests/ImGuiSdlTests.cpp)
     target_link_libraries(ImGuiSdlTests PRIVATE DearImGui SdlScreenRenderer)
+    add_test(NAME SdlFrontendSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy
+      $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
+    set_tests_properties(SdlFrontendSmoke PROPERTIES TIMEOUT 30)
   endif()
   ukncbtl_portable_test(TraceTests tests/TraceTests.cpp)
   ukncbtl_portable_test(SettingsCodecTests tests/SettingsCodecTests.cpp)

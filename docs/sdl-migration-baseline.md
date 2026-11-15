@@ -64,7 +64,14 @@ Dear ImGui and its SDL3 platform and SDL renderer backends can be built with
 `-DUKNCBTL_ENABLE_SDL3=ON -DUKNCBTL_ENABLE_IMGUI=ON`. CMake pins Dear ImGui
 v1.92.9b to a release commit; `FETCHCONTENT_SOURCE_DIR_IMGUI` supports an
 offline checkout. A dummy-video test exercises UI rendering over a prepared
-frame and SDL keyboard events. This is a foundation, not a complete frontend.
+frame and SDL keyboard events. The experimental `ukncbtl-sdl` executable boots
+the embedded ROM, displays the machine and provides pause and reset controls.
+It does not yet support emulator keyboard input, audio, disks or configuration.
+The `SdlFrontendSmoke` test runs three frames using SDL's dummy video driver;
+interactive behavior and platform display compatibility still need testing.
+Build the preview with `cmake --build <build-directory> --target ukncbtl-sdl`
+after enabling both options above; the legacy frontend remains the supported
+application during migration.
 
 ## Migration checklist
 
