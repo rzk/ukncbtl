@@ -56,6 +56,10 @@ The SDL screenshot clipboard adapter offers BMP and PNG data and requires an
 initialized SDL video subsystem with event processing. It is not yet connected
 to the legacy clipboard command. Its automated tests use SDL's dummy video
 driver; system clipboard interoperability still needs platform testing.
+The SDL screen renderer can draw prepared frames into an SDL renderer and is
+tested with SDL's software renderer. It is not yet connected to a frontend or
+the emulator's event loop; hardware rendering and platform display behavior
+still need testing.
 
 ## Migration checklist
 
