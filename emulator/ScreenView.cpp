@@ -19,6 +19,9 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "Input.h"
 #include "ScreenText.h"
 #include "ScreenshotImage.h"
+#ifdef UKNCBTL_SDL3_PNG
+#include "ScreenshotFile.h"
+#endif
 #include "Main.h"
 #include "Views.h"
 #include "Emulator.h"
@@ -579,12 +582,16 @@ BOOL ScreenView_SaveScreenshot(LPCTSTR sFileName, int screenshotMode)
     if (!image)
         return FALSE;
 
+#ifdef UKNCBTL_SDL3_PNG
+    return screenshot_file::Save(std::filesystem::path(sFileName), *image).has_value();
+#else
     const auto imageFormat = screenshot_format::FromPath(std::filesystem::path(sFileName)) == screenshot_format::Format::bmp
         ? BitmapFileFormatBmp : BitmapFileFormatPng;
     BOOL result = BitmapFile_SaveImageFile(
             image->pixels, sFileName, imageFormat, image->width, image->height);
 
     return result;
+#endif
 }
 
 HGLOBAL ScreenView_GetScreenshotAsDIB(int screenshotMode)
