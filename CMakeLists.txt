@@ -154,7 +154,7 @@ target_link_libraries(FrameControl PUBLIC EmulatorCore)
 add_library(PreviewDebugger STATIC emulator/PreviewDebugger.cpp)
 ukncbtl_toolchain(PreviewDebugger)
 target_include_directories(PreviewDebugger PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-target_link_libraries(PreviewDebugger PRIVATE FrameControl EmulatorCore SubtitleFile IniEncoding)
+target_link_libraries(PreviewDebugger PRIVATE FrameControl EmulatorCore SubtitleFile IniEncoding MemoryDump)
 
 add_library(PreviewSprite STATIC emulator/PreviewSprite.cpp)
 ukncbtl_toolchain(PreviewSprite)

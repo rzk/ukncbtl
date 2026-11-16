@@ -16,6 +16,7 @@ class CProcessor;
 namespace preview_debugger
 {
 enum class Processor { cpu, ppu };
+enum class DumpError { invalid_range, file_error };
 struct Line
 {
     std::uint16_t address, word;
@@ -39,6 +40,13 @@ public:
     [[nodiscard]] BreakpointSet& Breakpoints(Processor which);
     [[nodiscard]] std::uint16_t ReadWord(Processor which, std::uint16_t address, bool instruction) const;
     [[nodiscard]] std::uint16_t ReadPort(Processor which, std::uint16_t address) const;
+    // Register 0..7 selects R0..PC; index 8 selects PSW.
+    [[nodiscard]] bool WriteRegister(Processor which, int index, std::uint16_t value);
+    // Only aligned RAM words are writable; ROM and I/O are never touched.
+    [[nodiscard]] bool WriteMemory(Processor which, std::uint16_t address, std::uint16_t value);
+    // The end address is exclusive; endpoints are rounded to whole words.
+    [[nodiscard]] std::expected<void, DumpError> SaveMemory(const std::filesystem::path& path,
+        Processor which, std::uint16_t start, std::uint16_t end) const;
     [[nodiscard]] std::vector<Line> Disassemble(Processor which, std::uint16_t address, unsigned count,
         bool useSubtitles = false) const;
     [[nodiscard]] std::expected<void, subtitles::FileError> LoadSubtitles(const std::filesystem::path& path);

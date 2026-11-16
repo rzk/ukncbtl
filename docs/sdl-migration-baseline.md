@@ -94,6 +94,9 @@ target, inspect the stack and load UTF-16LE `.lst` subtitles. Subtitles mark
 data words and comments; failed loads leave the current listing intact. The
 preview embeds Droid Sans for Latin and Cyrillic text; its license is in
 `third_party/LICENSE-Apache-2.0` with the accompanying font notice.
+While paused, registers, PSW and aligned writable RAM words can be edited.
+Memory ranges can be exported as little-endian binary and the display list as
+text; output destinations currently used by the emulator are rejected.
 The debugger also displays the legacy CPU and PPU port values. Its sprite
 viewer decodes CPU memory in the five legacy color modes and supports octal
 addresses, byte widths and page navigation; these controls are saved.

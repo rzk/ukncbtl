@@ -3,6 +3,7 @@
 
 #include "MediaSlots.h"
 #include <SDL3/SDL_video.h>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -11,7 +12,7 @@
 namespace sdl_file_dialog
 {
 enum class Status { selected, canceled, failed };
-enum class Purpose { disk, screenshot, snapshotLoad, snapshotSave, systemRom, cartridge, createDisk, printer, tapeOpen, tapeCreate, subtitles };
+enum class Purpose { disk, screenshot, snapshotLoad, snapshotSave, systemRom, cartridge, createDisk, printer, tapeOpen, tapeCreate, subtitles, memoryDump, displayListDump };
 struct Result
 {
     media_slots::Kind kind;
@@ -20,6 +21,7 @@ struct Result
     std::string path; // UTF-8, provided by SDL.
     Purpose purpose = Purpose::disk;
     int filter = -1;
+    std::uint16_t start = 0, end = 0;
 };
 
 // Results may arrive on an SDL worker thread. The state can outlive its UI.
@@ -48,4 +50,7 @@ private:
 [[nodiscard]] bool OpenTape(const std::shared_ptr<State>& state, SDL_Window& window);
 [[nodiscard]] bool SaveTape(const std::shared_ptr<State>& state, SDL_Window& window);
 [[nodiscard]] bool OpenSubtitles(const std::shared_ptr<State>& state, SDL_Window& window);
+[[nodiscard]] bool SaveMemoryDump(const std::shared_ptr<State>& state, SDL_Window& window, bool cpu,
+    std::uint16_t start, std::uint16_t end);
+[[nodiscard]] bool SaveDisplayList(const std::shared_ptr<State>& state, SDL_Window& window);
 }

@@ -40,6 +40,7 @@ struct Request {
     media_slots::Kind kind;
     int slot;
     sdl_file_dialog::Purpose purpose;
+    std::uint16_t start = 0, end = 0;
 };
 
 void SDLCALL OnDialog(void* userdata, const char* const* files, int filter)
@@ -50,12 +51,12 @@ void SDLCALL OnDialog(void* userdata, const char* const* files, int filter)
         const auto status = !files ? sdl_file_dialog::Status::failed :
             !files[0] ? sdl_file_dialog::Status::canceled : sdl_file_dialog::Status::selected;
         request->state->Complete({request->kind, request->slot, status,
-            status == sdl_file_dialog::Status::selected ? files[0] : "", request->purpose, filter});
+            status == sdl_file_dialog::Status::selected ? files[0] : "", request->purpose, filter, request->start, request->end});
     }
     catch (...)
     {
         // Never let an exception cross SDL's C callback boundary.
-        try { request->state->Complete({request->kind, request->slot, sdl_file_dialog::Status::failed, {}, request->purpose, -1}); }
+        try { request->state->Complete({request->kind, request->slot, sdl_file_dialog::Status::failed, {}, request->purpose, -1, request->start, request->end}); }
         catch (...) {}
     }
 }
@@ -160,5 +161,26 @@ bool sdl_file_dialog::OpenSubtitles(const std::shared_ptr<State>& state, SDL_Win
     if (!state->Begin()) return false;
     static constexpr SDL_DialogFileFilter filters[]{{"Disassembly listings", "lst;txt"}, {"All files", "*"}};
     SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
+    return true;
+}
+
+bool sdl_file_dialog::SaveMemoryDump(const std::shared_ptr<State>& state, SDL_Window& window, bool cpu,
+    std::uint16_t start, std::uint16_t end)
+{
+    if (!state || end <= start) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, cpu ? 1 : 0, Purpose::memoryDump, start, end);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"Binary memory dump", "bin"}};
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
+    return true;
+}
+
+bool sdl_file_dialog::SaveDisplayList(const std::shared_ptr<State>& state, SDL_Window& window)
+{
+    if (!state) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::displayListDump);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"Text file", "txt"}};
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
     return true;
 }

@@ -2,6 +2,7 @@
 #include "PreviewDebugger.h"
 #include "DebugStep.h"
 #include "FrameControl.h"
+#include "MemoryDump.h"
 #include "emubase/Board.h"
 #include "emubase/Processor.h"
 #include "util/IniEncoding.h"
@@ -49,6 +50,36 @@ std::uint16_t preview_debugger::Session::ReadWord(Processor which, std::uint16_t
 }
 std::uint16_t preview_debugger::Session::ReadPort(Processor which, std::uint16_t address) const
 { return GetProcessor(which).GetMemoryControllerConst()->GetPortView(address); }
+bool preview_debugger::Session::WriteRegister(Processor which, int index, std::uint16_t value)
+{
+    auto& processor = GetProcessor(which);
+    if (index == 8) processor.SetPSW(value);
+    else if (index >= 0 && index < 8) processor.SetReg(index, value);
+    else return false;
+    return true;
+}
+bool preview_debugger::Session::WriteMemory(Processor which, std::uint16_t address, std::uint16_t value)
+{
+    if (address & 1) return false;
+    auto& processor = GetProcessor(which);
+    auto* memory = processor.GetMemoryController();
+    const auto type = memory->GetWordView(address, processor.IsHaltMode(), false).addressType;
+    if (type != ADDRTYPE_RAM0 && type != ADDRTYPE_RAM1 && type != ADDRTYPE_RAM2 && type != ADDRTYPE_RAM12)
+        return false;
+    memory->SetWord(address, processor.IsHaltMode(), value);
+    return true;
+}
+std::expected<void, preview_debugger::DumpError> preview_debugger::Session::SaveMemory(
+    const std::filesystem::path& path, Processor which, std::uint16_t start, std::uint16_t end) const
+{
+    const auto range = memory_dump::Range(start, end);
+    if (!range) return std::unexpected(DumpError::invalid_range);
+    std::vector<std::uint16_t> words(range->Count());
+    for (std::size_t index = 0; index < words.size(); ++index)
+        words[index] = ReadWord(which, static_cast<std::uint16_t>((range->first + index) * 2), false);
+    if (!memory_dump::Save(path, words)) return std::unexpected(DumpError::file_error);
+    return {};
+}
 std::vector<preview_debugger::Line> preview_debugger::Session::Disassemble(Processor which, std::uint16_t address,
     unsigned count, bool useSubtitles) const
 {

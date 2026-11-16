@@ -232,6 +232,10 @@ int Run(const preview_options::Options& options)
     preview_debugger::Processor debugProcessor = preview_debugger::Processor::cpu;
     std::array<char, 16> breakpointAddress{};
     std::array<char, 16> memoryAddress{'0', '0', '0', '0', '0', '0', 0};
+    std::array<char, 16> memoryValue{}, registerValue{};
+    std::array<char, 16> dumpStart{'0', '0', '0', '0', '0', '0', 0};
+    std::array<char, 16> dumpEnd{'1', '7', '7', '7', '7', '7', 0};
+    int registerIndex = 0;
     std::array<char, 16> disasmAddress{};
     std::uint16_t disasmBase = 0;
     bool followPc = true;
@@ -240,6 +244,7 @@ int Run(const preview_options::Options& options)
     std::snprintf(spriteAddress.data(), spriteAddress.size(), "%06o", static_cast<unsigned>(settings.spriteAddress));
     std::string spriteError;
     std::string debuggerError;
+    std::string registerError, memoryError;
     int screenshotMode = settings.screenshotMode;
     int displayMode = settings.displayMode;
     int paletteMode = settings.paletteMode;
@@ -293,7 +298,19 @@ int Run(const preview_options::Options& options)
             else if (result->status == sdl_file_dialog::Status::selected)
             {
                 const std::u8string path(reinterpret_cast<const char8_t*>(result->path.data()), result->path.size());
-                if (result->purpose == sdl_file_dialog::Purpose::tapeOpen ||
+                if (result->purpose == sdl_file_dialog::Purpose::memoryDump ||
+                    result->purpose == sdl_file_dialog::Purpose::displayListDump)
+                {
+                    auto target = std::filesystem::path(path);
+                    const bool memory = result->purpose == sdl_file_dialog::Purpose::memoryDump;
+                    if (!target.has_extension()) target += memory ? ".bin" : ".txt";
+                    if (conflicts(target))
+                    { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
+                    else if (memory ? !debugger.SaveMemory(target, result->slot == 1 ? preview_debugger::Processor::cpu :
+                        preview_debugger::Processor::ppu, result->start, result->end) : !display_list_dump::Save(target, board))
+                    { actionError = "Could not save the debugger export. The file may be incomplete."; showActionError = true; }
+                }
+                else if (result->purpose == sdl_file_dialog::Purpose::tapeOpen ||
                     result->purpose == sdl_file_dialog::Purpose::tapeCreate)
                 {
                     auto target = std::filesystem::path(path);
@@ -747,6 +764,26 @@ int Run(const preview_options::Options& options)
                 ImGui::Text("PSW: %06o   CPC: %06o   CPSW: %06o   %s", static_cast<unsigned>(processor.GetPSW()),
                     static_cast<unsigned>(processor.GetCPC()), static_cast<unsigned>(processor.GetCPSW()),
                     processor.IsHaltMode() ? "HALT" : "USER");
+                if (smokeTest) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+                if (ImGui::CollapsingHeader("Edit registers (octal; paused)"))
+                {
+                    constexpr std::array names{"R0", "R1", "R2", "R3", "R4", "R5", "SP", "PC", "PSW"};
+                    ImGui::BeginDisabled(running);
+                    ImGui::SetNextItemWidth(90);
+                    ImGui::Combo("##register", &registerIndex, names.data(), static_cast<int>(names.size()));
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(110);
+                    ImGui::InputText("##register-value", registerValue.data(), registerValue.size(), ImGuiInputTextFlags_CharsDecimal);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Set register"))
+                    {
+                        const auto value = preview_debugger::ParseWord(registerValue.data());
+                        if (!value || !debugger.WriteRegister(debugProcessor, registerIndex, *value))
+                            registerError = "Enter an octal value from 000000 to 177777.";
+                        else registerError.clear();
+                    }
+                    ImGui::EndDisabled();
+                    if (!registerError.empty()) ImGui::TextWrapped("%s", registerError.c_str());
+                }
                 ImGui::SeparatorText("Breakpoints (octal; pause to edit)");
                 ImGui::BeginDisabled(running);
                 ImGui::SetNextItemWidth(110);
@@ -837,6 +874,7 @@ int Run(const preview_options::Options& options)
                             static_cast<unsigned>(debugger.ReadWord(debugProcessor, address, false)));
                     }
                 }
+                if (smokeTest) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
                 if (ImGui::CollapsingHeader("Memory (octal)"))
                 {
                     ImGui::SetNextItemWidth(110);
@@ -857,6 +895,37 @@ int Run(const preview_options::Options& options)
                             static_cast<unsigned>(debugger.ReadWord(debugProcessor, static_cast<std::uint16_t>(address + 4), false)),
                             static_cast<unsigned>(debugger.ReadWord(debugProcessor, static_cast<std::uint16_t>(address + 6), false)));
                     }
+                    ImGui::BeginDisabled(running);
+                    ImGui::SetNextItemWidth(110);
+                    ImGui::InputText("##memory-value", memoryValue.data(), memoryValue.size(), ImGuiInputTextFlags_CharsDecimal);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Write RAM at address"))
+                    {
+                        const auto value = preview_debugger::ParseWord(memoryValue.data());
+                        if (!base || !value || !debugger.WriteMemory(debugProcessor, *base, *value))
+                            memoryError = "Enter an even writable RAM address and an octal word.";
+                        else memoryError.clear();
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::TextDisabled("Dump range is start inclusive, end exclusive; endpoints cover whole words.");
+                    ImGui::SetNextItemWidth(100);
+                    ImGui::InputText("Start", dumpStart.data(), dumpStart.size(), ImGuiInputTextFlags_CharsDecimal);
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(100);
+                    ImGui::InputText("End", dumpEnd.data(), dumpEnd.size(), ImGuiInputTextFlags_CharsDecimal);
+                    ImGui::BeginDisabled(fileDialog->Pending());
+                    if (ImGui::Button("Save memory..."))
+                    {
+                        const auto start = preview_debugger::ParseWord(dumpStart.data());
+                        const auto end = preview_debugger::ParseWord(dumpEnd.data());
+                        if (!start || !end || *end <= *start)
+                            memoryError = "Enter a valid non-empty octal memory range.";
+                        else if (!sdl_file_dialog::SaveMemoryDump(fileDialog, *window,
+                            debugProcessor == preview_debugger::Processor::cpu, *start, *end))
+                        { actionError = "Could not open the file dialog."; showActionError = true; }
+                        else memoryError.clear();
+                    }
+                    ImGui::EndDisabled();
+                    if (!memoryError.empty()) ImGui::TextWrapped("%s", memoryError.c_str());
                 }
                 if (ImGui::CollapsingHeader("Ports (octal)"))
                 {
@@ -916,6 +985,10 @@ int Run(const preview_options::Options& options)
                 if (smokeTest) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
                 if (ImGui::CollapsingHeader("Display list"))
                 {
+                    ImGui::BeginDisabled(fileDialog->Pending());
+                    if (ImGui::Button("Save display list...") && !sdl_file_dialog::SaveDisplayList(fileDialog, *window))
+                    { actionError = "Could not open the file dialog."; showActionError = true; }
+                    ImGui::EndDisabled();
                     std::array<video::DisplayTag, video::TotalLines> tags{};
                     video::DisplayListCursor cursor;
                     for (auto& tag : tags) tag = cursor.Next(board);

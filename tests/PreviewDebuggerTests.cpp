@@ -6,6 +6,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 
 void DebugLog(const wchar_t*) {}
@@ -61,6 +62,39 @@ TEST_F(PreviewDebuggerTest, DisassemblyAndStepUseSelectedProcessorState)
     debugger.Step();
     EXPECT_EQ(board->GetCPU()->GetReg(0), 1);
     EXPECT_EQ(board->GetCPU()->GetPC(), 01002);
+}
+
+TEST_F(PreviewDebuggerTest, EditsRegistersAndOnlyWritableAlignedRam)
+{
+    preview_debugger::Session debugger(*board);
+    using preview_debugger::Processor;
+    ASSERT_TRUE(debugger.WriteRegister(Processor::cpu, 0, 012345));
+    EXPECT_EQ(board->GetCPU()->GetReg(0), 012345);
+    ASSERT_TRUE(debugger.WriteRegister(Processor::ppu, 8, 00011));
+    EXPECT_EQ(board->GetPPU()->GetPSW(), 00011);
+    EXPECT_FALSE(debugger.WriteRegister(Processor::cpu, -1, 0));
+    EXPECT_FALSE(debugger.WriteRegister(Processor::cpu, 9, 0));
+    ASSERT_TRUE(debugger.WriteMemory(Processor::cpu, 01000, 012345));
+    EXPECT_EQ(debugger.ReadWord(Processor::cpu, 01000, false), 012345);
+    EXPECT_FALSE(debugger.WriteMemory(Processor::cpu, 01001, 0));
+    const auto before = debugger.ReadPort(Processor::ppu, 0177700);
+    EXPECT_FALSE(debugger.WriteMemory(Processor::ppu, 0177700, 0));
+    EXPECT_EQ(debugger.ReadPort(Processor::ppu, 0177700), before);
+}
+
+TEST_F(PreviewDebuggerTest, SavesMemoryViewAsLittleEndianAndRejectsBadRanges)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-debug-dump-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    preview_debugger::Session debugger(*board);
+    using preview_debugger::Processor;
+    ASSERT_TRUE(debugger.SaveMemory(path, Processor::cpu, 01000, 01004));
+    std::ifstream file(path, std::ios::binary);
+    const std::string bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    EXPECT_EQ(bytes, std::string("\x80\x0a\xa0\x00", 4));
+    EXPECT_EQ(debugger.SaveMemory(path, Processor::cpu, 01000, 01000).error(), preview_debugger::DumpError::invalid_range);
+    EXPECT_EQ(debugger.SaveMemory(path / "missing", Processor::cpu, 01000, 01002).error(), preview_debugger::DumpError::file_error);
 }
 
 TEST_F(PreviewDebuggerTest, BreakpointStopsFrameAndPreservesPermanentEntry)

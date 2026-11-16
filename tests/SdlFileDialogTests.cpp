@@ -126,3 +126,21 @@ TEST(SdlFileDialog, PreservesSubtitlePurpose)
     EXPECT_EQ(result->purpose, sdl_file_dialog::Purpose::subtitles);
     EXPECT_EQ(result->path, "listing.lst");
 }
+
+TEST(SdlFileDialog, PreservesMemoryDumpSelectionAcrossCallback)
+{
+    sdl_file_dialog::State state;
+    ASSERT_TRUE(state.Begin());
+    state.Complete({media_slots::Kind::floppy, 1, sdl_file_dialog::Status::selected,
+        "memory.bin", sdl_file_dialog::Purpose::memoryDump, -1, 01001, 02000});
+    const auto result = state.Take();
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->slot, 1);
+    EXPECT_EQ(result->start, 01001);
+    EXPECT_EQ(result->end, 02000);
+    EXPECT_EQ(result->purpose, sdl_file_dialog::Purpose::memoryDump);
+    ASSERT_TRUE(state.Begin());
+    state.Complete({media_slots::Kind::floppy, -1, sdl_file_dialog::Status::selected,
+        "display.txt", sdl_file_dialog::Purpose::displayListDump});
+    EXPECT_EQ(state.Take()->purpose, sdl_file_dialog::Purpose::displayListDump);
+}
