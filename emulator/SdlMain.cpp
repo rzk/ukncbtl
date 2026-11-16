@@ -19,6 +19,7 @@
 #include "SdlScreenRenderer.h"
 #include "VideoDecoder.h"
 #include "VideoPalette.h"
+#include "VirtualKeyboard.h"
 #include "emubase/Board.h"
 #include "emubase/Processor.h"
 #include "util/ScreenScale.h"
@@ -84,6 +85,7 @@ int Run(bool smokeTest)
         }
         else startupError = "Could not locate preview settings. Changes will not be saved.";
     }
+    else settings.keyboard = true; // Exercise the keyboard window in the headless smoke test.
     const std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)> window(
         SDL_CreateWindow("UKNCBTL - SDL preview", settings.windowWidth, settings.windowHeight,
             SDL_WINDOW_RESIZABLE | (smokeTest ? SDL_WINDOW_HIDDEN : 0)), SDL_DestroyWindow);
@@ -141,7 +143,20 @@ int Run(bool smokeTest)
     std::vector<std::uint32_t> pixels(video::Width * video::Height);
     sdl_screen::Renderer screen(*renderer);
     sdl_keyboard::Keyboard keyboard;
+    sdl_keyboard::Merge keyMerge;
     sdl_keyboard::Delivery keyDelivery;
+    virtual_keyboard::State virtualKeys;
+    const auto queueKey = [&](sdl_keyboard::Source source, sdl_keyboard::Event event) {
+        if (const auto merged = keyMerge.Transition(source, event)) keyDelivery.Push(*merged);
+    };
+    const auto releasePhysicalKeys = [&] {
+        for (const auto event : keyboard.ReleaseAll()) queueKey(sdl_keyboard::Source::physical, event);
+    };
+    const auto releaseVirtualKeys = [&] {
+        for (std::uint8_t scan = 1; scan < 128; ++scan)
+            if (virtualKeys.Down(scan)) queueKey(sdl_keyboard::Source::virtualKey, {scan, false});
+        virtualKeys.Reset();
+    };
     mouse_input::Tracker mouse;
     const auto releaseMouse = [&] {
         mouse.Reset();
@@ -149,6 +164,8 @@ int Run(bool smokeTest)
     };
     const auto releaseKeys = [&] {
         (void)keyboard.ReleaseAll();
+        virtualKeys.Reset();
+        keyMerge.Reset();
         for (const auto event : keyDelivery.Reset()) board.KeyboardEvent(event.scan, event.pressed);
     };
     const auto resetMachine = [&] {
@@ -204,7 +221,7 @@ int Run(bool smokeTest)
                 const auto key = keyboard.Transition(event.key.scancode, event.type == SDL_EVENT_KEY_DOWN,
                     event.key.repeat, !running || ImGui::GetIO().WantCaptureKeyboard,
                     (board.GetKeyboardRegister() & KEYB_LAT) != 0);
-                if (key) keyDelivery.Push(*key);
+                if (key) queueKey(sdl_keyboard::Source::physical, *key);
             }
             if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST && event.window.windowID == SDL_GetWindowID(window.get()))
             { releaseKeys(); focusLost = true; }
@@ -327,7 +344,10 @@ int Run(bool smokeTest)
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
         if (fullscreenShortcut && !ImGui::GetIO().WantCaptureKeyboard && !fileDialog->Pending()) toggleFullscreen = true;
-        if (ImGui::GetIO().WantCaptureKeyboard) releaseKeys();
+        if (ImGui::GetIO().WantCaptureKeyboard) releasePhysicalKeys();
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            if (const auto event = virtualKeys.ReleasePointer())
+                queueKey(sdl_keyboard::Source::virtualKey, {event->scan, event->pressed});
         const auto selectScaleMode = [&](int& mode, int& setting) {
             const auto modes = screen_scale::Modes();
             for (std::size_t index = 0; index < modes.size(); ++index)
@@ -444,6 +464,11 @@ int Run(bool smokeTest)
             }
             if (ImGui::BeginMenu("Display"))
             {
+                if (ImGui::MenuItem("On-screen keyboard", nullptr, &settings.keyboard))
+                {
+                    if (!settings.keyboard) releaseVirtualKeys();
+                    settingsDirty = true;
+                }
                 if (ImGui::MenuItem("Fullscreen", "F10", (SDL_GetWindowFlags(window.get()) & SDL_WINDOW_FULLSCREEN) != 0))
                     toggleFullscreen = true;
                 ImGui::Separator();
@@ -587,6 +612,35 @@ int Run(bool smokeTest)
                 ImGui::EndMenu();
             }
             ImGui::EndMainMenuBar();
+        }
+        if (settings.keyboard)
+        {
+            ImGui::SetNextWindowSize(ImVec2(950, 260), ImGuiCond_FirstUseEver);
+            const bool wasOpen = settings.keyboard;
+            if (ImGui::Begin("UKNC Keyboard", &settings.keyboard, ImGuiWindowFlags_HorizontalScrollbar))
+            {
+                ImGui::TextUnformatted("Shift and Ctrl latch; click again to release. Labels show UKNC Latin positions.");
+                ImGui::BeginDisabled(!running || focusLost || !(SDL_GetWindowFlags(window.get()) & SDL_WINDOW_INPUT_FOCUS));
+                unsigned previousRow = 0;
+                int index = 0;
+                for (const auto& key : virtual_keyboard::Keys())
+                {
+                    if (index && key.row == previousRow) ImGui::SameLine();
+                    previousRow = key.row;
+                    ImGui::PushID(index++);
+                    const bool down = virtualKeys.Down(key.scan);
+                    if (down) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                    ImGui::Button(key.label, ImVec2(38.0f * key.width, 30.0f));
+                    if (ImGui::IsItemActivated())
+                        if (const auto event = virtualKeys.Press(key))
+                            queueKey(sdl_keyboard::Source::virtualKey, {event->scan, event->pressed});
+                    if (down) ImGui::PopStyleColor();
+                    ImGui::PopID();
+                }
+                ImGui::EndDisabled();
+            }
+            ImGui::End();
+            if (wasOpen != settings.keyboard) { releaseVirtualKeys(); settingsDirty = true; }
         }
         if (showActionError) { ImGui::OpenPopup("Error"); showActionError = false; }
         if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))

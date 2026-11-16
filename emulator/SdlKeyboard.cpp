@@ -1,6 +1,18 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "SdlKeyboard.h"
 
+std::optional<sdl_keyboard::Event> sdl_keyboard::Merge::Transition(Source source, Event event)
+{
+    if (event.scan == 0 || event.scan >= physical_.size()) return std::nullopt;
+    auto& state = source == Source::physical ? physical_[event.scan] : virtual_[event.scan];
+    const bool before = physical_[event.scan] || virtual_[event.scan];
+    state = event.pressed;
+    const bool after = physical_[event.scan] || virtual_[event.scan];
+    return before == after ? std::nullopt : std::optional{Event{event.scan, after}};
+}
+
+void sdl_keyboard::Merge::Reset() { physical_.fill(false); virtual_.fill(false); }
+
 std::uint8_t sdl_keyboard::Map(SDL_Scancode key, bool latin)
 {
     constexpr std::array<std::uint8_t, 26> lat{0072,0076,0050,0057,0033,0047,0055,0156,0073,0027,0052,0056,0112,

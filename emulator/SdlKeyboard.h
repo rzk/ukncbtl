@@ -11,6 +11,17 @@
 namespace sdl_keyboard
 {
 struct Event { std::uint8_t scan; bool pressed; };
+enum class Source { physical, virtualKey };
+
+// Coalesce independent host sources that hold the same emulated key.
+class Merge
+{
+public:
+    [[nodiscard]] std::optional<Event> Transition(Source source, Event event);
+    void Reset();
+private:
+    std::array<bool, 128> physical_{}, virtual_{};
+};
 
 // Map physical PC keys using the emulator's current LAT/RUS keyboard mode.
 [[nodiscard]] std::uint8_t Map(SDL_Scancode key, bool latin);

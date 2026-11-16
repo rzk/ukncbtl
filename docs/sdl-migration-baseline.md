@@ -68,6 +68,10 @@ frame and SDL keyboard events. The experimental `ukncbtl-sdl` executable boots
 the embedded ROM, displays the machine and provides pause and reset controls.
 Physical keyboard positions use the legacy US-position mappings and follow the
 emulated LAT/RUS mode; alternate physical layouts have not yet been validated.
+The Display menu also opens an on-screen UKNC keyboard. Its labels show the
+machine's Latin key positions; Shift and Ctrl latch for multi-key combinations.
+The keyboard visibility is saved, and keys are released on focus loss, pause,
+reset or window closure. Virtual and physical keys share the same input queue.
 It supports screenshot capture to PNG/BMP files or the SDL clipboard, with
 the existing screenshot size modes. It also supports basic SDL audio output and
 attaching/ejecting floppy and hard-disk images through SDL file dialogs. Disks

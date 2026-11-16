@@ -21,6 +21,7 @@ struct Settings
     bool soundCovox = false;
     int volume = 100;
     bool mouse = false;
+    bool keyboard = false;
 };
 
 [[nodiscard]] bool ValidWindowSize(int width, int height);

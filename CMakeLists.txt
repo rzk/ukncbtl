@@ -260,6 +260,9 @@ target_link_libraries(IniFile PUBLIC IniDocument IniEncoding)
 add_library(MouseInput STATIC emulator/MouseInput.cpp)
 ukncbtl_toolchain(MouseInput)
 
+add_library(VirtualKeyboard STATIC emulator/VirtualKeyboard.cpp)
+ukncbtl_toolchain(VirtualKeyboard)
+
 add_library(PreviewSettings STATIC emulator/PreviewSettings.cpp)
 ukncbtl_toolchain(PreviewSettings)
 target_include_directories(PreviewSettings PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
@@ -290,7 +293,7 @@ if(UKNCBTL_ENABLE_IMGUI)
   add_executable(ukncbtl-sdl emulator/SdlMain.cpp)
   ukncbtl_toolchain(ukncbtl-sdl)
   target_include_directories(ukncbtl-sdl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard SdlDisplay MouseInput SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard ScreenTextCapture VideoPalette FramePacing
+  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard SdlDisplay MouseInput VirtualKeyboard SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard ScreenTextCapture VideoPalette FramePacing
     EmbeddedRom EmulatorCore VideoDecoder)
 endif()
 
@@ -324,6 +327,8 @@ if(BUILD_TESTING)
   target_link_libraries(MediaSlotsTests PRIVATE MediaSlots EmulatorCore)
   ukncbtl_portable_test(MouseInputTests tests/MouseInputTests.cpp)
   target_link_libraries(MouseInputTests PRIVATE MouseInput)
+  ukncbtl_portable_test(VirtualKeyboardTests tests/VirtualKeyboardTests.cpp)
+  target_link_libraries(VirtualKeyboardTests PRIVATE VirtualKeyboard)
   ukncbtl_portable_test(PreviewSettingsTests tests/PreviewSettingsTests.cpp)
   target_link_libraries(PreviewSettingsTests PRIVATE PreviewSettings IniFile)
   ukncbtl_portable_test(PreviewSnapshotTests tests/PreviewSnapshotTests.cpp)

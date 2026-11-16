@@ -82,6 +82,46 @@ TEST(SdlKeyboard, CombinesPhysicalKeysMappedToSameEmulatedKey)
     ASSERT_TRUE(event); EXPECT_EQ(event->scan, 0105); EXPECT_FALSE(event->pressed);
 }
 
+TEST(SdlKeyboard, MergesVirtualAndPhysicalKeyOwnership)
+{
+    using sdl_keyboard::Source;
+    sdl_keyboard::Merge merge;
+    auto event = merge.Transition(Source::physical, {0105, true});
+    ASSERT_TRUE(event); EXPECT_TRUE(event->pressed);
+    EXPECT_FALSE(merge.Transition(Source::virtualKey, {0105, true}));
+    EXPECT_FALSE(merge.Transition(Source::physical, {0105, false}));
+    event = merge.Transition(Source::virtualKey, {0105, false});
+    ASSERT_TRUE(event); EXPECT_FALSE(event->pressed);
+    EXPECT_FALSE(merge.Transition(Source::virtualKey, {0105, false}));
+    ASSERT_TRUE(merge.Transition(Source::virtualKey, {0072, true}));
+    merge.Reset();
+    EXPECT_FALSE(merge.Transition(Source::virtualKey, {0072, false}));
+}
+
+TEST(SdlKeyboard, VirtualTransitionsAreDeliveredAcrossEmulatedFrames)
+{
+    struct Runtime { Runtime() { CProcessor::Init(); } ~Runtime() { CProcessor::Done(); } } runtime;
+    CMotherboard board;
+    board.Reset();
+    for (int column = 0; column < 8; ++column)
+        board.KeyboardEvent(static_cast<std::uint8_t>((column << 4) | 3), false);
+    board.GetCPU()->SetDCLOPin(true); board.GetPPU()->SetDCLOPin(true);
+    sdl_keyboard::Merge merge;
+    sdl_keyboard::Delivery delivery;
+    const auto press = merge.Transition(sdl_keyboard::Source::virtualKey, {0072, true});
+    const auto release = merge.Transition(sdl_keyboard::Source::virtualKey, {0072, false});
+    ASSERT_TRUE(press); ASSERT_TRUE(release);
+    delivery.Push(*press); delivery.Push(*release);
+    auto next = delivery.Next();
+    ASSERT_TRUE(next); board.KeyboardEvent(next->scan, next->pressed);
+    ASSERT_TRUE(board.SystemFrame());
+    EXPECT_EQ(board.GetPPUMemoryController()->GetWord(0177702, false, false), 0072);
+    next = delivery.Next();
+    ASSERT_TRUE(next); board.KeyboardEvent(next->scan, next->pressed);
+    ASSERT_TRUE(board.SystemFrame());
+    EXPECT_EQ(board.GetPPUMemoryController()->GetWord(0177702, false, false), 0212);
+}
+
 TEST(SdlKeyboard, ReleasesAllOnFocusLossAndCanRestart)
 {
     sdl_keyboard::Keyboard keyboard;
