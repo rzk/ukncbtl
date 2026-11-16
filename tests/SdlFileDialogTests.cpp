@@ -82,3 +82,22 @@ TEST(SdlFileDialog, PreservesRomPurposeAndCartridgeSlot)
         EXPECT_EQ(result->path, "rom.bin");
     }
 }
+
+TEST(SdlFileDialog, PreservesDiskGeometryAndPrinterPurpose)
+{
+    sdl_file_dialog::State state;
+    for (int tracks : {40, 80})
+    {
+        ASSERT_TRUE(state.Begin());
+        state.Complete({media_slots::Kind::floppy, tracks, sdl_file_dialog::Status::selected,
+            "disk.dsk", sdl_file_dialog::Purpose::createDisk});
+        const auto result = state.Take();
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->purpose, sdl_file_dialog::Purpose::createDisk);
+        EXPECT_EQ(result->slot, tracks);
+    }
+    ASSERT_TRUE(state.Begin());
+    state.Complete({media_slots::Kind::floppy, -1, sdl_file_dialog::Status::selected,
+        "printer.log", sdl_file_dialog::Purpose::printer});
+    EXPECT_EQ(state.Take()->purpose, sdl_file_dialog::Purpose::printer);
+}

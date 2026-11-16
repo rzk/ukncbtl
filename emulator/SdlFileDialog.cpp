@@ -112,3 +112,23 @@ bool sdl_file_dialog::OpenRom(const std::shared_ptr<State>& state, SDL_Window& w
     SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
     return true;
 }
+
+bool sdl_file_dialog::SaveDisk(const std::shared_ptr<State>& state, SDL_Window& window, int tracks)
+{
+    if (!state || (tracks != 40 && tracks != 80)) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, tracks, Purpose::createDisk);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"Floppy disk images", "dsk"}};
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
+    return true;
+}
+
+bool sdl_file_dialog::SavePrinter(const std::shared_ptr<State>& state, SDL_Window& window)
+{
+    if (!state) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::printer);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"Printer output", "txt;log"}, {"All files", "*"}};
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr);
+    return true;
+}

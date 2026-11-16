@@ -154,6 +154,11 @@ target_link_libraries(DiskImageFile PUBLIC DiskImageData)
 add_library(PrinterOutput STATIC emulator/PrinterOutput.cpp)
 ukncbtl_toolchain(PrinterOutput)
 
+add_library(PreviewPrinter STATIC emulator/PreviewPrinter.cpp)
+ukncbtl_toolchain(PreviewPrinter)
+target_include_directories(PreviewPrinter PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+target_link_libraries(PreviewPrinter PRIVATE PrinterOutput EmulatorCore)
+
 add_library(RomFile STATIC emulator/RomFile.cpp)
 ukncbtl_toolchain(RomFile)
 
@@ -269,7 +274,7 @@ if(UKNCBTL_ENABLE_IMGUI)
   add_executable(ukncbtl-sdl emulator/SdlMain.cpp)
   ukncbtl_toolchain(ukncbtl-sdl)
   target_include_directories(ukncbtl-sdl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard MouseInput SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot ScreenshotImage ScreenshotFile ScreenshotClipboard VideoPalette FramePacing
+  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard MouseInput SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard VideoPalette FramePacing
     EmbeddedRom EmulatorCore VideoDecoder)
 endif()
 
@@ -359,6 +364,8 @@ if(BUILD_TESTING)
   target_link_libraries(DiskImageFileTests PRIVATE DiskImageFile)
   ukncbtl_portable_test(PrinterOutputTests tests/PrinterOutputTests.cpp)
   target_link_libraries(PrinterOutputTests PRIVATE PrinterOutput)
+  ukncbtl_portable_test(PreviewPrinterTests tests/PreviewPrinterTests.cpp)
+  target_link_libraries(PreviewPrinterTests PRIVATE PreviewPrinter EmulatorCore)
   ukncbtl_portable_test(RomFileTests tests/RomFileTests.cpp)
   target_link_libraries(RomFileTests PRIVATE RomFile)
   configure_file("${embedded_rom_input}" "${CMAKE_CURRENT_BINARY_DIR}/embedded_rom_test.bin" COPYONLY)

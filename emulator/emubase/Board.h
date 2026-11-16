@@ -113,6 +113,7 @@ using SERIALOUTCALLBACK = bool (*)(uint8_t byte);
 // Output:
 //   result     true means OK, false means we have an error
 using PARALLELOUTCALLBACK = bool (*)(uint8_t byte);
+using PARALLELOUTCONTEXTCALLBACK = bool (*)(void* context, uint8_t byte);
 
 // Terminal out callback -- CPU sends character by channel 0
 using TERMINALOUTCALLBACK = void (*)(uint8_t byte);
@@ -320,6 +321,8 @@ public:  // System control
     void        SetSerialCallbacks(SERIALINCALLBACK incallback, SERIALOUTCALLBACK outcallback);
     /// \brief Assign parallel port output callback function.
     void        SetParallelOutCallback(PARALLELOUTCALLBACK outcallback);
+    // Setting either callback replaces the other; context is borrowed.
+    void        SetParallelOutCallbackWithContext(PARALLELOUTCONTEXTCALLBACK outcallback, void* context);
     /// \brief Assign network port input/output callback functions.
     void        SetNetworkCallbacks(NETWORKINCALLBACK incallback, NETWORKOUTCALLBACK outcallback);
     /// \brief Assign terminal callback functions.
@@ -381,6 +384,8 @@ private:
     SERIALINCALLBACK    m_SerialInCallback;
     SERIALOUTCALLBACK   m_SerialOutCallback;
     PARALLELOUTCALLBACK m_ParallelOutCallback;
+    PARALLELOUTCONTEXTCALLBACK m_ParallelOutContextCallback = nullptr;
+    void* m_ParallelOutContext = nullptr;
     NETWORKINCALLBACK   m_NetworkInCallback;
     NETWORKOUTCALLBACK  m_NetworkOutCallback;
     TERMINALOUTCALLBACK m_TerminalOutCallback;

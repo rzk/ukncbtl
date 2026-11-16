@@ -893,7 +893,7 @@ bool CMotherboard::SystemFrame()
             }
         }
 
-        if (m_ParallelOutCallback != nullptr && !m_okSoundCovox)
+        if ((m_ParallelOutCallback != nullptr || m_ParallelOutContextCallback != nullptr) && !m_okSoundCovox)
         {
             CSecondMemoryController* pMemCtl = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
             if ((pMemCtl->m_Port177102 & 0x80) == 0x80 && (pMemCtl->m_Port177101 & 0x80) == 0x80)
@@ -905,7 +905,10 @@ bool CMotherboard::SystemFrame()
             else if ((pMemCtl->m_Port177102 & 0x80) == 0 && (pMemCtl->m_Port177101 & 0x80) == 0)
             {
                 // Strobe reset, Printer Ack reset => byte is ready, print it
-                (*m_ParallelOutCallback)(pMemCtl->m_Port177100);
+                if (m_ParallelOutContextCallback)
+                    m_ParallelOutContextCallback(m_ParallelOutContext, pMemCtl->m_Port177100);
+                else
+                    m_ParallelOutCallback(pMemCtl->m_Port177100);
                 pMemCtl->m_Port177101 |= 0x80;  // Set Printer Acknowledge
                 // Now the printer waits for Strobe
             }
@@ -1608,6 +1611,8 @@ void CMotherboard::SetSerialCallbacks(SERIALINCALLBACK incallback, SERIALOUTCALL
 
 void CMotherboard::SetParallelOutCallback(PARALLELOUTCALLBACK outcallback)
 {
+    m_ParallelOutContextCallback = nullptr;
+    m_ParallelOutContext = nullptr;
     CSecondMemoryController* pMemCtl = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
     if (outcallback == nullptr)  // Reset callback
     {
@@ -1618,6 +1623,18 @@ void CMotherboard::SetParallelOutCallback(PARALLELOUTCALLBACK outcallback)
     {
         pMemCtl->m_Port177101 |= 2;  // Set OnLine flag
         m_ParallelOutCallback = outcallback;
+    }
+}
+
+void CMotherboard::SetParallelOutCallbackWithContext(PARALLELOUTCONTEXTCALLBACK outcallback, void* context)
+{
+    SetParallelOutCallback(nullptr);
+    if (outcallback)
+    {
+        auto* controller = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
+        controller->m_Port177101 |= 2;
+        m_ParallelOutContextCallback = outcallback;
+        m_ParallelOutContext = context;
     }
 }
 

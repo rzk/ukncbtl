@@ -72,7 +72,10 @@ It supports screenshot capture to PNG/BMP files or the SDL clipboard, with
 the existing screenshot size modes. It also supports basic SDL audio output and
 attaching/ejecting floppy and hard-disk images through SDL file dialogs. Disks
 may be modified by the emulated machine; read-only mounts are indicated in the
-menu. Two ROM cartridge slots and an external system ROM can be selected; a
+menu. The Disks menu can create 40- or 80-track floppy images. The Emulator
+menu can direct parallel-port output to a selected file; Covox temporarily
+suppresses printer output because it uses the same port. Creation and printer
+output refuse files currently used by the emulator. Two ROM cartridge slots and an external system ROM can be selected; a
 hard disk requires a cartridge in the matching slot. Changing the system ROM
 resets the machine. ROM and disk paths are not restored automatically. The
 Display menu offers the legacy RGB, GRB and grayscale palettes and

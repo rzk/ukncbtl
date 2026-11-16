@@ -1,8 +1,10 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "MediaSlots.h"
+#include "DiskImageFile.h"
 #include "MouseInput.h"
 #include "FramePacing.h"
 #include "PreviewRoms.h"
+#include "PreviewPrinter.h"
 #include "PreviewSettings.h"
 #include "PreviewSnapshot.h"
 #include "ScreenshotImage.h"
@@ -101,6 +103,7 @@ int Run(bool smokeTest)
     CMotherboard board;
     media_slots::Slots media(board);
     preview_roms::Roms roms(board);
+    preview_printer::Session printer(board);
     const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
     std::string actionError = startupError;
     bool showActionError = !startupError.empty();
@@ -149,6 +152,7 @@ int Run(bool smokeTest)
         releaseMouse();
         board.Reset();
         board.SetMouse(settings.mouse);
+        printer.Synchronize();
         snapshots.ResetTracking();
         if (audio && !audio->Reset())
         {
@@ -157,7 +161,7 @@ int Run(bool smokeTest)
         }
     };
     const auto conflicts = [&](const std::filesystem::path& path) {
-        return media.Conflicts(path) || roms.Conflicts(path);
+        return media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path);
     };
     bool running = true;
     frame_pacing::Scheduler scheduler(frame_pacing::Clock::now());
@@ -208,7 +212,28 @@ int Run(bool smokeTest)
             else if (result->status == sdl_file_dialog::Status::selected)
             {
                 const std::u8string path(reinterpret_cast<const char8_t*>(result->path.data()), result->path.size());
-                if (result->purpose == sdl_file_dialog::Purpose::screenshot)
+                if (result->purpose == sdl_file_dialog::Purpose::createDisk)
+                {
+                    auto target = std::filesystem::path(path);
+                    if (!target.has_extension()) target += ".dsk";
+                    if (conflicts(target))
+                    { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
+                    else if (!disk_image::CreatePortable(target, result->slot))
+                    { actionError = "Could not create the disk image. The file may be incomplete."; showActionError = true; }
+                }
+                else if (result->purpose == sdl_file_dialog::Purpose::printer)
+                {
+                    const auto target = std::filesystem::path(path);
+                    if (conflicts(target))
+                    { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
+                    else if (!printer.Start(target))
+                    { actionError = "Could not open the printer output file."; showActionError = true; }
+                }
+                else if (result->purpose != sdl_file_dialog::Purpose::screenshot &&
+                    result->purpose != sdl_file_dialog::Purpose::snapshotSave &&
+                    printer.Conflicts(std::filesystem::path(path)))
+                { actionError = "The selected file is used for printer output. Choose another file."; showActionError = true; }
+                else if (result->purpose == sdl_file_dialog::Purpose::screenshot)
                 {
                     const auto format = result->filter == 1 ? screenshot_format::Format::bmp : screenshot_format::Format::png;
                     screenshotPath = screenshot_file::WithDefaultExtension(std::filesystem::path(path), format);
@@ -235,7 +260,7 @@ int Run(bool smokeTest)
                         actionError = "Could not load the state image.";
                         showActionError = true;
                     }
-                    else roms.MarkRestoredFromSnapshot();
+                    else { roms.MarkRestoredFromSnapshot(); printer.Synchronize(); }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::snapshotSave)
                 {
@@ -303,7 +328,11 @@ int Run(bool smokeTest)
                 if (ImGui::MenuItem(running ? "Pause" : "Run"))
                 {
                     running = !running;
-                    if (!running) releaseKeys();
+                    if (!running)
+                    {
+                        releaseKeys();
+                        if (!printer.Flush()) { actionError = "Printer output failed and was stopped."; showActionError = true; }
+                    }
                     else scheduler.Restart(started);
                 }
                 if (ImGui::MenuItem("Reset")) { resetMachine(); scheduler.Restart(started); }
@@ -372,6 +401,21 @@ int Run(bool smokeTest)
                         settingsDirty = volumeChanged = true;
                     ImGui::EndMenu();
                 }
+                if (ImGui::BeginMenu("Printer"))
+                {
+                    if (printer.Active())
+                    {
+                        const auto path = printer.Path().u8string();
+                        ImGui::TextUnformatted(reinterpret_cast<const char*>(path.c_str()));
+                        if (settings.soundCovox) ImGui::TextDisabled("Output paused while Covox is enabled");
+                        if (ImGui::MenuItem("Stop output") && !printer.Stop())
+                        { actionError = "Could not finish the printer output file."; showActionError = true; }
+                    }
+                    else if (ImGui::MenuItem("Start output...", nullptr, false, !fileDialog->Pending()) &&
+                        !sdl_file_dialog::SavePrinter(fileDialog, *window))
+                    { actionError = "Could not open the file dialog."; showActionError = true; }
+                    ImGui::EndMenu();
+                }
                 if (ImGui::MenuItem("Quit")) done = true;
                 ImGui::EndMenu();
             }
@@ -435,6 +479,18 @@ int Run(bool smokeTest)
             }
             if (ImGui::BeginMenu("Disks"))
             {
+                if (ImGui::BeginMenu("Create floppy image"))
+                {
+                    for (const int tracks : {40, 80})
+                    {
+                        const auto label = std::to_string(tracks) + " tracks...";
+                        if (ImGui::MenuItem(label.c_str(), nullptr, false, !fileDialog->Pending()) &&
+                            !sdl_file_dialog::SaveDisk(fileDialog, *window, tracks))
+                        { actionError = "Could not open the file dialog."; showActionError = true; }
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
                 const auto driveMenu = [&](media_slots::Kind kind, int slot, const std::string& label) {
                     if (!ImGui::BeginMenu(label.c_str())) return;
                     if (media.Attached(kind, slot))
@@ -536,6 +592,7 @@ int Run(bool smokeTest)
                 board.MouseMove(sample.dx, sample.dy, sample.left, sample.right);
             }
             if (!board.SystemFrame()) { SDL_Log("Emulator frame failed"); return 1; }
+            if (!printer.Check()) { actionError = "Printer output failed and was stopped."; showActionError = true; }
             snapshots.FrameCompleted();
             if (smokeTest) ++frames;
             if (audio && audioActive && !audio->SubmitFrame())
@@ -586,6 +643,11 @@ int Run(bool smokeTest)
         if (!SDL_RenderPresent(renderer.get())) return 1;
         if (smokeTest && frames >= 3) break;
         std::this_thread::sleep_for(scheduler.Delay(frame_pacing::Clock::now(), settings.speed, running));
+    }
+    if (!printer.Stop())
+    {
+        SDL_Log("Could not finish the printer output file.");
+        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Printer", "Could not finish the printer output file.", window.get());
     }
     if (settingsPath)
     {
