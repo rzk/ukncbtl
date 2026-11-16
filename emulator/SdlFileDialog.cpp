@@ -184,3 +184,13 @@ bool sdl_file_dialog::SaveDisplayList(const std::shared_ptr<State>& state, SDL_W
     SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
     return true;
 }
+
+bool sdl_file_dialog::SaveConsoleLog(const std::shared_ptr<State>& state, SDL_Window& window)
+{
+    if (!state) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::consoleLog);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"Text file", "txt"}};
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
+    return true;
+}

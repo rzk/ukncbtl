@@ -97,6 +97,10 @@ preview embeds Droid Sans for Latin and Cyrillic text; its license is in
 While paused, registers, PSW and aligned writable RAM words can be edited.
 Memory ranges can be exported as little-endian binary and the display list as
 text; output destinations currently used by the emulator are rejected.
+The Debug menu also provides a console with command history and a bounded UTF-8
+log that can be saved. It supports legacy-style register, memory, disassembly,
+breakpoint, CPU/PPU selection and execution commands; enter `h` for its command
+list. Trace commands and the full legacy console command set remain to migrate.
 The debugger also displays the legacy CPU and PPU port values. Its sprite
 viewer decodes CPU memory in the five legacy color modes and supports octal
 addresses, byte widths and page navigation; these controls are saved.

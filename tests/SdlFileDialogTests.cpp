@@ -144,3 +144,14 @@ TEST(SdlFileDialog, PreservesMemoryDumpSelectionAcrossCallback)
         "display.txt", sdl_file_dialog::Purpose::displayListDump});
     EXPECT_EQ(state.Take()->purpose, sdl_file_dialog::Purpose::displayListDump);
 }
+
+TEST(SdlFileDialog, PreservesConsoleLogPurpose)
+{
+    sdl_file_dialog::State state;
+    ASSERT_TRUE(state.Begin());
+    state.Complete({media_slots::Kind::floppy, -1, sdl_file_dialog::Status::selected,
+        "console.txt", sdl_file_dialog::Purpose::consoleLog});
+    const auto result = state.Take();
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->purpose, sdl_file_dialog::Purpose::consoleLog);
+}

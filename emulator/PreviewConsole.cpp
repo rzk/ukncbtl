@@ -1,0 +1,193 @@
+/* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
+#include "PreviewConsole.h"
+#include "emubase/Processor.h"
+#include <algorithm>
+#include <format>
+#include <fstream>
+#include <sstream>
+#include <utility>
+#include <vector>
+
+namespace
+{
+constexpr std::size_t maxLogBytes = 65536, maxCommands = 32;
+using preview_debugger::ParseAddress;
+using preview_debugger::ParseWord;
+using preview_console::Action;
+
+std::vector<std::string> Tokens(std::string_view input)
+{
+    std::string normalized;
+    for (const char ch : input) normalized.push_back(ch == '=' ? ' ' : ch);
+    std::istringstream stream(normalized);
+    std::vector<std::string> result;
+    for (std::string token; stream >> token;) result.push_back(std::move(token));
+    if (!result.empty())
+    {
+        auto& first = result[0];
+        std::size_t prefix = 0;
+        if (first.size() > 2 && first.starts_with("bc")) prefix = 2;
+        else if (first.size() > 1 && (first[0] == 'b' || first[0] == 'd' || first[0] == 'm' || first[0] == 'g') &&
+            first[1] >= '0' && first[1] <= '9') prefix = 1;
+        if (prefix)
+        {
+            auto tail = first.substr(prefix);
+            first.resize(prefix);
+            result.insert(result.begin() + 1, std::move(tail));
+        }
+    }
+    return result;
+}
+}
+
+void preview_console::Console::Append(std::string_view text)
+{
+    log_.append(text);
+    while (log_.size() > maxLogBytes)
+    {
+        const auto newline = log_.find('\n');
+        if (newline == std::string::npos)
+        {
+            auto cut = log_.size() - maxLogBytes;
+            while (cut < log_.size() && (static_cast<unsigned char>(log_[cut]) & 0xc0) == 0x80) ++cut;
+            log_.erase(0, cut);
+            break;
+        }
+        log_.erase(0, newline + 1);
+    }
+}
+
+std::string_view preview_console::Console::Navigate(int direction)
+{
+    if (direction < 0 && navigation_ + 1 < static_cast<int>(commands_.size())) ++navigation_;
+    else if (direction > 0 && navigation_ >= 0) --navigation_;
+    return navigation_ < 0 ? std::string_view{} : std::string_view(commands_[commands_.size() - 1 - navigation_]);
+}
+
+bool preview_console::Console::Save(const std::filesystem::path& path) const
+{
+    if (path.empty()) return false;
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) return false;
+    file.write(log_.data(), static_cast<std::streamsize>(log_.size()));
+    file.flush();
+    const bool written = static_cast<bool>(file);
+    file.close();
+    return written && static_cast<bool>(file);
+}
+
+preview_console::Action preview_console::Console::Submit(std::string_view command,
+    preview_debugger::Session& debugger, preview_debugger::Processor& processor, bool running)
+{
+    if (command.size() > 4096) { Append("Command is too long.\n"); return Action::none; }
+    const auto tokens = Tokens(command);
+    if (tokens.empty()) return Action::none;
+    std::erase(commands_, std::string(command));
+    commands_.emplace_back(command);
+    if (commands_.size() > maxCommands) commands_.erase(commands_.begin());
+    navigation_ = -1;
+    Append(std::format("> {}\n", command));
+    const auto& op = tokens[0];
+    const auto say = [&](std::string_view message) { Append(message); Append("\n"); };
+    const auto fail = [&] { say("Invalid command or octal argument. Enter h for help."); return Action::none; };
+    const auto paused = [&] { if (running) { say("Pause the machine first."); return false; } return true; };
+    auto& cpu = debugger.GetProcessor(processor);
+    if ((op == "h" || op == "help") && tokens.size() == 1)
+    {
+        say("p: CPU/PPU  r: registers  r0 [value] / rps [value]: register\n"
+            "m [address [value]]: memory  d [address]: disassemble\n"
+            "b [address]: list/add breakpoint  bc [address]: clear breakpoint(s)\n"
+            "s: step  so: step over  g [address]: run/run to  pause: pause  c: clear log");
+    }
+    else if (op == "c" && tokens.size() == 1) log_.clear();
+    else if (op == "p" && tokens.size() == 1)
+    {
+        processor = processor == preview_debugger::Processor::cpu ? preview_debugger::Processor::ppu : preview_debugger::Processor::cpu;
+        say(processor == preview_debugger::Processor::cpu ? "CPU selected." : "PPU selected.");
+    }
+    else if (op == "r" && tokens.size() == 1)
+    {
+        for (int index = 0; index < 8; ++index) Append(std::format("R{}={:06o}{}", index,
+            cpu.GetReg(index), index == 7 ? "\n" : "  "));
+        Append(std::format("PSW={:06o}\n", cpu.GetPSW()));
+    }
+    else if ((op == "rps" || (op.size() == 2 && op[0] == 'r' && op[1] >= '0' && op[1] <= '7')) && tokens.size() <= 2)
+    {
+        const int index = op == "rps" ? 8 : op[1] - '0';
+        if (tokens.size() == 1) Append(std::format("{}={:06o}\n", op, index == 8 ? cpu.GetPSW() : cpu.GetReg(index)));
+        else
+        {
+            const auto value = ParseWord(tokens[1]);
+            if (!value) return fail();
+            if (!paused()) return Action::none;
+            (void)debugger.WriteRegister(processor, index, *value);
+            say("Register updated.");
+        }
+    }
+    else if ((op == "m" || op == "d") && tokens.size() <= (op == "m" ? 3u : 2u))
+    {
+        const auto address = tokens.size() >= 2 ? ParseAddress(tokens[1]) : std::optional{cpu.GetPC()};
+        if (!address || (*address & 1)) return fail();
+        if (op == "m" && tokens.size() == 3)
+        {
+            const auto value = ParseWord(tokens[2]);
+            if (!value) return fail();
+            if (!paused()) return Action::none;
+            say(debugger.WriteMemory(processor, *address, *value) ? "RAM updated." : "Address is not writable RAM.");
+        }
+        else if (op == "m")
+            for (int row = 0; row < 8; ++row)
+            {
+                const auto at = static_cast<std::uint16_t>(*address + row * 2);
+                Append(std::format("{:06o}  {:06o}\n", at, debugger.ReadWord(processor, at, false)));
+            }
+        else for (const auto& line : debugger.Disassemble(processor, *address, 8, true))
+        {
+            if (!line.blockComment.empty()) { Append(line.blockComment); Append("\n"); }
+            const auto mnemonic = preview_debugger::ToUtf8(line.instruction.mnemonic).value_or("?");
+            const auto argument = preview_debugger::ToUtf8(line.instruction.argument).value_or("?");
+            Append(std::format("{:06o}  {:06o}  {} {} {}\n", line.address, line.word, mnemonic, argument, line.comment));
+        }
+    }
+    else if ((op == "b" || op == "bc") && tokens.size() <= 2)
+    {
+        auto& points = debugger.Breakpoints(processor);
+        if (tokens.size() == 1 && op == "b")
+        {
+            if (points.Addresses().empty()) say("No breakpoints.");
+            for (const auto address : points.Addresses()) Append(std::format("{:06o}\n", address));
+        }
+        else
+        {
+            if (!paused()) return Action::none;
+            if (tokens.size() == 1) { points.Clear(); say("Breakpoints cleared."); }
+            else
+            {
+                const auto address = ParseAddress(tokens[1]);
+                if (!address) return fail();
+                const bool changed = op == "b" ? points.Add(*address) : points.Remove(*address);
+                say(changed ? "Breakpoint updated." : "Breakpoint could not be updated.");
+            }
+        }
+    }
+    else if (op == "s" && tokens.size() == 1)
+    { if (paused()) { debugger.Step(); say("Stepped both processors."); } }
+    else if (op == "so" && tokens.size() == 1)
+    {
+        if (paused()) { if (debugger.StepOver(processor)) { say("Running to next instruction."); return Action::run; } say("Stepped both processors."); }
+    }
+    else if (op == "g" && tokens.size() <= 2)
+    {
+        if (!paused()) return Action::none;
+        if (tokens.size() == 2)
+        {
+            const auto address = ParseAddress(tokens[1]);
+            if (!address || !debugger.RunTo(processor, *address)) return fail();
+        }
+        say("Running."); return Action::run;
+    }
+    else if (op == "pause" && tokens.size() == 1)
+    { if (running) { say("Paused."); return Action::pause; } say("Already paused."); }
+    else return fail();
+    return Action::none;
+}

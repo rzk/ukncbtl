@@ -12,7 +12,7 @@
 namespace sdl_file_dialog
 {
 enum class Status { selected, canceled, failed };
-enum class Purpose { disk, screenshot, snapshotLoad, snapshotSave, systemRom, cartridge, createDisk, printer, tapeOpen, tapeCreate, subtitles, memoryDump, displayListDump };
+enum class Purpose { disk, screenshot, snapshotLoad, snapshotSave, systemRom, cartridge, createDisk, printer, tapeOpen, tapeCreate, subtitles, memoryDump, displayListDump, consoleLog };
 struct Result
 {
     media_slots::Kind kind;
@@ -53,4 +53,5 @@ private:
 [[nodiscard]] bool SaveMemoryDump(const std::shared_ptr<State>& state, SDL_Window& window, bool cpu,
     std::uint16_t start, std::uint16_t end);
 [[nodiscard]] bool SaveDisplayList(const std::shared_ptr<State>& state, SDL_Window& window);
+[[nodiscard]] bool SaveConsoleLog(const std::shared_ptr<State>& state, SDL_Window& window);
 }

@@ -9,6 +9,7 @@
 #include "PreviewPrinter.h"
 #include "PreviewOptions.h"
 #include "PreviewDebugger.h"
+#include "PreviewConsole.h"
 #include "PreviewSettings.h"
 #include "PreviewSnapshot.h"
 #include "PreviewSprite.h"
@@ -73,6 +74,15 @@ struct ImGuiRuntime
     }
 };
 
+int ConsoleHistoryCallback(ImGuiInputTextCallbackData* data)
+{
+    auto& console = *static_cast<preview_console::Console*>(data->UserData);
+    const auto text = console.Navigate(data->EventKey == ImGuiKey_UpArrow ? -1 : 1);
+    data->DeleteChars(0, data->BufTextLen);
+    if (!text.empty()) data->InsertChars(0, text.data(), text.data() + text.size());
+    return 0;
+}
+
 int Run(const preview_options::Options& options)
 {
     const bool smokeTest = options.smokeTest;
@@ -135,6 +145,7 @@ int Run(const preview_options::Options& options)
     preview_printer::Session printer(board);
     preview_tape::Session tape(board);
     preview_debugger::Session debugger(board);
+    preview_console::Console console;
     const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
     std::string actionError = startupError;
     bool showActionError = !startupError.empty();
@@ -229,7 +240,11 @@ int Run(const preview_options::Options& options)
     };
     bool done = false;
     bool showDebugger = smokeTest;
+    bool showConsole = smokeTest;
     preview_debugger::Processor debugProcessor = preview_debugger::Processor::cpu;
+    std::array<char, 256> consoleInput{};
+    bool consoleScroll = true;
+    if (smokeTest) (void)console.Submit("h", debugger, debugProcessor, running);
     std::array<char, 16> breakpointAddress{};
     std::array<char, 16> memoryAddress{'0', '0', '0', '0', '0', '0', 0};
     std::array<char, 16> memoryValue{}, registerValue{};
@@ -299,15 +314,18 @@ int Run(const preview_options::Options& options)
             {
                 const std::u8string path(reinterpret_cast<const char8_t*>(result->path.data()), result->path.size());
                 if (result->purpose == sdl_file_dialog::Purpose::memoryDump ||
-                    result->purpose == sdl_file_dialog::Purpose::displayListDump)
+                    result->purpose == sdl_file_dialog::Purpose::displayListDump ||
+                    result->purpose == sdl_file_dialog::Purpose::consoleLog)
                 {
                     auto target = std::filesystem::path(path);
                     const bool memory = result->purpose == sdl_file_dialog::Purpose::memoryDump;
+                    const bool log = result->purpose == sdl_file_dialog::Purpose::consoleLog;
                     if (!target.has_extension()) target += memory ? ".bin" : ".txt";
                     if (conflicts(target))
                     { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
                     else if (memory ? !debugger.SaveMemory(target, result->slot == 1 ? preview_debugger::Processor::cpu :
-                        preview_debugger::Processor::ppu, result->start, result->end) : !display_list_dump::Save(target, board))
+                        preview_debugger::Processor::ppu, result->start, result->end) : log ? !console.Save(target) :
+                        !display_list_dump::Save(target, board))
                     { actionError = "Could not save the debugger export. The file may be incomplete."; showActionError = true; }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::tapeOpen ||
@@ -580,6 +598,7 @@ int Run(const preview_options::Options& options)
             if (ImGui::BeginMenu("Debug"))
             {
                 ImGui::MenuItem("Debugger", nullptr, &showDebugger);
+                ImGui::MenuItem("Console", nullptr, &showConsole);
                 if (ImGui::MenuItem("Sprite viewer", nullptr, &settings.spriteViewer)) settingsDirty = true;
                 ImGui::EndMenu();
             }
@@ -1050,6 +1069,38 @@ int Run(const preview_options::Options& options)
             }
             ImGui::End();
             if (wasOpen != settings.spriteViewer) settingsDirty = true;
+        }
+        if (showConsole)
+        {
+            ImGui::SetNextWindowSize(ImVec2(610, 320), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Debugger console", &showConsole))
+            {
+                ImGui::TextDisabled("%s selected. Enter h for help; values are octal.",
+                    debugProcessor == preview_debugger::Processor::cpu ? "CPU" : "PPU");
+                ImGui::SameLine();
+                ImGui::BeginDisabled(fileDialog->Pending());
+                if (ImGui::SmallButton("Save log...") && !sdl_file_dialog::SaveConsoleLog(fileDialog, *window))
+                { actionError = "Could not open the file dialog."; showActionError = true; }
+                ImGui::EndDisabled();
+                if (ImGui::BeginChild("##console-log", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()),
+                    ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar))
+                {
+                    ImGui::TextUnformatted(console.Log().c_str());
+                    if (consoleScroll) { ImGui::SetScrollHereY(1.0f); consoleScroll = false; }
+                }
+                ImGui::EndChild();
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::InputText("##console-input", consoleInput.data(), consoleInput.size(),
+                    ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory, ConsoleHistoryCallback, &console))
+                {
+                    const auto action = console.Submit(consoleInput.data(), debugger, debugProcessor, running);
+                    consoleInput.fill(0); consoleScroll = true;
+                    if (action == preview_console::Action::run) startMachine(started);
+                    else if (action == preview_console::Action::pause) pauseMachine();
+                    ImGui::SetKeyboardFocusHere(-1);
+                }
+            }
+            ImGui::End();
         }
         if (showActionError) { ImGui::OpenPopup("Error"); showActionError = false; }
         if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
