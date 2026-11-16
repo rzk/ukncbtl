@@ -13,6 +13,8 @@ struct Settings
     int windowHeight = 720;
     int screenshotMode = 1;
     bool sound = true;
+    int displayMode = 1;
+    int paletteMode = 0;
 };
 
 [[nodiscard]] bool ValidWindowSize(int width, int height);

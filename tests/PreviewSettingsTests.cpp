@@ -46,13 +46,15 @@ TEST_F(PreviewSettingsTest, MissingFileUsesDefaultsWithoutCreatingIt)
     EXPECT_EQ(settings->windowHeight, 720);
     EXPECT_EQ(settings->screenshotMode, 1);
     EXPECT_TRUE(settings->sound);
+    EXPECT_EQ(settings->displayMode, 1);
+    EXPECT_EQ(settings->paletteMode, 0);
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
 TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
 {
     Write("; retain\n[Other]\nKey=value\n[SDLPreview]\nExtra=keep\n");
-    const preview_settings::Settings input{1280, 800, 6, false};
+    const preview_settings::Settings input{1280, 800, 6, false, 5, 2};
     ASSERT_TRUE(preview_settings::Save(path, input));
     const auto output = preview_settings::Load(path);
     ASSERT_TRUE(output);
@@ -60,6 +62,8 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     EXPECT_EQ(output->windowHeight, input.windowHeight);
     EXPECT_EQ(output->screenshotMode, input.screenshotMode);
     EXPECT_EQ(output->sound, input.sound);
+    EXPECT_EQ(output->displayMode, input.displayMode);
+    EXPECT_EQ(output->paletteMode, input.paletteMode);
     const auto file = IniFile::Open(path);
     ASSERT_TRUE(file);
     EXPECT_EQ(file->Document().Get(L"Other", L"Key"), L"value");
@@ -69,13 +73,15 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
 
 TEST_F(PreviewSettingsTest, InvalidValuesFallBackIndependently)
 {
-    Write("[SDLPreview]\nWindowWidth=999999999\nWindowHeight=700\nScreenshotMode=999\nSound=0\n");
+    Write("[SDLPreview]\nWindowWidth=999999999\nWindowHeight=700\nScreenshotMode=999\nSound=0\nDisplayMode=8\nPaletteMode=99\n");
     const auto settings = preview_settings::Load(path);
     ASSERT_TRUE(settings);
     EXPECT_EQ(settings->windowWidth, 960);
     EXPECT_EQ(settings->windowHeight, 720);
     EXPECT_EQ(settings->screenshotMode, 1);
     EXPECT_FALSE(settings->sound);
+    EXPECT_EQ(settings->displayMode, 1);
+    EXPECT_EQ(settings->paletteMode, 0);
     Write("[SDLPreview]\nWindowWidth=640\nWindowHeight=480\nScreenshotMode=7\nSound=garbage\n");
     const auto second = preview_settings::Load(path);
     ASSERT_TRUE(second);
@@ -92,6 +98,8 @@ TEST_F(PreviewSettingsTest, InvalidInputOrCorruptFileIsNeverOverwritten)
     EXPECT_FALSE(preview_settings::Save(path, {1, 720, 1, true}));
     EXPECT_FALSE(preview_settings::Save(path, {960, 720, -1, true}));
     EXPECT_FALSE(preview_settings::Save(path, {960, 720, 8, true}));
+    EXPECT_FALSE(preview_settings::Save(path, {960, 720, 1, true, 8, 0}));
+    EXPECT_FALSE(preview_settings::Save(path, {960, 720, 1, true, 1, 3}));
     EXPECT_EQ(Read(), original);
     Write(std::string(1, static_cast<char>(0xff)));
     const auto bad = Read();

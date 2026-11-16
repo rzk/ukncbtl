@@ -53,13 +53,19 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
     if (mode && *mode < screen_scale::Modes().size()) settings.screenshotMode = static_cast<int>(*mode);
     const auto sound = Number(doc, L"Sound");
     if (sound && *sound <= 1) settings.sound = *sound != 0;
+    const auto display = Number(doc, L"DisplayMode");
+    if (display && *display < screen_scale::Modes().size()) settings.displayMode = static_cast<int>(*display);
+    const auto palette = Number(doc, L"PaletteMode");
+    if (palette && *palette <= 2) settings.paletteMode = static_cast<int>(*palette);
     return settings;
 }
 
 std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::path& path, const Settings& settings)
 {
     if (!ValidWindowSize(settings.windowWidth, settings.windowHeight) || settings.screenshotMode < 0 ||
-        static_cast<std::size_t>(settings.screenshotMode) >= screen_scale::Modes().size())
+        static_cast<std::size_t>(settings.screenshotMode) >= screen_scale::Modes().size() || settings.displayMode < 0 ||
+        static_cast<std::size_t>(settings.displayMode) >= screen_scale::Modes().size() ||
+        settings.paletteMode < 0 || settings.paletteMode > 2)
         return std::unexpected(IniFileError::invalid_entry);
     auto file = Read(path);
     if (!file) return std::unexpected(file.error());
@@ -68,7 +74,9 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
     if (!doc.Set(section, L"WindowWidth", std::to_wstring(settings.windowWidth)) ||
         !doc.Set(section, L"WindowHeight", std::to_wstring(settings.windowHeight)) ||
         !doc.Set(section, L"ScreenshotMode", std::to_wstring(settings.screenshotMode)) ||
-        !doc.Set(section, L"Sound", settings.sound ? L"1" : L"0"))
+        !doc.Set(section, L"Sound", settings.sound ? L"1" : L"0") ||
+        !doc.Set(section, L"DisplayMode", std::to_wstring(settings.displayMode)) ||
+        !doc.Set(section, L"PaletteMode", std::to_wstring(settings.paletteMode)))
         return std::unexpected(IniFileError::invalid_entry);
     return (*file)->Save(path);
 }

@@ -11,6 +11,7 @@
 #include "SdlFileDialog.h"
 #include "SdlScreenRenderer.h"
 #include "VideoDecoder.h"
+#include "VideoPalette.h"
 #include "emubase/Board.h"
 #include "emubase/Processor.h"
 #include "util/ScreenScale.h"
@@ -53,23 +54,6 @@ struct ImGuiRuntime
         if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
     }
 };
-
-constexpr std::array<std::uint32_t, 128> StandardPalette()
-{
-    std::array<std::uint32_t, 128> colors{};
-    for (int brightness = 0; brightness < 8; ++brightness)
-        for (int color = 0; color < 16; ++color)
-        {
-            const int level = (color & 8) ? 255 : 128;
-            const int r = (color & 4) ? level - ((brightness & 4) ? 32 : 0) : 0;
-            const int g = (color & 2) ? level - ((brightness & 2) ? 32 : 0) : 0;
-            const int b = (color & 1) ? level - ((brightness & 1) ? 32 : 0) : 0;
-            colors[brightness * 16 + color] = static_cast<std::uint32_t>((r << 16) | (g << 8) | b);
-        }
-    return colors;
-}
-static_assert(StandardPalette()[1] == 0x000080 && StandardPalette()[15] == 0xffffff &&
-    StandardPalette()[31] == 0xffffdf && StandardPalette()[127] == 0xdfdfdf);
 
 int Run(bool smokeTest)
 {
@@ -136,7 +120,6 @@ int Run(bool smokeTest)
     if (smokeTest && !audio) return 1;
     bool soundEnabled = audio != nullptr && settings.sound;
     bool audioActive = soundEnabled;
-    constexpr auto palette = StandardPalette();
     std::vector<std::uint32_t> pixels(video::Width * video::Height);
     sdl_screen::Renderer screen(*renderer);
     sdl_keyboard::Keyboard keyboard;
@@ -148,6 +131,8 @@ int Run(bool smokeTest)
     bool running = true;
     bool done = false;
     int screenshotMode = settings.screenshotMode;
+    int displayMode = settings.displayMode;
+    int paletteMode = settings.paletteMode;
     unsigned frames = 0;
     while (!done)
     {
@@ -235,6 +220,20 @@ int Run(bool smokeTest)
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
         if (ImGui::GetIO().WantCaptureKeyboard) releaseKeys();
+        const auto selectScaleMode = [&](int& mode, int& setting) {
+            const auto modes = screen_scale::Modes();
+            for (std::size_t index = 0; index < modes.size(); ++index)
+            {
+                std::string label;
+                for (const wchar_t* ch = modes[index].description; *ch; ++ch) label.push_back(static_cast<char>(*ch));
+                if (ImGui::MenuItem(label.c_str(), nullptr, mode == static_cast<int>(index)))
+                {
+                    mode = static_cast<int>(index);
+                    setting = mode;
+                    settingsDirty = true;
+                }
+            }
+        };
         float menuHeight = 0;
         if (ImGui::BeginMainMenuBar())
         {
@@ -273,6 +272,27 @@ int Run(bool smokeTest)
                 if (ImGui::MenuItem("Quit")) done = true;
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Display"))
+            {
+                if (ImGui::BeginMenu("Color"))
+                {
+                    constexpr std::array labels{"RGB", "GRB", "Grayscale"};
+                    for (std::size_t index = 0; index < labels.size(); ++index)
+                        if (ImGui::MenuItem(labels[index], nullptr, paletteMode == static_cast<int>(index)))
+                        {
+                            paletteMode = static_cast<int>(index);
+                            settings.paletteMode = paletteMode;
+                            settingsDirty = true;
+                        }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Scaling"))
+                {
+                    selectScaleMode(displayMode, settings.displayMode);
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Screenshot"))
             {
                 if (ImGui::MenuItem("Copy to clipboard")) copyScreenshot = true;
@@ -286,18 +306,7 @@ int Run(bool smokeTest)
                 }
                 if (ImGui::BeginMenu("Size"))
                 {
-                    const auto modes = screen_scale::Modes();
-                    for (std::size_t index = 0; index < modes.size(); ++index)
-                    {
-                        std::string label;
-                        for (const wchar_t* ch = modes[index].description; *ch; ++ch) label.push_back(static_cast<char>(*ch));
-                        if (ImGui::MenuItem(label.c_str(), nullptr, screenshotMode == static_cast<int>(index)))
-                        {
-                            screenshotMode = static_cast<int>(index);
-                            settings.screenshotMode = screenshotMode;
-                            settingsDirty = true;
-                        }
-                    }
+                    selectScaleMode(screenshotMode, settings.screenshotMode);
                     ImGui::EndMenu();
                 }
                 ImGui::EndMenu();
@@ -367,12 +376,13 @@ int Run(bool smokeTest)
                 audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
             }
         }
+        const auto palette = video_palette::Get(static_cast<video_palette::Mode>(paletteMode));
         if (!video::RenderRgb(board, pixels, palette)) return 1;
-        const auto image = screenshot_image::Prepare(pixels, 1);
+        const auto image = screenshot_image::Prepare(pixels, displayMode);
         if (!image) return 1;
         if (copyScreenshot || screenshotPath)
         {
-            const auto capture = screenshotMode == 1 ? image : screenshot_image::Prepare(pixels, screenshotMode);
+            const auto capture = screenshotMode == displayMode ? image : screenshot_image::Prepare(pixels, screenshotMode);
             if (!capture)
             {
                 actionError = "Could not prepare the screenshot image.";
