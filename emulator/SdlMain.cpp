@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "EmbeddedRom.h"
 #include "MediaSlots.h"
+#include "PreviewSettings.h"
 #include "ScreenshotImage.h"
 #include "ScreenshotClipboard.h"
 #include "ScreenshotFile.h"
@@ -73,8 +74,26 @@ int Run(bool smokeTest)
 {
     if (!SDL_Init(SDL_INIT_VIDEO)) { SDL_Log("SDL initialization failed: %s", SDL_GetError()); return 1; }
     SdlRuntime sdl;
+    preview_settings::Settings settings;
+    std::optional<std::filesystem::path> settingsPath;
+    std::string startupError;
+    bool settingsDirty = false;
+    if (!smokeTest)
+    {
+        const std::unique_ptr<char, decltype(&SDL_free)> directory(SDL_GetPrefPath("UKNCBTL", "SDL Preview"), SDL_free);
+        if (directory)
+        {
+            const std::u8string utf8(reinterpret_cast<const char8_t*>(directory.get()));
+            settingsPath = std::filesystem::path(utf8) / "settings.ini";
+            const auto loaded = preview_settings::Load(*settingsPath);
+            if (loaded) settings = *loaded;
+            else { settingsPath.reset(); startupError = "Could not load preview settings. Changes will not be saved."; }
+        }
+        else startupError = "Could not locate preview settings. Changes will not be saved.";
+    }
     const std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)> window(
-        SDL_CreateWindow("UKNCBTL - SDL preview", 960, 720, SDL_WINDOW_RESIZABLE | (smokeTest ? SDL_WINDOW_HIDDEN : 0)), SDL_DestroyWindow);
+        SDL_CreateWindow("UKNCBTL - SDL preview", settings.windowWidth, settings.windowHeight,
+            SDL_WINDOW_RESIZABLE | (smokeTest ? SDL_WINDOW_HIDDEN : 0)), SDL_DestroyWindow);
     if (!window) { SDL_Log("Window creation failed: %s", SDL_GetError()); return 1; }
     const std::unique_ptr<SDL_Renderer, decltype(&SDL_DestroyRenderer)> renderer(
         SDL_CreateRenderer(window.get(), nullptr), SDL_DestroyRenderer);
@@ -94,8 +113,8 @@ int Run(bool smokeTest)
     CMotherboard board;
     media_slots::Slots media(board);
     const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
-    std::string actionError;
-    bool showActionError = false;
+    std::string actionError = startupError;
+    bool showActionError = !startupError.empty();
     std::array<std::uint8_t, 32768> rom{};
     std::ranges::copy(embedded_rom::Bytes(), rom.begin());
     board.LoadROM(rom);
@@ -106,14 +125,14 @@ int Run(bool smokeTest)
     {
         const SDL_AudioSpec spec{SDL_AUDIO_S16LE, sdl_audio::Channels, sdl_audio::SampleRate};
         audioStream.reset(SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr));
-        if (audioStream && SDL_ResumeAudioStreamDevice(audioStream.get()))
+        if (audioStream && (!settings.sound || SDL_ResumeAudioStreamDevice(audioStream.get())))
             audio = std::make_unique<sdl_audio::Output>(board, *audioStream);
         else
             SDL_Log("Audio unavailable: %s", SDL_GetError());
     }
     else SDL_Log("Audio unavailable: %s", SDL_GetError());
     if (smokeTest && !audio) return 1;
-    bool soundEnabled = audio != nullptr;
+    bool soundEnabled = audio != nullptr && settings.sound;
     bool audioActive = soundEnabled;
     constexpr auto palette = StandardPalette();
     std::vector<std::uint32_t> pixels(video::Width * video::Height);
@@ -126,7 +145,7 @@ int Run(bool smokeTest)
     };
     bool running = true;
     bool done = false;
-    int screenshotMode = 1;
+    int screenshotMode = settings.screenshotMode;
     unsigned frames = 0;
     while (!done)
     {
@@ -195,7 +214,11 @@ int Run(bool smokeTest)
                         audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
                     }
                 }
-                ImGui::MenuItem("Sound", nullptr, &soundEnabled, audio != nullptr);
+                if (ImGui::MenuItem("Sound", nullptr, &soundEnabled, audio != nullptr))
+                {
+                    settings.sound = soundEnabled;
+                    settingsDirty = true;
+                }
                 if (ImGui::MenuItem("Quit")) done = true;
                 ImGui::EndMenu();
             }
@@ -218,7 +241,11 @@ int Run(bool smokeTest)
                         std::string label;
                         for (const wchar_t* ch = modes[index].description; *ch; ++ch) label.push_back(static_cast<char>(*ch));
                         if (ImGui::MenuItem(label.c_str(), nullptr, screenshotMode == static_cast<int>(index)))
+                        {
                             screenshotMode = static_cast<int>(index);
+                            settings.screenshotMode = screenshotMode;
+                            settingsDirty = true;
+                        }
                     }
                     ImGui::EndMenu();
                 }
@@ -329,6 +356,24 @@ int Run(bool smokeTest)
         if (!SDL_RenderPresent(renderer.get())) return 1;
         if (smokeTest && ++frames == 3) break;
         std::this_thread::sleep_until(started + std::chrono::milliseconds(20));
+    }
+    if (settingsPath)
+    {
+        int width = 0, height = 0;
+        const auto flags = SDL_GetWindowFlags(window.get());
+        if (!(flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) &&
+            SDL_GetWindowSize(window.get(), &width, &height) && preview_settings::ValidWindowSize(width, height) &&
+            (width != settings.windowWidth || height != settings.windowHeight))
+        {
+            settings.windowWidth = width;
+            settings.windowHeight = height;
+            settingsDirty = true;
+        }
+        if (settingsDirty && !preview_settings::Save(*settingsPath, settings))
+        {
+            SDL_Log("Could not save preview settings.");
+            (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Settings", "Could not save preview settings.", window.get());
+        }
     }
     return 0;
 }

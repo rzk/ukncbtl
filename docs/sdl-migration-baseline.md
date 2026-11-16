@@ -71,8 +71,13 @@ emulated LAT/RUS mode; alternate physical layouts have not yet been validated.
 It supports screenshot capture to PNG/BMP files or the SDL clipboard, with
 the existing screenshot size modes. It also supports basic SDL audio output and
 attaching/ejecting floppy and hard-disk images through SDL file dialogs. Disks
-may be modified by the emulated machine;
-read-only mounts are indicated in the menu. Configuration is not yet supported.
+may be modified by the emulated machine; read-only mounts are indicated in the
+menu. Window size, sound preference, and screenshot size are saved in the SDL
+preference directory selected by `SDL_GetPrefPath("UKNCBTL", "SDL Preview")`,
+separate from legacy settings.
+Disk paths are not restored automatically. The preview preserves malformed
+settings files without overwriting them; the smoke test does not read or write
+preferences.
 Audio output, file dialogs and disk interaction need interactive testing on each
 platform. Linux dialogs may require an available desktop portal.
 The `SdlFrontendSmoke` test runs three frames using SDL's dummy video driver;
