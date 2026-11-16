@@ -83,6 +83,10 @@ separate from legacy settings.
 The preview also offers the legacy speed choices, volume, AY and Covox toggles.
 Audio speed and pitch track the selected rate; maximum speed uses 500% audio as
 in the legacy application. These settings are saved with the preview preferences.
+The Emulator menu can enable the emulated mouse; its setting is saved with the
+preview preferences. Pointer motion is scaled to the displayed screen, and mouse
+input is released when the window loses focus, emulation pauses, or ImGui
+captures the pointer. Short button presses are queued for emulated frames.
 The preview preserves malformed
 settings files without overwriting them; the smoke test does not read or write
 preferences.

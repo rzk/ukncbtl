@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "MediaSlots.h"
+#include "MouseInput.h"
 #include "FramePacing.h"
 #include "PreviewRoms.h"
 #include "PreviewSettings.h"
@@ -106,6 +107,7 @@ int Run(bool smokeTest)
     board.Reset();
     board.SetSoundAY(settings.soundAY);
     board.SetSoundCovox(settings.soundCovox);
+    board.SetMouse(settings.mouse);
     preview_snapshot::Session snapshots(board);
     std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audioStream(nullptr, SDL_DestroyAudioStream);
     std::unique_ptr<sdl_audio::Output> audio;
@@ -133,13 +135,20 @@ int Run(bool smokeTest)
     sdl_screen::Renderer screen(*renderer);
     sdl_keyboard::Keyboard keyboard;
     sdl_keyboard::Delivery keyDelivery;
+    mouse_input::Tracker mouse;
+    const auto releaseMouse = [&] {
+        mouse.Reset();
+        board.MouseMove(0, 0, false, false);
+    };
     const auto releaseKeys = [&] {
         (void)keyboard.ReleaseAll();
         for (const auto event : keyDelivery.Reset()) board.KeyboardEvent(event.scan, event.pressed);
     };
     const auto resetMachine = [&] {
         releaseKeys();
+        releaseMouse();
         board.Reset();
+        board.SetMouse(settings.mouse);
         snapshots.ResetTracking();
         if (audio && !audio->Reset())
         {
@@ -163,11 +172,17 @@ int Run(bool smokeTest)
         bool speedChanged = false;
         bool volumeChanged = false;
         std::optional<std::filesystem::path> screenshotPath;
+        std::vector<SDL_Event> mouseEvents;
+        bool focusLost = false;
         const auto started = std::chrono::steady_clock::now();
         SDL_Event event;
         while (SDL_PollEvent(&event))
         {
             ImGui_ImplSDL3_ProcessEvent(&event);
+            if ((event.type == SDL_EVENT_MOUSE_MOTION && event.motion.windowID == SDL_GetWindowID(window.get())) ||
+                ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+                    event.button.windowID == SDL_GetWindowID(window.get())))
+                mouseEvents.push_back(event);
             if ((event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) &&
                 event.key.windowID == SDL_GetWindowID(window.get()))
             {
@@ -177,7 +192,7 @@ int Run(bool smokeTest)
                 if (key) keyDelivery.Push(*key);
             }
             if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST && event.window.windowID == SDL_GetWindowID(window.get()))
-                releaseKeys();
+            { releaseKeys(); focusLost = true; }
             if (event.type == SDL_EVENT_QUIT ||
                 (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(window.get())))
                 done = true;
@@ -202,6 +217,7 @@ int Run(bool smokeTest)
                 {
                     if (!snapshots.Load(std::filesystem::path(path), [&] {
                         releaseKeys();
+                        releaseMouse();
                         running = false;
                         if (audio)
                         {
@@ -291,6 +307,12 @@ int Run(bool smokeTest)
                     else scheduler.Restart(started);
                 }
                 if (ImGui::MenuItem("Reset")) { resetMachine(); scheduler.Restart(started); }
+                if (ImGui::MenuItem("Mouse", nullptr, &settings.mouse))
+                {
+                    releaseMouse();
+                    board.SetMouse(settings.mouse);
+                    settingsDirty = true;
+                }
                 if (ImGui::BeginMenu("System ROM"))
                 {
                     if (const auto* path = roms.SystemPath())
@@ -476,10 +498,43 @@ int Run(bool smokeTest)
             }
             audioActive = audio && shouldPlay;
         }
+        int width = 0, height = 0;
+        if (!SDL_GetRenderOutputSize(renderer.get(), &width, &height)) return 1;
+        const auto scale = ImGui::GetIO().DisplayFramebufferScale;
+        const float top = menuHeight * scale.y;
+        const float availableHeight = std::max(0.0f, static_cast<float>(height) - top);
+        const float drawWidth = std::min(static_cast<float>(width), availableHeight * 4.0f / 3.0f);
+        const float drawHeight = drawWidth * 3.0f / 4.0f;
+        const SDL_FRect destination{(width - drawWidth) / 2.0f, top + (availableHeight - drawHeight) / 2.0f, drawWidth, drawHeight};
+        if (!settings.mouse || !running || focusLost || ImGui::GetIO().WantCaptureMouse ||
+            !(SDL_GetWindowFlags(window.get()) & SDL_WINDOW_INPUT_FOCUS) ||
+            SDL_GetMouseFocus() != window.get() || scale.x <= 0 || scale.y <= 0)
+            releaseMouse();
+        else
+        {
+            const mouse_input::Rect viewport{destination.x / scale.x, destination.y / scale.y,
+                destination.w / scale.x, destination.h / scale.y};
+            for (const auto& input : mouseEvents)
+            {
+                if (input.type == SDL_EVENT_MOUSE_MOTION)
+                    mouse.Move(input.motion.x, input.motion.y, viewport);
+                else
+                {
+                    mouse.Move(input.button.x, input.button.y, viewport);
+                    if (input.button.button == SDL_BUTTON_LEFT || input.button.button == SDL_BUTTON_RIGHT)
+                        mouse.Button(input.button.button == SDL_BUTTON_LEFT, input.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+                }
+            }
+        }
         if (running && scheduler.Due(started))
         {
             scheduler.FrameStarted(started, settings.speed, FRAMERATE);
             if (const auto key = keyDelivery.Next()) board.KeyboardEvent(key->scan, key->pressed);
+            if (settings.mouse)
+            {
+                const auto sample = mouse.Next();
+                board.MouseMove(sample.dx, sample.dy, sample.left, sample.right);
+            }
             if (!board.SystemFrame()) { SDL_Log("Emulator frame failed"); return 1; }
             snapshots.FrameCompleted();
             if (smokeTest) ++frames;
@@ -525,13 +580,6 @@ int Run(bool smokeTest)
             }
         }
         ImGui::Render();
-        int width = 0, height = 0;
-        if (!SDL_GetRenderOutputSize(renderer.get(), &width, &height)) return 1;
-        const float top = menuHeight * ImGui::GetIO().DisplayFramebufferScale.y;
-        const float availableHeight = std::max(0.0f, static_cast<float>(height) - top);
-        const float drawWidth = std::min(static_cast<float>(width), availableHeight * 4.0f / 3.0f);
-        const float drawHeight = drawWidth * 3.0f / 4.0f;
-        const SDL_FRect destination{(width - drawWidth) / 2.0f, top + (availableHeight - drawHeight) / 2.0f, drawWidth, drawHeight};
         if (!SDL_SetRenderDrawColor(renderer.get(), 0, 0, 0, 255) || !SDL_RenderClear(renderer.get())) return 1;
         if (drawWidth > 0 && drawHeight > 0 && !screen.Draw(*image, destination)) { SDL_Log("Screen draw failed: %s", SDL_GetError()); return 1; }
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer.get());

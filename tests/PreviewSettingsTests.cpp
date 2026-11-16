@@ -52,13 +52,14 @@ TEST_F(PreviewSettingsTest, MissingFileUsesDefaultsWithoutCreatingIt)
     EXPECT_FALSE(settings->soundAY);
     EXPECT_FALSE(settings->soundCovox);
     EXPECT_EQ(settings->volume, 100);
+    EXPECT_FALSE(settings->mouse);
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
 TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
 {
     Write("; retain\n[Other]\nKey=value\n[SDLPreview]\nExtra=keep\n");
-    const preview_settings::Settings input{1280, 800, 6, false, 5, 2, 0x7ffe, true, true, 35};
+    const preview_settings::Settings input{1280, 800, 6, false, 5, 2, 0x7ffe, true, true, 35, true};
     ASSERT_TRUE(preview_settings::Save(path, input));
     const auto output = preview_settings::Load(path);
     ASSERT_TRUE(output);
@@ -72,6 +73,7 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     EXPECT_EQ(output->soundAY, input.soundAY);
     EXPECT_EQ(output->soundCovox, input.soundCovox);
     EXPECT_EQ(output->volume, input.volume);
+    EXPECT_EQ(output->mouse, input.mouse);
     const auto file = IniFile::Open(path);
     ASSERT_TRUE(file);
     EXPECT_EQ(file->Document().Get(L"Other", L"Key"), L"value");
@@ -81,7 +83,7 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
 
 TEST_F(PreviewSettingsTest, InvalidValuesFallBackIndependently)
 {
-    Write("[SDLPreview]\nWindowWidth=999999999\nWindowHeight=700\nScreenshotMode=999\nSound=0\nDisplayMode=8\nPaletteMode=99\nSpeed=4\nSoundAY=2\nSoundCovox=bad\nVolume=101\n");
+    Write("[SDLPreview]\nWindowWidth=999999999\nWindowHeight=700\nScreenshotMode=999\nSound=0\nDisplayMode=8\nPaletteMode=99\nSpeed=4\nSoundAY=2\nSoundCovox=bad\nVolume=101\nMouse=2\n");
     const auto settings = preview_settings::Load(path);
     ASSERT_TRUE(settings);
     EXPECT_EQ(settings->windowWidth, 960);
@@ -94,6 +96,7 @@ TEST_F(PreviewSettingsTest, InvalidValuesFallBackIndependently)
     EXPECT_FALSE(settings->soundAY);
     EXPECT_FALSE(settings->soundCovox);
     EXPECT_EQ(settings->volume, 100);
+    EXPECT_FALSE(settings->mouse);
     Write("[SDLPreview]\nWindowWidth=640\nWindowHeight=480\nScreenshotMode=7\nSound=garbage\n");
     const auto second = preview_settings::Load(path);
     ASSERT_TRUE(second);
