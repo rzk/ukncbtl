@@ -68,7 +68,9 @@ frame and SDL keyboard events. The experimental `ukncbtl-sdl` executable boots
 the embedded ROM, displays the machine and provides pause and reset controls.
 Physical keyboard positions use the legacy US-position mappings and follow the
 emulated LAT/RUS mode; alternate physical layouts have not yet been validated.
-It does not yet support audio, disks or configuration.
+It supports basic SDL audio output with a Sound menu toggle; it does not yet
+support disks or configuration. Audio-device and audible-output behavior still
+needs interactive platform testing.
 The `SdlFrontendSmoke` test runs three frames using SDL's dummy video driver;
 interactive behavior and platform display compatibility still need testing.
 Build the preview with `cmake --build <build-directory> --target ukncbtl-sdl`

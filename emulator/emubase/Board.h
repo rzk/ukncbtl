@@ -79,6 +79,7 @@ using TAPEWRITECALLBACK = void (*)(int value, unsigned int samples);
 
 // Sound generator callback function type
 using SOUNDGENCALLBACK = void (*)(unsigned short L, unsigned short R);
+using SOUNDGENCONTEXTCALLBACK = void (*)(void* context, unsigned short L, unsigned short R);
 
 // Network port callback for receiving
 // Output:
@@ -313,6 +314,8 @@ public:  // System control
     void        SetTapeWriteCallback(TAPEWRITECALLBACK callback, int sampleRate);
     /// \brief Assign sound output callback function.
     void        SetSoundGenCallback(SOUNDGENCALLBACK callback);
+    // Setting either sound callback replaces the other; context is borrowed.
+    void        SetSoundGenCallbackWithContext(SOUNDGENCONTEXTCALLBACK callback, void* context);
     /// \brief Assign serial port input/output callback functions.
     void        SetSerialCallbacks(SERIALINCALLBACK incallback, SERIALOUTCALLBACK outcallback);
     /// \brief Assign parallel port output callback function.
@@ -371,6 +374,8 @@ private:
     int                 m_nTapeSampleRate;
     uint64_t            m_tapeSamplePhase = 0;
     SOUNDGENCALLBACK    m_SoundGenCallback;
+    SOUNDGENCONTEXTCALLBACK m_SoundGenContextCallback = nullptr;
+    void*               m_SoundGenContext = nullptr;
     int                 m_SoundPrevValue;  ///< Previous value of the sound signal
     int                 m_SoundChanges;  ///< Sound signal 0 to 1 changes since the beginning of the frame
     SERIALINCALLBACK    m_SerialInCallback;

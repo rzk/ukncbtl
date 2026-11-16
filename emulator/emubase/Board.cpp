@@ -1506,6 +1506,8 @@ void CMotherboard::DoSound()
 
     if (m_SoundGenCallback != nullptr)
         (*m_SoundGenCallback)(value, value);
+    else if (m_SoundGenContextCallback != nullptr)
+        m_SoundGenContextCallback(m_SoundGenContext, value, value);
 }
 
 void CMotherboard::SetSound(uint16_t val)
@@ -1576,14 +1578,16 @@ void CMotherboard::SetTapeWriteCallback(TAPEWRITECALLBACK callback, int sampleRa
 
 void CMotherboard::SetSoundGenCallback(SOUNDGENCALLBACK callback)
 {
-    if (callback == nullptr)  // Reset callback
-    {
-        m_SoundGenCallback = nullptr;
-    }
-    else
-    {
-        m_SoundGenCallback = callback;
-    }
+    m_SoundGenCallback = callback;
+    m_SoundGenContextCallback = nullptr;
+    m_SoundGenContext = nullptr;
+}
+
+void CMotherboard::SetSoundGenCallbackWithContext(SOUNDGENCONTEXTCALLBACK callback, void* context)
+{
+    m_SoundGenCallback = nullptr;
+    m_SoundGenContextCallback = callback;
+    m_SoundGenContext = callback ? context : nullptr;
 }
 
 void CMotherboard::SetSerialCallbacks(SERIALINCALLBACK incallback, SERIALOUTCALLBACK outcallback)

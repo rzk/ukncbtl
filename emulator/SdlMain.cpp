@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "EmbeddedRom.h"
 #include "ScreenshotImage.h"
+#include "SdlAudio.h"
 #include "SdlKeyboard.h"
 #include "SdlScreenRenderer.h"
 #include "VideoDecoder.h"
@@ -87,6 +88,21 @@ int Run(bool smokeTest)
     std::ranges::copy(embedded_rom::Bytes(), rom.begin());
     board.LoadROM(rom);
     board.Reset();
+    std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audioStream(nullptr, SDL_DestroyAudioStream);
+    std::unique_ptr<sdl_audio::Output> audio;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO))
+    {
+        const SDL_AudioSpec spec{SDL_AUDIO_S16LE, sdl_audio::Channels, sdl_audio::SampleRate};
+        audioStream.reset(SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr));
+        if (audioStream && SDL_ResumeAudioStreamDevice(audioStream.get()))
+            audio = std::make_unique<sdl_audio::Output>(board, *audioStream);
+        else
+            SDL_Log("Audio unavailable: %s", SDL_GetError());
+    }
+    else SDL_Log("Audio unavailable: %s", SDL_GetError());
+    if (smokeTest && !audio) return 1;
+    bool soundEnabled = audio != nullptr;
+    bool audioActive = soundEnabled;
     constexpr auto palette = StandardPalette();
     std::vector<std::uint32_t> pixels(video::Width * video::Height);
     sdl_screen::Renderer screen(*renderer);
@@ -132,16 +148,44 @@ int Run(bool smokeTest)
             if (ImGui::BeginMenu("Emulator"))
             {
                 if (ImGui::MenuItem(running ? "Pause" : "Run")) { running = !running; if (!running) releaseKeys(); }
-                if (ImGui::MenuItem("Reset")) { releaseKeys(); board.Reset(); }
+                if (ImGui::MenuItem("Reset"))
+                {
+                    releaseKeys();
+                    board.Reset();
+                    if (audio && !audio->Reset())
+                    {
+                        SDL_Log("Audio reset failed: %s", SDL_GetError());
+                        audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
+                    }
+                }
+                ImGui::MenuItem("Sound", nullptr, &soundEnabled, audio != nullptr);
                 if (ImGui::MenuItem("Quit")) done = true;
                 ImGui::EndMenu();
             }
             ImGui::EndMainMenuBar();
         }
+        const bool shouldPlay = running && soundEnabled && audio != nullptr;
+        if (audio && shouldPlay != audioActive)
+        {
+            const bool paused = SDL_PauseAudioStreamDevice(audioStream.get());
+            const bool cleared = audio->Reset();
+            const bool resumed = !shouldPlay || SDL_ResumeAudioStreamDevice(audioStream.get());
+            if (!paused || !cleared || !resumed)
+            {
+                SDL_Log("Audio device failed: %s", SDL_GetError());
+                audio.reset(); audioStream.reset(); soundEnabled = false;
+            }
+            audioActive = audio && shouldPlay;
+        }
         if (running)
         {
             if (const auto key = keyDelivery.Next()) board.KeyboardEvent(key->scan, key->pressed);
             if (!board.SystemFrame()) { SDL_Log("Emulator frame failed"); return 1; }
+            if (audio && audioActive && !audio->SubmitFrame())
+            {
+                SDL_Log("Audio submission failed: %s", SDL_GetError());
+                audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
+            }
         }
         if (!video::RenderRgb(board, pixels, palette)) return 1;
         const auto image = screenshot_image::Prepare(pixels, 1);
