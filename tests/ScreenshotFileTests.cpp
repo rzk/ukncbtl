@@ -1,5 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "ScreenshotFile.h"
+#include "ScreenshotClipboard.h"
+#include "VideoDecoder.h"
 #include <SDL3/SDL.h>
 #include <gtest/gtest.h>
 #include <chrono>
@@ -12,6 +14,20 @@
 
 namespace
 {
+TEST(ScreenshotFile, AddsOnlyMissingExtensionsAccordingToSelectedFormat)
+{
+    using screenshot_format::Format;
+    EXPECT_EQ(screenshot_file::WithDefaultExtension("screen", Format::png), std::filesystem::path("screen.png"));
+    EXPECT_EQ(screenshot_file::WithDefaultExtension("screen", Format::bmp), std::filesystem::path("screen.bmp"));
+    EXPECT_EQ(screenshot_file::WithDefaultExtension("screen.BMP", Format::png), std::filesystem::path("screen.BMP"));
+    EXPECT_EQ(screenshot_file::WithDefaultExtension("screen.other", Format::bmp), std::filesystem::path("screen.other"));
+    EXPECT_EQ(screenshot_file::WithDefaultExtension(".bmp", Format::png), std::filesystem::path(".bmp"));
+    EXPECT_EQ(screenshot_file::WithDefaultExtension(".PnG", Format::bmp), std::filesystem::path(".PnG"));
+    EXPECT_TRUE(screenshot_file::WithDefaultExtension({}, Format::png).empty());
+    const std::filesystem::path unicode(u8"\u65e5\u672c");
+    EXPECT_EQ(screenshot_file::WithDefaultExtension(unicode, Format::png), std::filesystem::path(u8"\u65e5\u672c.png"));
+}
+
 class ScreenshotFileTest : public testing::Test
 {
 protected:
@@ -76,6 +92,42 @@ TEST_F(ScreenshotFileTest, ReportsEncoderErrorsWithoutOverwritingForInvalidPixel
         if (bmp) EXPECT_EQ(std::get<bmp_file::Error>(result.error()), bmp_file::Error::invalid_input);
         else EXPECT_EQ(std::get<png_file::Error>(result.error()), png_file::Error::invalid_input);
         EXPECT_EQ(Read(path), original);
+    }
+}
+
+TEST_F(ScreenshotFileTest, PreparedFrameProducesMatchingFileAndClipboardImages)
+{
+    ASSERT_TRUE(SDL_SetHintWithPriority(SDL_HINT_VIDEO_DRIVER, "dummy", SDL_HINT_OVERRIDE));
+    ASSERT_TRUE(SDL_Init(SDL_INIT_VIDEO)) << SDL_GetError();
+    struct Quit { ~Quit() { SDL_Quit(); } } quit;
+    std::vector<std::uint32_t> source(video::Width * video::Height);
+    for (int y = 0; y < video::Height; ++y)
+        for (int x = 0; x < video::Width; ++x)
+            source[y * video::Width + x] = y < video::Height / 2 ? 0x00ff0000 : 0x000000ff;
+    const auto capture = screenshot_image::Prepare(source, 0);
+    ASSERT_TRUE(capture);
+    const auto path = directory / std::filesystem::path(u8"\u65e5\u672c.dat");
+    ASSERT_TRUE(screenshot_file::Save(path, *capture));
+    ASSERT_TRUE(screenshot_clipboard::SetImage(*capture)) << SDL_GetError();
+    const auto fileBytes = Read(path);
+    std::size_t clipboardSize = 0;
+    const std::unique_ptr<void, decltype(&SDL_free)> clipboard(
+        SDL_GetClipboardData("image/bmp", &clipboardSize), SDL_free);
+    ASSERT_TRUE(clipboard);
+    const std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> png(
+        SDL_LoadPNG_IO(SDL_IOFromConstMem(fileBytes.data(), fileBytes.size()), true), SDL_DestroySurface);
+    const std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> bmp(
+        SDL_LoadBMP_IO(SDL_IOFromConstMem(clipboard.get(), clipboardSize), true), SDL_DestroySurface);
+    ASSERT_TRUE(png); ASSERT_TRUE(bmp);
+    for (auto* surface : {png.get(), bmp.get()})
+    {
+        EXPECT_EQ(surface->w, video::Width);
+        EXPECT_EQ(surface->h, video::Height);
+        Uint8 r = 0, g = 0, b = 0, a = 0;
+        ASSERT_TRUE(SDL_ReadSurfacePixel(surface, 0, 0, &r, &g, &b, &a));
+        EXPECT_EQ(r, 255); EXPECT_EQ(g, 0); EXPECT_EQ(b, 0);
+        ASSERT_TRUE(SDL_ReadSurfacePixel(surface, 0, video::Height - 1, &r, &g, &b, &a));
+        EXPECT_EQ(r, 0); EXPECT_EQ(g, 0); EXPECT_EQ(b, 255);
     }
 }
 }

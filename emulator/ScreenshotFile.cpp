@@ -2,6 +2,19 @@
 #include "ScreenshotFile.h"
 #include "util/ScreenshotFormat.h"
 
+std::filesystem::path screenshot_file::WithDefaultExtension(std::filesystem::path path,
+    screenshot_format::Format format)
+{
+    const auto name = path.filename().native();
+    const auto isPngName = name.size() == 4 && name[0] == '.' &&
+        (name[1] == 'p' || name[1] == 'P') && (name[2] == 'n' || name[2] == 'N') &&
+        (name[3] == 'g' || name[3] == 'G');
+    if (!path.empty() && path.has_filename() && !path.has_extension() &&
+        !isPngName && screenshot_format::FromPath(path) != screenshot_format::Format::bmp)
+        path += format == screenshot_format::Format::bmp ? ".bmp" : ".png";
+    return path;
+}
+
 std::expected<void, screenshot_file::Error> screenshot_file::Save(
     const std::filesystem::path& path, const screenshot_image::Image& image)
 {

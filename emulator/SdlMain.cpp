@@ -2,13 +2,16 @@
 #include "EmbeddedRom.h"
 #include "MediaSlots.h"
 #include "ScreenshotImage.h"
+#include "ScreenshotClipboard.h"
+#include "ScreenshotFile.h"
 #include "SdlAudio.h"
 #include "SdlKeyboard.h"
-#include "SdlMediaDialog.h"
+#include "SdlFileDialog.h"
 #include "SdlScreenRenderer.h"
 #include "VideoDecoder.h"
 #include "emubase/Board.h"
 #include "emubase/Processor.h"
+#include "util/ScreenScale.h"
 #include <SDL3/SDL.h>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
@@ -18,7 +21,9 @@
 #include <chrono>
 #include <cstdio>
 #include <cwchar>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -88,9 +93,9 @@ int Run(bool smokeTest)
     ProcessorRuntime processor;
     CMotherboard board;
     media_slots::Slots media(board);
-    const auto mediaDialog = std::make_shared<sdl_media_dialog::State>();
-    std::string mediaError;
-    bool showMediaError = false;
+    const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
+    std::string actionError;
+    bool showActionError = false;
     std::array<std::uint8_t, 32768> rom{};
     std::ranges::copy(embedded_rom::Bytes(), rom.begin());
     board.LoadROM(rom);
@@ -121,9 +126,12 @@ int Run(bool smokeTest)
     };
     bool running = true;
     bool done = false;
+    int screenshotMode = 1;
     unsigned frames = 0;
     while (!done)
     {
+        bool copyScreenshot = false;
+        std::optional<std::filesystem::path> screenshotPath;
         const auto started = std::chrono::steady_clock::now();
         SDL_Event event;
         while (SDL_PollEvent(&event))
@@ -144,20 +152,25 @@ int Run(bool smokeTest)
                 done = true;
         }
         if (done) break;
-        if (const auto result = mediaDialog->Take())
+        if (const auto result = fileDialog->Take())
         {
-            if (result->status == sdl_media_dialog::Status::failed)
+            if (result->status == sdl_file_dialog::Status::failed)
             {
-                mediaError = "Could not open the file dialog.";
-                showMediaError = true;
+                actionError = "Could not open the file dialog.";
+                showActionError = true;
             }
-            else if (result->status == sdl_media_dialog::Status::selected)
+            else if (result->status == sdl_file_dialog::Status::selected)
             {
                 const std::u8string path(reinterpret_cast<const char8_t*>(result->path.data()), result->path.size());
-                if (!media.Attach(result->kind, result->slot, std::filesystem::path(path)))
+                if (result->purpose == sdl_file_dialog::Purpose::screenshot)
                 {
-                    mediaError = "Could not attach the disk image. Check the file and the selected drive.";
-                    showMediaError = true;
+                    const auto format = result->filter == 1 ? screenshot_format::Format::bmp : screenshot_format::Format::png;
+                    screenshotPath = screenshot_file::WithDefaultExtension(std::filesystem::path(path), format);
+                }
+                else if (!media.Attach(result->kind, result->slot, std::filesystem::path(path)))
+                {
+                    actionError = "Could not attach the disk image. Check the file and the selected drive.";
+                    showActionError = true;
                 }
             }
         }
@@ -186,6 +199,31 @@ int Run(bool smokeTest)
                 if (ImGui::MenuItem("Quit")) done = true;
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Screenshot"))
+            {
+                if (ImGui::MenuItem("Copy to clipboard")) copyScreenshot = true;
+                if (ImGui::MenuItem("Save as...", nullptr, false, !fileDialog->Pending()))
+                {
+                    if (!sdl_file_dialog::SaveScreenshot(fileDialog, *window))
+                    {
+                        actionError = "Could not open the file dialog.";
+                        showActionError = true;
+                    }
+                }
+                if (ImGui::BeginMenu("Size"))
+                {
+                    const auto modes = screen_scale::Modes();
+                    for (std::size_t index = 0; index < modes.size(); ++index)
+                    {
+                        std::string label;
+                        for (const wchar_t* ch = modes[index].description; *ch; ++ch) label.push_back(static_cast<char>(*ch));
+                        if (ImGui::MenuItem(label.c_str(), nullptr, screenshotMode == static_cast<int>(index)))
+                            screenshotMode = static_cast<int>(index);
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Disks"))
             {
                 const auto driveMenu = [&](media_slots::Kind kind, int slot, const std::string& label) {
@@ -197,16 +235,16 @@ int Run(bool smokeTest)
                         if (media.ReadOnly(kind, slot)) ImGui::TextDisabled("Read-only");
                         if (ImGui::MenuItem("Eject") && !media.Eject(kind, slot))
                         {
-                            mediaError = "Could not eject the disk image.";
-                            showMediaError = true;
+                            actionError = "Could not eject the disk image.";
+                            showActionError = true;
                         }
                     }
-                    else if (ImGui::MenuItem("Attach...", nullptr, false, !mediaDialog->Pending()))
+                    else if (ImGui::MenuItem("Attach...", nullptr, false, !fileDialog->Pending()))
                     {
-                        if (!sdl_media_dialog::Open(mediaDialog, *window, kind, slot))
+                        if (!sdl_file_dialog::Open(fileDialog, *window, kind, slot))
                         {
-                            mediaError = "Could not open the file dialog.";
-                            showMediaError = true;
+                            actionError = "Could not open the file dialog.";
+                            showActionError = true;
                         }
                     }
                     ImGui::EndMenu();
@@ -220,10 +258,10 @@ int Run(bool smokeTest)
             }
             ImGui::EndMainMenuBar();
         }
-        if (showMediaError) { ImGui::OpenPopup("Disk error"); showMediaError = false; }
-        if (ImGui::BeginPopupModal("Disk error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        if (showActionError) { ImGui::OpenPopup("Error"); showActionError = false; }
+        if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
-            ImGui::TextWrapped("%s", mediaError.c_str());
+            ImGui::TextWrapped("%s", actionError.c_str());
             if (ImGui::Button("OK")) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
@@ -253,6 +291,30 @@ int Run(bool smokeTest)
         if (!video::RenderRgb(board, pixels, palette)) return 1;
         const auto image = screenshot_image::Prepare(pixels, 1);
         if (!image) return 1;
+        if (copyScreenshot || screenshotPath)
+        {
+            const auto capture = screenshotMode == 1 ? image : screenshot_image::Prepare(pixels, screenshotMode);
+            if (!capture)
+            {
+                actionError = "Could not prepare the screenshot image.";
+                showActionError = true;
+            }
+            else
+            {
+                if (copyScreenshot && !screenshot_clipboard::SetImage(*capture))
+                {
+                    actionError = "Could not copy the screenshot to the clipboard.";
+                    showActionError = true;
+                }
+                if (screenshotPath && !screenshot_file::Save(*screenshotPath, *capture))
+                {
+                    if (showActionError) actionError += "\n";
+                    else actionError.clear();
+                    actionError += "Could not save the screenshot image.";
+                    showActionError = true;
+                }
+            }
+        }
         ImGui::Render();
         int width = 0, height = 0;
         if (!SDL_GetRenderOutputSize(renderer.get(), &width, &height)) return 1;

@@ -8,15 +8,18 @@
 #include <optional>
 #include <string>
 
-namespace sdl_media_dialog
+namespace sdl_file_dialog
 {
 enum class Status { selected, canceled, failed };
+enum class Purpose { disk, screenshot };
 struct Result
 {
     media_slots::Kind kind;
     int slot;
     Status status;
     std::string path; // UTF-8, provided by SDL.
+    Purpose purpose = Purpose::disk;
+    int filter = -1;
 };
 
 // Results may arrive on an SDL worker thread. The state can outlive its UI.
@@ -36,4 +39,5 @@ private:
 // Call on the SDL main thread. At most one dialog may be outstanding.
 [[nodiscard]] bool Open(const std::shared_ptr<State>& state, SDL_Window& window,
     media_slots::Kind kind, int slot);
+[[nodiscard]] bool SaveScreenshot(const std::shared_ptr<State>& state, SDL_Window& window);
 }

@@ -68,8 +68,10 @@ frame and SDL keyboard events. The experimental `ukncbtl-sdl` executable boots
 the embedded ROM, displays the machine and provides pause and reset controls.
 Physical keyboard positions use the legacy US-position mappings and follow the
 emulated LAT/RUS mode; alternate physical layouts have not yet been validated.
-It supports basic SDL audio output and attaching/ejecting floppy and hard-disk
-images through SDL file dialogs. Disks may be modified by the emulated machine;
+It supports screenshot capture to PNG/BMP files or the SDL clipboard, with
+the existing screenshot size modes. It also supports basic SDL audio output and
+attaching/ejecting floppy and hard-disk images through SDL file dialogs. Disks
+may be modified by the emulated machine;
 read-only mounts are indicated in the menu. Configuration is not yet supported.
 Audio output, file dialogs and disk interaction need interactive testing on each
 platform. Linux dialogs may require an available desktop portal.
