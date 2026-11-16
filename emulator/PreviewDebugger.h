@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #pragma once
 #include "BreakpointSet.h"
+#include "InstructionHistory.h"
 #include "emubase/Disasm.h"
 #include <cstdint>
 #include <optional>
@@ -34,8 +35,16 @@ public:
     // False means step-over fell back to a single debug tick.
     [[nodiscard]] bool StepOver(Processor which);
     [[nodiscard]] bool RunFrame();
+    void SetHistoryEnabled(bool enabled);
+    [[nodiscard]] bool HistoryEnabled() const { return historyEnabled_; }
+    void ClearHistory() { history_.Clear(); }
+    [[nodiscard]] const InstructionHistory& History() const { return history_; }
 private:
+    static void OnInstruction(void* context, const CProcessor* processor, std::uint16_t address, std::uint16_t opcode);
+    static void OnInterrupt(void* context, const CProcessor* processor, std::uint16_t oldPc, std::uint16_t vector);
     CMotherboard& board_;
     BreakpointSet cpu_, ppu_;
+    InstructionHistory history_;
+    bool historyEnabled_ = false;
 };
 }

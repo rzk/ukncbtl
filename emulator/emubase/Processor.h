@@ -89,6 +89,10 @@ protected:
     CMemoryController* m_pMemoryController;
     INSTRUCTIONCALLBACK m_pInstructionCallback;  ///< Called before each instruction execution, nullptr = off
     INTERRUPTCALLBACK m_pInterruptCallback;      ///< Called when an interrupt is taken, nullptr = off
+    INSTRUCTIONCONTEXTCALLBACK m_instructionContextCallback = nullptr;
+    INTERRUPTCONTEXTCALLBACK m_interruptContextCallback = nullptr;
+    void* m_instructionContext = nullptr;
+    void* m_interruptContext = nullptr;
 
 public:
     CMemoryController* GetMemoryController() { return m_pMemoryController; }
@@ -143,9 +147,15 @@ public:  // Processor control
     int         GetInternalTick() const { return m_internalTick; }
     void        ClearInternalTick() { m_internalTick = 0; }
     /// \brief Assign callback for instruction execution, nullptr to remove
-    void        SetInstructionCallback(INSTRUCTIONCALLBACK callback) { m_pInstructionCallback = callback; }
+    void        SetInstructionCallback(INSTRUCTIONCALLBACK callback)
+    { m_pInstructionCallback = callback; m_instructionContextCallback = nullptr; m_instructionContext = nullptr; }
+    void        SetInstructionCallbackWithContext(INSTRUCTIONCONTEXTCALLBACK callback, void* context)
+    { m_pInstructionCallback = nullptr; m_instructionContextCallback = callback; m_instructionContext = callback ? context : nullptr; }
     /// \brief Assign callback for interrupts, nullptr to remove
-    void        SetInterruptCallback(INTERRUPTCALLBACK callback) { m_pInterruptCallback = callback; }
+    void        SetInterruptCallback(INTERRUPTCALLBACK callback)
+    { m_pInterruptCallback = callback; m_interruptContextCallback = nullptr; m_interruptContext = nullptr; }
+    void        SetInterruptCallbackWithContext(INTERRUPTCONTEXTCALLBACK callback, void* context)
+    { m_pInterruptCallback = nullptr; m_interruptContextCallback = callback; m_interruptContext = callback ? context : nullptr; }
 
 public:  // Saving/loading emulator status (pImage addresses up to 32 bytes)
     void        SaveToImage(std::span<uint8_t, 64> image) const;

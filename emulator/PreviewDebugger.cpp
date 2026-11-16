@@ -20,6 +20,7 @@ std::optional<std::uint16_t> preview_debugger::ParseAddress(std::string_view tex
 
 preview_debugger::Session::~Session()
 {
+    SetHistoryEnabled(false);
     board_.SetCPUBreakpoints({}); board_.SetPPUBreakpoints({});
 }
 CProcessor& preview_debugger::Session::GetProcessor(Processor which) const
@@ -63,3 +64,29 @@ bool preview_debugger::Session::StepOver(Processor which)
     return true;
 }
 bool preview_debugger::Session::RunFrame() { return frame_control::RunFrame(board_, cpu_, ppu_); }
+
+void preview_debugger::Session::SetHistoryEnabled(bool enabled)
+{
+    if (historyEnabled_ == enabled) return;
+    board_.SetInstructionCallbackWithContext(enabled ? OnInstruction : nullptr, enabled ? this : nullptr);
+    board_.SetInterruptCallbackWithContext(enabled ? OnInterrupt : nullptr, enabled ? this : nullptr);
+    historyEnabled_ = enabled;
+}
+
+void preview_debugger::Session::OnInstruction(void* context, const CProcessor* processor, std::uint16_t address, std::uint16_t opcode)
+{
+    auto& session = *static_cast<Session*>(context);
+    const auto* memory = processor->GetMemoryControllerConst();
+    const bool halt = processor->IsHaltMode();
+    const std::array<std::uint16_t, 3> words{opcode,
+        memory->GetWordView(static_cast<std::uint16_t>(address + 2), halt, true).value,
+        memory->GetWordView(static_cast<std::uint16_t>(address + 4), halt, true).value};
+    session.history_.RecordInstruction(processor == session.board_.GetCPU(), address, words, processor->GetPSW());
+}
+
+void preview_debugger::Session::OnInterrupt(void* context, const CProcessor* processor, std::uint16_t oldPc, std::uint16_t vector)
+{
+    auto& session = *static_cast<Session*>(context);
+    session.history_.RecordInterrupt(processor == session.board_.GetCPU(), oldPc, vector,
+        processor->GetPC(), processor->GetPSW());
+}

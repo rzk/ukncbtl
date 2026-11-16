@@ -303,7 +303,7 @@ if(UKNCBTL_ENABLE_IMGUI)
   add_executable(ukncbtl-sdl emulator/SdlMain.cpp)
   ukncbtl_toolchain(ukncbtl-sdl)
   target_include_directories(ukncbtl-sdl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard SdlDisplay MouseInput VirtualKeyboard PreviewOptions AutoBoot PreviewDebugger SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard ScreenTextCapture VideoPalette FramePacing
+  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard SdlDisplay MouseInput VirtualKeyboard PreviewOptions AutoBoot PreviewDebugger DisplayListDump SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard ScreenTextCapture VideoPalette FramePacing
     EmbeddedRom EmulatorCore VideoDecoder)
 endif()
 

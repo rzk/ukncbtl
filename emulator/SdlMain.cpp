@@ -2,6 +2,7 @@
 #include "MediaSlots.h"
 #include "AutoBoot.h"
 #include "DiskImageFile.h"
+#include "DisplayListDump.h"
 #include "MouseInput.h"
 #include "FramePacing.h"
 #include "PreviewRoms.h"
@@ -136,6 +137,7 @@ int Run(const preview_options::Options& options)
     board.SetSoundAY(settings.soundAY);
     board.SetSoundCovox(settings.soundCovox);
     board.SetMouse(settings.mouse);
+    if (smokeTest) debugger.SetHistoryEnabled(true);
     preview_snapshot::Session snapshots(board);
     std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audioStream(nullptr, SDL_DestroyAudioStream);
     std::unique_ptr<sdl_audio::Output> audio;
@@ -195,6 +197,7 @@ int Run(const preview_options::Options& options)
         releaseMouse();
         debugger.Stop();
         board.Reset();
+        debugger.ClearHistory();
         board.SetMouse(settings.mouse);
         printer.Synchronize();
         snapshots.ResetTracking();
@@ -337,7 +340,7 @@ int Run(const preview_options::Options& options)
                         actionError = "Could not load the state image.";
                         showActionError = true;
                     }
-                    else { roms.MarkRestoredFromSnapshot(); printer.Synchronize(); }
+                    else { roms.MarkRestoredFromSnapshot(); printer.Synchronize(); debugger.ClearHistory(); }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::snapshotSave)
                 {
@@ -784,6 +787,62 @@ int Run(const preview_options::Options& options)
                             static_cast<unsigned>(debugger.ReadWord(debugProcessor, static_cast<std::uint16_t>(address + 4), false)),
                             static_cast<unsigned>(debugger.ReadWord(debugProcessor, static_cast<std::uint16_t>(address + 6), false)));
                     }
+                }
+                if (smokeTest) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+                if (ImGui::CollapsingHeader("Instruction history"))
+                {
+                    bool enabled = debugger.HistoryEnabled();
+                    if (ImGui::Checkbox("Record instructions and interrupts", &enabled)) debugger.SetHistoryEnabled(enabled);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Clear history")) debugger.ClearHistory();
+                    ImGui::TextDisabled("Recording can reduce emulation speed; newest entries appear first.");
+                    const bool cpu = debugProcessor == preview_debugger::Processor::cpu;
+                    const auto& history = debugger.History();
+                    if (ImGui::BeginChild("##history", ImVec2(0, 180), ImGuiChildFlags_Borders))
+                    {
+                        ImGuiListClipper clipper;
+                        clipper.Begin(history.Length(cpu));
+                        while (clipper.Step()) for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index)
+                        {
+                            const auto& record = history.Get(cpu, index);
+                            if (record.interrupt)
+                                ImGui::Text("%06o  INT %06o -> %06o  PSW %06o", static_cast<unsigned>(record.pc),
+                                    static_cast<unsigned>(record.words[0]), static_cast<unsigned>(record.words[1]),
+                                    static_cast<unsigned>(record.words[2]));
+                            else
+                            {
+                                const auto instruction = DisassembleInstruction(record.words, record.pc);
+                                std::string text;
+                                if (instruction)
+                                {
+                                    for (const auto ch : instruction->mnemonic) text.push_back(ch >= 0 && ch < 128 ? static_cast<char>(ch) : '?');
+                                    text.push_back(' ');
+                                    for (const auto ch : instruction->argument) text.push_back(ch >= 0 && ch < 128 ? static_cast<char>(ch) : '?');
+                                }
+                                ImGui::Text("%06o  %06o  %-20s PSW %06o", static_cast<unsigned>(record.pc),
+                                    static_cast<unsigned>(record.words[0]), text.c_str(), static_cast<unsigned>(record.psw));
+                            }
+                        }
+                    }
+                    ImGui::EndChild();
+                }
+                if (smokeTest) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+                if (ImGui::CollapsingHeader("Display list"))
+                {
+                    std::array<video::DisplayTag, video::TotalLines> tags{};
+                    video::DisplayListCursor cursor;
+                    for (auto& tag : tags) tag = cursor.Next(board);
+                    if (ImGui::BeginChild("##display-list", ImVec2(0, 180), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar))
+                    {
+                        ImGuiListClipper clipper;
+                        clipper.Begin(static_cast<int>(tags.size()));
+                        while (clipper.Step()) for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index)
+                        {
+                            const auto line = display_list_dump::FormatLine(index, tags[static_cast<std::size_t>(index)]);
+                            ImGui::TextUnformatted(line.data(), line.data() + line.size() - 1);
+                        }
+                    }
+                    ImGui::EndChild();
                 }
             }
             ImGui::End();

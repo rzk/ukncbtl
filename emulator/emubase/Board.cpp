@@ -238,10 +238,22 @@ void CMotherboard::SetInstructionCallback(INSTRUCTIONCALLBACK callback)
     m_pPPU->SetInstructionCallback(callback);
 }
 
+void CMotherboard::SetInstructionCallbackWithContext(INSTRUCTIONCONTEXTCALLBACK callback, void* context)
+{
+    m_pCPU->SetInstructionCallbackWithContext(callback, context);
+    m_pPPU->SetInstructionCallbackWithContext(callback, context);
+}
+
 void CMotherboard::SetInterruptCallback(INTERRUPTCALLBACK callback)
 {
     m_pCPU->SetInterruptCallback(callback);
     m_pPPU->SetInterruptCallback(callback);
+}
+
+void CMotherboard::SetInterruptCallbackWithContext(INTERRUPTCONTEXTCALLBACK callback, void* context)
+{
+    m_pCPU->SetInterruptCallbackWithContext(callback, context);
+    m_pPPU->SetInterruptCallbackWithContext(callback, context);
 }
 
 void CMotherboard::Reset ()

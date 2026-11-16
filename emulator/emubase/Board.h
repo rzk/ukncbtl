@@ -127,6 +127,7 @@ using TERMINALOUTCALLBACK = void (*)(uint8_t byte);
 //   address    Address of the instruction, PC value before the fetch
 //   opcode     First word of the instruction as fetched
 using INSTRUCTIONCALLBACK = void (*)(const CProcessor* pProc, uint16_t address, uint16_t opcode);
+using INSTRUCTIONCONTEXTCALLBACK = void (*)(void* context, const CProcessor* pProc, uint16_t address, uint16_t opcode);
 
 // Interrupt callback -- called by CPU/PPU when an interrupt or trap has been taken: the old PC/PSW
 // are saved and the new PC/PSW are loaded from the vector
@@ -136,6 +137,7 @@ using INSTRUCTIONCALLBACK = void (*)(const CProcessor* pProc, uint16_t address, 
 //   oldPc      PC where the interrupt appeared: the address of the code that was interrupted
 //   vector     Interrupt vector address; for HALT mode interrupts it includes the SEL register high byte
 using INTERRUPTCALLBACK = void (*)(const CProcessor* pProc, uint16_t oldPc, uint16_t vector);
+using INTERRUPTCONTEXTCALLBACK = void (*)(void* context, const CProcessor* pProc, uint16_t oldPc, uint16_t vector);
 
 class CFloppyController;
 class CHardDrive;
@@ -333,8 +335,10 @@ public:  // System control
     void        SetTerminalCallback(TERMINALOUTCALLBACK callback) { m_TerminalOutCallback = callback; }
     /// \brief Assign callback for CPU/PPU instruction execution, nullptr to remove
     void        SetInstructionCallback(INSTRUCTIONCALLBACK callback);
+    void        SetInstructionCallbackWithContext(INSTRUCTIONCONTEXTCALLBACK callback, void* context);
     /// \brief Assign callback for CPU/PPU interrupts, nullptr to remove
     void        SetInterruptCallback(INTERRUPTCALLBACK callback);
+    void        SetInterruptCallbackWithContext(INTERRUPTCONTEXTCALLBACK callback, void* context);
 public:  // Saving/loading emulator status
     void        SaveToImage(std::span<uint8_t, UKNCIMAGE_SIZE> image);
     void        LoadFromImage(std::span<const uint8_t, UKNCIMAGE_SIZE> image);

@@ -464,8 +464,11 @@ bool CProcessor::InterruptProcessing ()
             }
 
             // The interrupt is taken when the new PC/PSW were loaded; on a bus error (m_RPLYrq) it was not
-            if (m_pInterruptCallback != nullptr && !m_RPLYrq)
-                m_pInterruptCallback(this, oldPc, intrVector);
+            if (!m_RPLYrq)
+            {
+                if (m_interruptContextCallback) m_interruptContextCallback(m_interruptContext, this, oldPc, intrVector);
+                else if (m_pInterruptCallback) m_pInterruptCallback(this, oldPc, intrVector);
+            }
 
             return true;
         }
@@ -561,8 +564,8 @@ void CProcessor::FetchInstruction()
 
 void CProcessor::TranslateInstruction()
 {
-    if (m_pInstructionCallback != nullptr)
-        m_pInstructionCallback(this, m_instructionpc, m_instruction);
+    if (m_instructionContextCallback) m_instructionContextCallback(m_instructionContext, this, m_instructionpc, m_instruction);
+    else if (m_pInstructionCallback) m_pInstructionCallback(this, m_instructionpc, m_instruction);
 
     // Prepare values to help decode the command
     m_regdest  = GetDigit(m_instruction, 0);
