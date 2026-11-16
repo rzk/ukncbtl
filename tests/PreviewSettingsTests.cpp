@@ -59,14 +59,24 @@ TEST_F(PreviewSettingsTest, MissingFileUsesDefaultsWithoutCreatingIt)
     EXPECT_EQ(settings->spriteAddress, 0);
     EXPECT_EQ(settings->spriteWidth, 2);
     EXPECT_EQ(settings->spriteMode, 0);
+    EXPECT_FALSE(settings->debuggerVisible);
+    EXPECT_FALSE(settings->consoleVisible);
+    EXPECT_FALSE(settings->debuggerPpu);
+    EXPECT_EQ(settings->networkStation, 0);
+    EXPECT_EQ(settings->cpuBreakpoints, preview_settings::EmptyBreakpoints());
+    EXPECT_EQ(settings->ppuBreakpoints, preview_settings::EmptyBreakpoints());
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
 TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
 {
     Write("; retain\n[Other]\nKey=value\n[SDLPreview]\nExtra=keep\n");
-    const preview_settings::Settings input{1280, 800, 6, false, 5, 2, 0x7ffe, true, true, 35, true, true, false,
+    preview_settings::Settings input{1280, 800, 6, false, 5, 2, 0x7ffe, true, true, 35, true, true, false,
         true, 012345, 8, 3};
+    input.debuggerVisible = true; input.consoleVisible = true; input.debuggerPpu = true;
+    input.networkStation = 01234;
+    input.cpuBreakpoints[0] = 0; input.cpuBreakpoints[1] = 0177776;
+    input.ppuBreakpoints[0] = 01000;
     ASSERT_TRUE(preview_settings::Save(path, input));
     const auto output = preview_settings::Load(path);
     ASSERT_TRUE(output);
@@ -87,11 +97,53 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     EXPECT_EQ(output->spriteAddress, input.spriteAddress);
     EXPECT_EQ(output->spriteWidth, input.spriteWidth);
     EXPECT_EQ(output->spriteMode, input.spriteMode);
+    EXPECT_EQ(output->debuggerVisible, input.debuggerVisible);
+    EXPECT_EQ(output->consoleVisible, input.consoleVisible);
+    EXPECT_EQ(output->debuggerPpu, input.debuggerPpu);
+    EXPECT_EQ(output->networkStation, input.networkStation);
+    EXPECT_EQ(output->cpuBreakpoints, input.cpuBreakpoints);
+    EXPECT_EQ(output->ppuBreakpoints, input.ppuBreakpoints);
     const auto file = IniFile::Open(path);
     ASSERT_TRUE(file);
     EXPECT_EQ(file->Document().Get(L"Other", L"Key"), L"value");
     EXPECT_EQ(file->Document().Get(L"SDLPreview", L"Extra"), L"keep");
     EXPECT_NE(Read().find("; retain"), std::string::npos);
+}
+
+TEST_F(PreviewSettingsTest, InvalidOrDuplicateBreakpointsAreIgnoredIndependently)
+{
+    Write("[SDLPreview]\nDebuggerVisible=2\nConsoleVisible=1\nDebuggerPpu=bad\nNetworkStation=65536\n"
+          "CpuBreakpoint0=1024\nCpuBreakpoint1=3\nCpuBreakpoint2=0\nCpuBreakpoint3=1024\n"
+          "CpuBreakpoint4=65535\nCpuBreakpoint5=65534\nPpuBreakpoint0=2048\nPpuBreakpoint1=invalid\n");
+    const auto settings = preview_settings::Load(path);
+    ASSERT_TRUE(settings);
+    EXPECT_FALSE(settings->debuggerVisible);
+    EXPECT_TRUE(settings->consoleVisible);
+    EXPECT_FALSE(settings->debuggerPpu);
+    EXPECT_EQ(settings->networkStation, 0);
+    EXPECT_EQ(settings->cpuBreakpoints[0], 0);
+    EXPECT_EQ(settings->cpuBreakpoints[1], 1024);
+    EXPECT_EQ(settings->cpuBreakpoints[2], 65534);
+    EXPECT_EQ(settings->cpuBreakpoints[3], BreakpointSet::NoBreakpoint);
+    EXPECT_EQ(settings->ppuBreakpoints[0], 2048);
+    EXPECT_EQ(settings->ppuBreakpoints[1], BreakpointSet::NoBreakpoint);
+}
+
+TEST_F(PreviewSettingsTest, SavesOnlyPermanentBreakpointsWhileTemporaryRunIsActive)
+{
+    BreakpointSet points;
+    points.SetTemporary(04000);
+    ASSERT_TRUE(points.Add(0));
+    ASSERT_TRUE(points.Add(02000));
+    auto settings = preview_settings::Settings{};
+    settings.cpuBreakpoints = points.PermanentAddresses();
+    ASSERT_TRUE(preview_settings::Save(path, settings));
+    const auto restored = preview_settings::Load(path);
+    ASSERT_TRUE(restored);
+    EXPECT_EQ(restored->cpuBreakpoints[0], 0);
+    EXPECT_EQ(restored->cpuBreakpoints[1], 02000);
+    EXPECT_EQ(restored->cpuBreakpoints[2], BreakpointSet::NoBreakpoint);
+    EXPECT_EQ(restored->cpuBreakpoints, settings.cpuBreakpoints);
 }
 
 TEST_F(PreviewSettingsTest, InvalidValuesFallBackIndependently)
@@ -143,6 +195,11 @@ TEST_F(PreviewSettingsTest, InvalidInputOrCorruptFileIsNeverOverwritten)
     EXPECT_FALSE(preview_settings::Save(path, badSprite));
     badSprite.spriteWidth = 2; badSprite.spriteMode = 5;
     EXPECT_FALSE(preview_settings::Save(path, badSprite));
+    auto badBreakpoints = preview_settings::Settings{};
+    badBreakpoints.cpuBreakpoints[0] = 1;
+    EXPECT_FALSE(preview_settings::Save(path, badBreakpoints));
+    badBreakpoints.cpuBreakpoints[0] = 01000; badBreakpoints.cpuBreakpoints[1] = 01000;
+    EXPECT_FALSE(preview_settings::Save(path, badBreakpoints));
     EXPECT_EQ(Read(), original);
     Write(std::string(1, static_cast<char>(0xff)));
     const auto bad = Read();

@@ -20,6 +20,17 @@ public:
     [[nodiscard]] std::span<const uint16_t> Addresses() const
     { return std::span{addresses_}.first(count_); }
     [[nodiscard]] const uint16_t* Data() const { return addresses_.data(); }
+    // Snapshot only permanent entries, regardless of where the temporary entry sits.
+    [[nodiscard]] std::array<uint16_t, Capacity - 1> PermanentAddresses() const
+    {
+        std::array<uint16_t, Capacity - 1> result;
+        result.fill(NoBreakpoint);
+        size_t index = 0;
+        for (const auto address : Addresses())
+            if (address != temporary_) result[index++] = address;
+        std::sort(result.begin(), result.begin() + index);
+        return result;
+    }
     [[nodiscard]] bool Contains(uint16_t address) const
     { return std::ranges::contains(Addresses(), address); }
 

@@ -145,6 +145,10 @@ int Run(const preview_options::Options& options)
     preview_printer::Session printer(board);
     preview_tape::Session tape(board);
     preview_debugger::Session debugger(board);
+    for (const auto address : settings.cpuBreakpoints)
+        if (address != BreakpointSet::NoBreakpoint) (void)debugger.Breakpoints(preview_debugger::Processor::cpu).Add(address);
+    for (const auto address : settings.ppuBreakpoints)
+        if (address != BreakpointSet::NoBreakpoint) (void)debugger.Breakpoints(preview_debugger::Processor::ppu).Add(address);
     preview_console::Console console;
     const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
     std::string actionError = startupError;
@@ -153,6 +157,7 @@ int Run(const preview_options::Options& options)
     board.SetSoundAY(settings.soundAY);
     board.SetSoundCovox(settings.soundCovox);
     board.SetMouse(settings.mouse);
+    board.SetNetStation(settings.networkStation);
     if (smokeTest) debugger.SetHistoryEnabled(true);
     preview_snapshot::Session snapshots(board);
     std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audioStream(nullptr, SDL_DestroyAudioStream);
@@ -239,9 +244,11 @@ int Run(const preview_options::Options& options)
         debugger.PrepareRun(); running = true; scheduler.Restart(now);
     };
     bool done = false;
-    bool showDebugger = smokeTest;
-    bool showConsole = smokeTest;
-    preview_debugger::Processor debugProcessor = preview_debugger::Processor::cpu;
+    bool showDebugger = smokeTest || settings.debuggerVisible;
+    bool showConsole = smokeTest || settings.consoleVisible;
+    preview_debugger::Processor debugProcessor = settings.debuggerPpu ? preview_debugger::Processor::ppu : preview_debugger::Processor::cpu;
+    int networkStationDraft = settings.networkStation;
+    std::string networkStationError;
     std::array<char, 256> consoleInput{};
     bool consoleScroll = true;
     if (smokeTest) (void)console.Submit("h", debugger, debugProcessor, running);
@@ -469,6 +476,25 @@ int Run(const preview_options::Options& options)
                 }
                 if (ImGui::MenuItem("Reset")) { resetMachine(); scheduler.Restart(started); }
                 if (ImGui::MenuItem("Start automatically", nullptr, &settings.autostart)) settingsDirty = true;
+                if (ImGui::BeginMenu("Network station"))
+                {
+                    ImGui::SetNextItemWidth(120);
+                    ImGui::InputInt("Station number", &networkStationDraft);
+                    if (ImGui::Button("Apply"))
+                    {
+                        if (networkStationDraft < 0 || networkStationDraft > 65535)
+                            networkStationError = "Enter a station number from 0 to 65535.";
+                        else
+                        {
+                            settings.networkStation = static_cast<std::uint16_t>(networkStationDraft);
+                            board.SetNetStation(settings.networkStation);
+                            settingsDirty = true;
+                            networkStationError.clear();
+                        }
+                    }
+                    if (!networkStationError.empty()) ImGui::TextWrapped("%s", networkStationError.c_str());
+                    ImGui::EndMenu();
+                }
                 if (ImGui::BeginMenu("Reset and boot"))
                 {
                     for (int selection = 1; selection <= 7; ++selection)
@@ -1249,6 +1275,19 @@ int Run(const preview_options::Options& options)
     }
     if (settingsPath)
     {
+        const auto cpuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::cpu).PermanentAddresses();
+        const auto ppuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::ppu).PermanentAddresses();
+        const bool debuggerPpu = debugProcessor == preview_debugger::Processor::ppu;
+        if (settings.cpuBreakpoints != cpuBreakpoints || settings.ppuBreakpoints != ppuBreakpoints ||
+            settings.debuggerVisible != showDebugger || settings.consoleVisible != showConsole || settings.debuggerPpu != debuggerPpu)
+        {
+            settings.cpuBreakpoints = cpuBreakpoints;
+            settings.ppuBreakpoints = ppuBreakpoints;
+            settings.debuggerVisible = showDebugger;
+            settings.consoleVisible = showConsole;
+            settings.debuggerPpu = debuggerPpu;
+            settingsDirty = true;
+        }
         int width = 0, height = 0;
         const auto flags = SDL_GetWindowFlags(window.get());
         if (!(flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) &&

@@ -2,12 +2,20 @@
 #pragma once
 
 #include "util/IniFile.h"
+#include "BreakpointSet.h"
+#include <array>
 #include <expected>
 #include <filesystem>
 #include <cstdint>
 
 namespace preview_settings
 {
+[[nodiscard]] constexpr std::array<std::uint16_t, BreakpointSet::Capacity - 1> EmptyBreakpoints()
+{
+    std::array<std::uint16_t, BreakpointSet::Capacity - 1> result{};
+    result.fill(BreakpointSet::NoBreakpoint);
+    return result;
+}
 struct Settings
 {
     int windowWidth = 960;
@@ -27,6 +35,12 @@ struct Settings
     std::uint16_t spriteAddress = 0;
     int spriteWidth = 2;
     int spriteMode = 0;
+    bool debuggerVisible = false;
+    bool consoleVisible = false;
+    bool debuggerPpu = false;
+    std::uint16_t networkStation = 0;
+    std::array<std::uint16_t, BreakpointSet::Capacity - 1> cpuBreakpoints = EmptyBreakpoints();
+    std::array<std::uint16_t, BreakpointSet::Capacity - 1> ppuBreakpoints = EmptyBreakpoints();
 };
 
 [[nodiscard]] bool ValidWindowSize(int width, int height);

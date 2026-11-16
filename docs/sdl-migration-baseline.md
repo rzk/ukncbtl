@@ -101,6 +101,10 @@ The Debug menu also provides a console with command history and a bounded UTF-8
 log that can be saved. It supports legacy-style register, memory, disassembly,
 breakpoint, CPU/PPU selection and execution commands; enter `h` for its command
 list. Trace commands and the full legacy console command set remain to migrate.
+Permanent CPU and PPU breakpoints, debugger/console visibility and the selected
+processor are saved in the SDL preview preferences. Temporary step-over and
+run-to targets are excluded. The Emulator menu also configures and saves the
+emulated network station number.
 The debugger also displays the legacy CPU and PPU port values. Its sprite
 viewer decodes CPU memory in the five legacy color modes and supports octal
 addresses, byte widths and page navigation; these controls are saved.

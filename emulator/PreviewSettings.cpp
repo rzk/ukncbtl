@@ -3,6 +3,7 @@
 #include "FramePacing.h"
 #include "util/ScreenScale.h"
 #include "util/SettingsCodec.h"
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <utility>
@@ -27,6 +28,38 @@ std::optional<std::uint32_t> Number(const IniDocument& doc, std::wstring_view ke
 {
     const auto text = doc.Get(section, key);
     return text && text->size() < 64 ? settings_codec::DecodeDword(*text) : std::nullopt;
+}
+
+using SavedBreakpoints = std::array<std::uint16_t, BreakpointSet::Capacity - 1>;
+std::wstring BreakpointKey(std::wstring_view prefix, std::size_t index)
+{ return std::wstring(prefix) + std::to_wstring(index); }
+
+SavedBreakpoints ReadBreakpoints(const IniDocument& doc, std::wstring_view prefix)
+{
+    auto result = preview_settings::EmptyBreakpoints();
+    std::size_t count = 0;
+    for (std::size_t index = 0; index < result.size(); ++index)
+    {
+        const auto value = Number(doc, BreakpointKey(prefix, index));
+        if (!value || *value >= BreakpointSet::NoBreakpoint || (*value & 1)) continue;
+        const auto address = static_cast<std::uint16_t>(*value);
+        if (std::find(result.begin(), result.begin() + count, address) == result.begin() + count)
+            result[count++] = address;
+    }
+    std::sort(result.begin(), result.begin() + count);
+    return result;
+}
+
+bool ValidBreakpoints(const SavedBreakpoints& values)
+{
+    for (std::size_t index = 0; index < values.size(); ++index)
+    {
+        const auto value = values[index];
+        if (value == BreakpointSet::NoBreakpoint) continue;
+        if ((value & 1) || std::find(values.begin(), values.begin() + index, value) != values.begin() + index)
+            return false;
+    }
+    return true;
 }
 }
 
@@ -81,6 +114,16 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
     if (spriteWidth && *spriteWidth >= 1 && *spriteWidth <= 32) settings.spriteWidth = static_cast<int>(*spriteWidth);
     const auto spriteMode = Number(doc, L"SpriteMode");
     if (spriteMode && *spriteMode <= 4) settings.spriteMode = static_cast<int>(*spriteMode);
+    const auto debuggerVisible = Number(doc, L"DebuggerVisible");
+    if (debuggerVisible && *debuggerVisible <= 1) settings.debuggerVisible = *debuggerVisible != 0;
+    const auto consoleVisible = Number(doc, L"ConsoleVisible");
+    if (consoleVisible && *consoleVisible <= 1) settings.consoleVisible = *consoleVisible != 0;
+    const auto debuggerPpu = Number(doc, L"DebuggerPpu");
+    if (debuggerPpu && *debuggerPpu <= 1) settings.debuggerPpu = *debuggerPpu != 0;
+    const auto station = Number(doc, L"NetworkStation");
+    if (station && *station <= 0xffff) settings.networkStation = static_cast<std::uint16_t>(*station);
+    settings.cpuBreakpoints = ReadBreakpoints(doc, L"CpuBreakpoint");
+    settings.ppuBreakpoints = ReadBreakpoints(doc, L"PpuBreakpoint");
     return settings;
 }
 
@@ -91,7 +134,8 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         static_cast<std::size_t>(settings.displayMode) >= screen_scale::Modes().size() ||
         settings.paletteMode < 0 || settings.paletteMode > 2 || !frame_pacing::IsSupportedSpeed(settings.speed) ||
         settings.volume < 0 || settings.volume > 100 || settings.spriteWidth < 1 || settings.spriteWidth > 32 ||
-        settings.spriteMode < 0 || settings.spriteMode > 4)
+        settings.spriteMode < 0 || settings.spriteMode > 4 ||
+        !ValidBreakpoints(settings.cpuBreakpoints) || !ValidBreakpoints(settings.ppuBreakpoints))
         return std::unexpected(IniFileError::invalid_entry);
     auto file = Read(path);
     if (!file) return std::unexpected(file.error());
@@ -113,7 +157,15 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         !doc.Set(section, L"SpriteViewer", settings.spriteViewer ? L"1" : L"0") ||
         !doc.Set(section, L"SpriteAddress", std::to_wstring(settings.spriteAddress)) ||
         !doc.Set(section, L"SpriteWidth", std::to_wstring(settings.spriteWidth)) ||
-        !doc.Set(section, L"SpriteMode", std::to_wstring(settings.spriteMode)))
+        !doc.Set(section, L"SpriteMode", std::to_wstring(settings.spriteMode)) ||
+        !doc.Set(section, L"DebuggerVisible", settings.debuggerVisible ? L"1" : L"0") ||
+        !doc.Set(section, L"ConsoleVisible", settings.consoleVisible ? L"1" : L"0") ||
+        !doc.Set(section, L"DebuggerPpu", settings.debuggerPpu ? L"1" : L"0") ||
+        !doc.Set(section, L"NetworkStation", std::to_wstring(settings.networkStation)))
         return std::unexpected(IniFileError::invalid_entry);
+    for (std::size_t index = 0; index < settings.cpuBreakpoints.size(); ++index)
+        if (!doc.Set(section, BreakpointKey(L"CpuBreakpoint", index), std::to_wstring(settings.cpuBreakpoints[index])) ||
+            !doc.Set(section, BreakpointKey(L"PpuBreakpoint", index), std::to_wstring(settings.ppuBreakpoints[index])))
+            return std::unexpected(IniFileError::invalid_entry);
     return (*file)->Save(path);
 }
