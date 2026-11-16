@@ -15,6 +15,7 @@ namespace preview_debugger
 enum class Processor { cpu, ppu };
 struct Line { std::uint16_t address, word; DisassembledInstruction instruction; };
 [[nodiscard]] std::optional<std::uint16_t> ParseAddress(std::string_view text);
+[[nodiscard]] std::optional<std::uint16_t> ParseWord(std::string_view text);
 
 // Owns breakpoint storage borrowed by the board. The board must outlive it.
 class Session
@@ -27,6 +28,7 @@ public:
     [[nodiscard]] CProcessor& GetProcessor(Processor which) const;
     [[nodiscard]] BreakpointSet& Breakpoints(Processor which);
     [[nodiscard]] std::uint16_t ReadWord(Processor which, std::uint16_t address, bool instruction) const;
+    [[nodiscard]] std::uint16_t ReadPort(Processor which, std::uint16_t address) const;
     [[nodiscard]] std::vector<Line> Disassemble(Processor which, std::uint16_t address, unsigned count) const;
     void PrepareRun();
     void Stop();

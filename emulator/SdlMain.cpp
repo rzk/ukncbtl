@@ -11,6 +11,7 @@
 #include "PreviewDebugger.h"
 #include "PreviewSettings.h"
 #include "PreviewSnapshot.h"
+#include "PreviewSprite.h"
 #include "PreviewTape.h"
 #include "ScreenshotImage.h"
 #include "ScreenshotClipboard.h"
@@ -21,6 +22,8 @@
 #include "SdlKeyboard.h"
 #include "SdlFileDialog.h"
 #include "SdlScreenRenderer.h"
+#include "SdlSprite.h"
+#include "SpriteDecoder.h"
 #include "VideoDecoder.h"
 #include "VideoPalette.h"
 #include "VirtualKeyboard.h"
@@ -91,7 +94,7 @@ int Run(const preview_options::Options& options)
         }
         else startupError = "Could not locate preview settings. Changes will not be saved.";
     }
-    else settings.keyboard = true; // Exercise the keyboard window in the headless smoke test.
+    else { settings.keyboard = true; settings.spriteViewer = true; } // Exercise preview windows in the smoke test.
     const std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)> window(
         SDL_CreateWindow("UKNCBTL - SDL preview", settings.windowWidth, settings.windowHeight,
             SDL_WINDOW_RESIZABLE | (smokeTest ? SDL_WINDOW_HIDDEN : 0)), SDL_DestroyWindow);
@@ -164,6 +167,7 @@ int Run(const preview_options::Options& options)
     bool audioActive = soundEnabled;
     std::vector<std::uint32_t> pixels(video::Width * video::Height);
     sdl_screen::Renderer screen(*renderer);
+    sdl_sprite::Texture spriteTexture(*renderer);
     sdl_keyboard::Keyboard keyboard;
     sdl_keyboard::Merge keyMerge;
     sdl_keyboard::Delivery keyDelivery;
@@ -226,6 +230,9 @@ int Run(const preview_options::Options& options)
     preview_debugger::Processor debugProcessor = preview_debugger::Processor::cpu;
     std::array<char, 16> breakpointAddress{};
     std::array<char, 16> memoryAddress{'0', '0', '0', '0', '0', '0', 0};
+    std::array<char, 16> spriteAddress{};
+    std::snprintf(spriteAddress.data(), spriteAddress.size(), "%06o", static_cast<unsigned>(settings.spriteAddress));
+    std::string spriteError;
     std::string debuggerError;
     int screenshotMode = settings.screenshotMode;
     int displayMode = settings.displayMode;
@@ -545,6 +552,7 @@ int Run(const preview_options::Options& options)
             if (ImGui::BeginMenu("Debug"))
             {
                 ImGui::MenuItem("Debugger", nullptr, &showDebugger);
+                if (ImGui::MenuItem("Sprite viewer", nullptr, &settings.spriteViewer)) settingsDirty = true;
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Screenshot"))
@@ -788,6 +796,23 @@ int Run(const preview_options::Options& options)
                             static_cast<unsigned>(debugger.ReadWord(debugProcessor, static_cast<std::uint16_t>(address + 6), false)));
                     }
                 }
+                if (ImGui::CollapsingHeader("Ports (octal)"))
+                {
+                    constexpr std::array<std::uint16_t, 2> cpuPorts{0176640, 0176642};
+                    constexpr std::array<std::uint16_t, 11> ppuPorts{0177010, 0177012, 0177014, 0177016,
+                        0177020, 0177022, 0177024, 0177026, 0177054, 0177700, 0177716};
+                    const std::span<const std::uint16_t> ports = debugProcessor == preview_debugger::Processor::cpu ?
+                        std::span<const std::uint16_t>(cpuPorts) : std::span<const std::uint16_t>(ppuPorts);
+                    for (const auto port : ports)
+                        ImGui::Text("%06o  %06o", static_cast<unsigned>(port),
+                            static_cast<unsigned>(debugger.ReadPort(debugProcessor, port)));
+                    if (debugProcessor == preview_debugger::Processor::ppu)
+                    {
+                        ImGui::Text("177710  %06o", static_cast<unsigned>(board.GetTimerStateView()));
+                        ImGui::Text("177712  %06o", static_cast<unsigned>(board.GetTimerReloadView()));
+                        ImGui::Text("177714  %06o", static_cast<unsigned>(board.GetTimerValueView()));
+                    }
+                }
                 if (smokeTest) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
                 if (ImGui::CollapsingHeader("Instruction history"))
                 {
@@ -846,6 +871,50 @@ int Run(const preview_options::Options& options)
                 }
             }
             ImGui::End();
+        }
+        if (settings.spriteViewer)
+        {
+            ImGui::SetNextWindowSize(ImVec2(570, 690), ImGuiCond_FirstUseEver);
+            const bool wasOpen = settings.spriteViewer;
+            if (ImGui::Begin("Sprite viewer", &settings.spriteViewer))
+            {
+                ImGui::SetNextItemWidth(110);
+                if (ImGui::InputText("Address (octal)", spriteAddress.data(), spriteAddress.size(),
+                    ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue))
+                {
+                    const auto parsed = preview_debugger::ParseWord(spriteAddress.data());
+                    if (!parsed) spriteError = "Enter an octal address from 000000 to 177777.";
+                    else { settings.spriteAddress = *parsed; settingsDirty = true; spriteError.clear(); }
+                }
+                if (!spriteError.empty()) ImGui::TextWrapped("%s", spriteError.c_str());
+                if (ImGui::SliderInt("Width (bytes)", &settings.spriteWidth, 1, 32)) settingsDirty = true;
+                constexpr std::array modes{"Black and white", "Green/red on black", "Cyan/magenta on blue",
+                    "Red/green on black", "Magenta/cyan on blue"};
+                if (ImGui::Combo("Colors", &settings.spriteMode, modes.data(), static_cast<int>(modes.size()))) settingsDirty = true;
+                const auto page = sprite::PageBytes(settings.spriteWidth, settings.spriteMode);
+                const auto movePage = [&](int direction) {
+                    settings.spriteAddress = static_cast<std::uint16_t>(settings.spriteAddress + direction * page);
+                    std::snprintf(spriteAddress.data(), spriteAddress.size(), "%06o", static_cast<unsigned>(settings.spriteAddress));
+                    spriteError.clear(); settingsDirty = true;
+                };
+                if (ImGui::Button("Previous page")) movePage(-1);
+                ImGui::SameLine();
+                if (ImGui::Button("Next page")) movePage(1);
+                ImGui::TextDisabled("CPU memory, current CPU mode; page: %d bytes", page);
+                const auto image = preview_sprite::Capture(board, settings.spriteAddress, settings.spriteWidth, settings.spriteMode);
+                if (!image || !spriteTexture.Update(*image))
+                {
+                    actionError = "Could not prepare the sprite image."; showActionError = true;
+                    settings.spriteViewer = false; settingsDirty = true;
+                }
+                else
+                {
+                    const auto id = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(spriteTexture.Get()));
+                    ImGui::Image(ImTextureRef(id), ImVec2(sprite::Width * 2.0f, sprite::Height * 2.0f));
+                }
+            }
+            ImGui::End();
+            if (wasOpen != settings.spriteViewer) settingsDirty = true;
         }
         if (showActionError) { ImGui::OpenPopup("Error"); showActionError = false; }
         if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))

@@ -33,6 +33,8 @@ TEST(PreviewDebugger, ParsesOnlyEvenOctalAddresses)
 {
     EXPECT_EQ(preview_debugger::ParseAddress("0"), 0);
     EXPECT_EQ(preview_debugger::ParseAddress("177776"), 0177776);
+    EXPECT_EQ(preview_debugger::ParseWord("177777"), 0177777);
+    EXPECT_EQ(preview_debugger::ParseWord("3"), 3);
     for (const auto text : {"", "8", "-1", "3", "177777", "200000", "10x", " 10"})
         EXPECT_FALSE(preview_debugger::ParseAddress(text));
 }
@@ -48,6 +50,10 @@ TEST_F(PreviewDebuggerTest, DisassemblyAndStepUseSelectedProcessorState)
     EXPECT_EQ(lines[0].word, 0005200); EXPECT_EQ(lines[0].instruction.mnemonic, L"INC");
     EXPECT_EQ(lines[1].address, 01002);
     EXPECT_EQ(debugger.ReadWord(Processor::cpu, 01000, false), 0005200);
+    EXPECT_EQ(debugger.ReadPort(Processor::cpu, 0176640),
+        board->GetCPU()->GetMemoryController()->GetPortView(0176640));
+    EXPECT_EQ(debugger.ReadPort(Processor::ppu, 0177700),
+        board->GetPPU()->GetMemoryController()->GetPortView(0177700));
     debugger.Step();
     EXPECT_EQ(board->GetCPU()->GetReg(0), 1);
     EXPECT_EQ(board->GetCPU()->GetPC(), 01002);

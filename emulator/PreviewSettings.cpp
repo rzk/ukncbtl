@@ -73,6 +73,14 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
     if (keyboard && *keyboard <= 1) settings.keyboard = *keyboard != 0;
     const auto autostart = Number(doc, L"Autostart");
     if (autostart && *autostart <= 1) settings.autostart = *autostart != 0;
+    const auto spriteViewer = Number(doc, L"SpriteViewer");
+    if (spriteViewer && *spriteViewer <= 1) settings.spriteViewer = *spriteViewer != 0;
+    const auto spriteAddress = Number(doc, L"SpriteAddress");
+    if (spriteAddress && *spriteAddress <= 0xffff) settings.spriteAddress = static_cast<std::uint16_t>(*spriteAddress);
+    const auto spriteWidth = Number(doc, L"SpriteWidth");
+    if (spriteWidth && *spriteWidth >= 1 && *spriteWidth <= 32) settings.spriteWidth = static_cast<int>(*spriteWidth);
+    const auto spriteMode = Number(doc, L"SpriteMode");
+    if (spriteMode && *spriteMode <= 4) settings.spriteMode = static_cast<int>(*spriteMode);
     return settings;
 }
 
@@ -82,7 +90,8 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         static_cast<std::size_t>(settings.screenshotMode) >= screen_scale::Modes().size() || settings.displayMode < 0 ||
         static_cast<std::size_t>(settings.displayMode) >= screen_scale::Modes().size() ||
         settings.paletteMode < 0 || settings.paletteMode > 2 || !frame_pacing::IsSupportedSpeed(settings.speed) ||
-        settings.volume < 0 || settings.volume > 100)
+        settings.volume < 0 || settings.volume > 100 || settings.spriteWidth < 1 || settings.spriteWidth > 32 ||
+        settings.spriteMode < 0 || settings.spriteMode > 4)
         return std::unexpected(IniFileError::invalid_entry);
     auto file = Read(path);
     if (!file) return std::unexpected(file.error());
@@ -100,7 +109,11 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         !doc.Set(section, L"Volume", std::to_wstring(settings.volume)) ||
         !doc.Set(section, L"Mouse", settings.mouse ? L"1" : L"0") ||
         !doc.Set(section, L"Keyboard", settings.keyboard ? L"1" : L"0") ||
-        !doc.Set(section, L"Autostart", settings.autostart ? L"1" : L"0"))
+        !doc.Set(section, L"Autostart", settings.autostart ? L"1" : L"0") ||
+        !doc.Set(section, L"SpriteViewer", settings.spriteViewer ? L"1" : L"0") ||
+        !doc.Set(section, L"SpriteAddress", std::to_wstring(settings.spriteAddress)) ||
+        !doc.Set(section, L"SpriteWidth", std::to_wstring(settings.spriteWidth)) ||
+        !doc.Set(section, L"SpriteMode", std::to_wstring(settings.spriteMode)))
         return std::unexpected(IniFileError::invalid_entry);
     return (*file)->Save(path);
 }

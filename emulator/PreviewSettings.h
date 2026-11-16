@@ -23,6 +23,10 @@ struct Settings
     bool mouse = false;
     bool keyboard = false;
     bool autostart = true;
+    bool spriteViewer = false;
+    std::uint16_t spriteAddress = 0;
+    int spriteWidth = 2;
+    int spriteMode = 0;
 };
 
 [[nodiscard]] bool ValidWindowSize(int width, int height);

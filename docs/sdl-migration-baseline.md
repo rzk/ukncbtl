@@ -89,6 +89,9 @@ processors. Optional instruction/interrupt recording keeps separate recent
 histories for CPU and PPU and is cleared on reset or state load. A display-list
 inspector shows the decoded video tags. The remaining debugger tools are still
 being migrated.
+The debugger also displays the legacy CPU and PPU port values. Its sprite
+viewer decodes CPU memory in the five legacy color modes and supports octal
+addresses, byte widths and page navigation; these controls are saved.
 It supports screenshot capture to PNG/BMP files or the SDL clipboard, with
 the existing screenshot size modes. It also supports basic SDL audio output and
 attaching/ejecting floppy and hard-disk images through SDL file dialogs. Disks

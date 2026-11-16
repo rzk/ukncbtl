@@ -8,14 +8,20 @@
 #include <charconv>
 #include <utility>
 
-std::optional<std::uint16_t> preview_debugger::ParseAddress(std::string_view text)
+std::optional<std::uint16_t> preview_debugger::ParseWord(std::string_view text)
 {
     if (text.empty()) return std::nullopt;
     unsigned value = 0;
     const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, 8);
-    if (error != std::errc{} || end != text.data() + text.size() || value >= BreakpointSet::NoBreakpoint || (value & 1))
+    if (error != std::errc{} || end != text.data() + text.size() || value > 0177777)
         return std::nullopt;
     return static_cast<std::uint16_t>(value);
+}
+
+std::optional<std::uint16_t> preview_debugger::ParseAddress(std::string_view text)
+{
+    const auto value = ParseWord(text);
+    return value && !(*value & 1) ? value : std::nullopt;
 }
 
 preview_debugger::Session::~Session()
@@ -32,6 +38,8 @@ std::uint16_t preview_debugger::Session::ReadWord(Processor which, std::uint16_t
     auto& processor = GetProcessor(which);
     return processor.GetMemoryController()->GetWordView(address, processor.IsHaltMode(), instruction).value;
 }
+std::uint16_t preview_debugger::Session::ReadPort(Processor which, std::uint16_t address) const
+{ return GetProcessor(which).GetMemoryControllerConst()->GetPortView(address); }
 std::vector<preview_debugger::Line> preview_debugger::Session::Disassemble(Processor which, std::uint16_t address, unsigned count) const
 {
     std::vector<Line> lines;
