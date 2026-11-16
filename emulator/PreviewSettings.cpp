@@ -71,6 +71,8 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
     if (mouse && *mouse <= 1) settings.mouse = *mouse != 0;
     const auto keyboard = Number(doc, L"Keyboard");
     if (keyboard && *keyboard <= 1) settings.keyboard = *keyboard != 0;
+    const auto autostart = Number(doc, L"Autostart");
+    if (autostart && *autostart <= 1) settings.autostart = *autostart != 0;
     return settings;
 }
 
@@ -97,7 +99,8 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         !doc.Set(section, L"SoundCovox", settings.soundCovox ? L"1" : L"0") ||
         !doc.Set(section, L"Volume", std::to_wstring(settings.volume)) ||
         !doc.Set(section, L"Mouse", settings.mouse ? L"1" : L"0") ||
-        !doc.Set(section, L"Keyboard", settings.keyboard ? L"1" : L"0"))
+        !doc.Set(section, L"Keyboard", settings.keyboard ? L"1" : L"0") ||
+        !doc.Set(section, L"Autostart", settings.autostart ? L"1" : L"0"))
         return std::unexpected(IniFileError::invalid_entry);
     return (*file)->Save(path);
 }

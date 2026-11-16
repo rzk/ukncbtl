@@ -66,6 +66,15 @@ v1.92.9b to a release commit; `FETCHCONTENT_SOURCE_DIR_IMGUI` supports an
 offline checkout. A dummy-video test exercises UI rendering over a prepared
 frame and SDL keyboard events. The experimental `ukncbtl-sdl` executable boots
 the embedded ROM, displays the machine and provides pause and reset controls.
+The Emulator menu offers a saved start-automatically preference and a reset
+and boot action for ROM boot-menu selections 1 through 7. Boot inputs are timed
+in emulated frames; resetting, pausing or losing focus cancels the sequence.
+The executable accepts `--run`/`--paused`, `--sound`/`--no-sound`,
+`--fullscreen`/`--windowed`, `--rom PATH`, `--floppy 0..3 PATH`,
+`--cartridge 1..2 PATH`, `--hard-disk 1..2 PATH`, and `--boot 1..7`.
+Command-line overrides apply only to that launch. Media is attached before
+the machine starts; a hard disk requires the corresponding cartridge. Use
+`--help` for usage. Windows command-line arguments are received as UTF-8 via SDL.
 Physical keyboard positions use the legacy US-position mappings and follow the
 emulated LAT/RUS mode; alternate physical layouts have not yet been validated.
 The Display menu also opens an on-screen UKNC keyboard. Its labels show the

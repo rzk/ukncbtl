@@ -1,10 +1,12 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "MediaSlots.h"
+#include "AutoBoot.h"
 #include "DiskImageFile.h"
 #include "MouseInput.h"
 #include "FramePacing.h"
 #include "PreviewRoms.h"
 #include "PreviewPrinter.h"
+#include "PreviewOptions.h"
 #include "PreviewSettings.h"
 #include "PreviewSnapshot.h"
 #include "PreviewTape.h"
@@ -24,6 +26,7 @@
 #include "emubase/Processor.h"
 #include "util/ScreenScale.h"
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_sdlrenderer3.h>
@@ -64,8 +67,9 @@ struct ImGuiRuntime
     }
 };
 
-int Run(bool smokeTest)
+int Run(const preview_options::Options& options)
 {
+    const bool smokeTest = options.smokeTest;
     if (!SDL_Init(SDL_INIT_VIDEO)) { SDL_Log("SDL initialization failed: %s", SDL_GetError()); return 1; }
     SdlRuntime sdl;
     preview_settings::Settings settings;
@@ -90,6 +94,8 @@ int Run(bool smokeTest)
         SDL_CreateWindow("UKNCBTL - SDL preview", settings.windowWidth, settings.windowHeight,
             SDL_WINDOW_RESIZABLE | (smokeTest ? SDL_WINDOW_HIDDEN : 0)), SDL_DestroyWindow);
     if (!window) { SDL_Log("Window creation failed: %s", SDL_GetError()); return 1; }
+    if (options.fullscreen.value_or(false) && !SDL_SetWindowFullscreen(window.get(), true))
+    { SDL_Log("Fullscreen request failed: %s", SDL_GetError()); return 1; }
     const std::unique_ptr<SDL_Renderer, decltype(&SDL_DestroyRenderer)> renderer(
         SDL_CreateRenderer(window.get(), nullptr), SDL_DestroyRenderer);
     if (!renderer) { SDL_Log("Renderer creation failed: %s", SDL_GetError()); return 1; }
@@ -108,6 +114,17 @@ int Run(bool smokeTest)
     CMotherboard board;
     media_slots::Slots media(board);
     preview_roms::Roms roms(board);
+    if (options.rom && !roms.LoadSystem(*options.rom))
+    { SDL_Log("Could not load the requested system ROM."); return 1; }
+    for (int slot = 0; slot < 2; ++slot)
+        if (options.cartridges[slot] && !roms.Insert(slot, *options.cartridges[slot]))
+        { SDL_Log("Could not load requested cartridge %d.", slot + 1); return 1; }
+    for (int slot = 0; slot < 4; ++slot)
+        if (options.floppies[slot] && !media.Attach(media_slots::Kind::floppy, slot, *options.floppies[slot]))
+        { SDL_Log("Could not attach requested floppy %d.", slot); return 1; }
+    for (int slot = 0; slot < 2; ++slot)
+        if (options.hardDisks[slot] && !media.Attach(media_slots::Kind::hardDisk, slot, *options.hardDisks[slot]))
+        { SDL_Log("Could not attach requested hard disk %d; check its ROM cartridge and image.", slot + 1); return 1; }
     preview_printer::Session printer(board);
     preview_tape::Session tape(board);
     const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
@@ -120,6 +137,7 @@ int Run(bool smokeTest)
     preview_snapshot::Session snapshots(board);
     std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audioStream(nullptr, SDL_DestroyAudioStream);
     std::unique_ptr<sdl_audio::Output> audio;
+    const bool initialSound = options.sound.value_or(settings.sound);
     if (SDL_InitSubSystem(SDL_INIT_AUDIO))
     {
         const SDL_AudioSpec spec{SDL_AUDIO_S16LE, sdl_audio::Channels, sdl_audio::SampleRate};
@@ -128,7 +146,7 @@ int Run(bool smokeTest)
         {
             audio = std::make_unique<sdl_audio::Output>(board, *audioStream);
             if (!audio->Configure(settings.speed, settings.volume) ||
-                (settings.sound && !SDL_ResumeAudioStreamDevice(audioStream.get())))
+                (initialSound && !SDL_ResumeAudioStreamDevice(audioStream.get())))
             {
                 SDL_Log("Audio unavailable: %s", SDL_GetError());
                 audio.reset(); audioStream.reset();
@@ -138,7 +156,7 @@ int Run(bool smokeTest)
     }
     else SDL_Log("Audio unavailable: %s", SDL_GetError());
     if (smokeTest && !audio) return 1;
-    bool soundEnabled = audio != nullptr && settings.sound;
+    bool soundEnabled = audio != nullptr && initialSound;
     bool audioActive = soundEnabled;
     std::vector<std::uint32_t> pixels(video::Width * video::Height);
     sdl_screen::Renderer screen(*renderer);
@@ -146,6 +164,7 @@ int Run(bool smokeTest)
     sdl_keyboard::Merge keyMerge;
     sdl_keyboard::Delivery keyDelivery;
     virtual_keyboard::State virtualKeys;
+    auto_boot::Sequence autoBoot;
     const auto queueKey = [&](sdl_keyboard::Source source, sdl_keyboard::Event event) {
         if (const auto merged = keyMerge.Transition(source, event)) keyDelivery.Push(*merged);
     };
@@ -156,6 +175,7 @@ int Run(bool smokeTest)
         for (std::uint8_t scan = 1; scan < 128; ++scan)
             if (virtualKeys.Down(scan)) queueKey(sdl_keyboard::Source::virtualKey, {scan, false});
         virtualKeys.Reset();
+        autoBoot.Cancel();
     };
     mouse_input::Tracker mouse;
     const auto releaseMouse = [&] {
@@ -184,7 +204,8 @@ int Run(bool smokeTest)
     const auto conflicts = [&](const std::filesystem::path& path) {
         return media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path) || tape.Conflicts(path);
     };
-    bool running = true;
+    bool running = smokeTest || options.boot != 0 || options.run.value_or(settings.autostart);
+    if (options.boot) (void)autoBoot.Start(options.boot);
     frame_pacing::Scheduler scheduler(frame_pacing::Clock::now());
     bool done = false;
     int screenshotMode = settings.screenshotMode;
@@ -379,6 +400,22 @@ int Run(bool smokeTest)
                     else scheduler.Restart(started);
                 }
                 if (ImGui::MenuItem("Reset")) { resetMachine(); scheduler.Restart(started); }
+                if (ImGui::MenuItem("Start automatically", nullptr, &settings.autostart)) settingsDirty = true;
+                if (ImGui::BeginMenu("Reset and boot"))
+                {
+                    for (int selection = 1; selection <= 7; ++selection)
+                    {
+                        const auto label = "Boot menu " + std::to_string(selection);
+                        if (ImGui::MenuItem(label.c_str()))
+                        {
+                            resetMachine();
+                            (void)autoBoot.Start(selection);
+                            running = true;
+                            scheduler.Restart(started);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
                 if (ImGui::MenuItem("Mouse", nullptr, &settings.mouse))
                 {
                     releaseMouse();
@@ -708,6 +745,8 @@ int Run(bool smokeTest)
                 board.MouseMove(sample.dx, sample.dy, sample.left, sample.right);
             }
             if (!board.SystemFrame()) { SDL_Log("Emulator frame failed"); return 1; }
+            if (const auto event = autoBoot.FrameCompleted())
+                queueKey(sdl_keyboard::Source::automatic, {event->scan, event->pressed});
             if (!printer.Check()) { actionError = "Printer output failed and was stopped."; showActionError = true; }
             if (tape.TakeError()) { actionError = "Tape I/O failed and playback or recording was stopped."; showActionError = true; }
             snapshots.FrameCompleted();
@@ -801,10 +840,16 @@ int Run(bool smokeTest)
 
 int main(int argc, char** argv)
 {
-    if (argc > 2 || (argc == 2 && std::string_view(argv[1]) != "--smoke-test"))
+    std::vector<std::string_view> arguments;
+    for (int index = 1; index < argc; ++index) arguments.emplace_back(argv[index]);
+    const auto options = preview_options::Parse(arguments);
+    if (!options) { std::fprintf(stderr, "%s\nUse --help for usage.\n", options.error().c_str()); return 2; }
+    if (options->help)
     {
-        std::fprintf(stderr, "Usage: ukncbtl-sdl [--smoke-test]\n");
-        return 2;
+        std::printf("Usage: ukncbtl-sdl [--run|--paused] [--sound|--no-sound] [--fullscreen|--windowed]\n"
+                    "  [--rom PATH] [--floppy 0..3 PATH] [--cartridge 1..2 PATH]\n"
+                    "  [--hard-disk 1..2 PATH] [--boot 1..7]\n");
+        return 0;
     }
-    return Run(argc == 2);
+    return Run(*options);
 }

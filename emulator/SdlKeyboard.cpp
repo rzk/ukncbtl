@@ -4,14 +4,15 @@
 std::optional<sdl_keyboard::Event> sdl_keyboard::Merge::Transition(Source source, Event event)
 {
     if (event.scan == 0 || event.scan >= physical_.size()) return std::nullopt;
-    auto& state = source == Source::physical ? physical_[event.scan] : virtual_[event.scan];
-    const bool before = physical_[event.scan] || virtual_[event.scan];
+    auto& state = source == Source::physical ? physical_[event.scan] :
+        source == Source::virtualKey ? virtual_[event.scan] : automatic_[event.scan];
+    const bool before = physical_[event.scan] || virtual_[event.scan] || automatic_[event.scan];
     state = event.pressed;
-    const bool after = physical_[event.scan] || virtual_[event.scan];
+    const bool after = physical_[event.scan] || virtual_[event.scan] || automatic_[event.scan];
     return before == after ? std::nullopt : std::optional{Event{event.scan, after}};
 }
 
-void sdl_keyboard::Merge::Reset() { physical_.fill(false); virtual_.fill(false); }
+void sdl_keyboard::Merge::Reset() { physical_.fill(false); virtual_.fill(false); automatic_.fill(false); }
 
 std::uint8_t sdl_keyboard::Map(SDL_Scancode key, bool latin)
 {

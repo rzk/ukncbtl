@@ -96,6 +96,10 @@ TEST(SdlKeyboard, MergesVirtualAndPhysicalKeyOwnership)
     ASSERT_TRUE(merge.Transition(Source::virtualKey, {0072, true}));
     merge.Reset();
     EXPECT_FALSE(merge.Transition(Source::virtualKey, {0072, false}));
+    ASSERT_TRUE(merge.Transition(Source::automatic, {0030, true}));
+    EXPECT_FALSE(merge.Transition(Source::physical, {0030, true}));
+    EXPECT_FALSE(merge.Transition(Source::automatic, {0030, false}));
+    ASSERT_TRUE(merge.Transition(Source::physical, {0030, false}));
 }
 
 TEST(SdlKeyboard, VirtualTransitionsAreDeliveredAcrossEmulatedFrames)

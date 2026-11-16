@@ -22,6 +22,7 @@ struct Settings
     int volume = 100;
     bool mouse = false;
     bool keyboard = false;
+    bool autostart = true;
 };
 
 [[nodiscard]] bool ValidWindowSize(int width, int height);
