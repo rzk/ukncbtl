@@ -152,3 +152,13 @@ bool sdl_file_dialog::SaveTape(const std::shared_ptr<State>& state, SDL_Window& 
     SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
     return true;
 }
+
+bool sdl_file_dialog::OpenSubtitles(const std::shared_ptr<State>& state, SDL_Window& window)
+{
+    if (!state) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::subtitles);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"Disassembly listings", "lst;txt"}, {"All files", "*"}};
+    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
+    return true;
+}

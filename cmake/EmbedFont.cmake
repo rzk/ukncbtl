@@ -1,0 +1,8 @@
+if(NOT DEFINED INPUT OR NOT DEFINED OUTPUT)
+  message(FATAL_ERROR "INPUT and OUTPUT are required")
+endif()
+file(READ "${INPUT}" font_hex HEX)
+string(REGEX REPLACE "(..)" "0x\\1," font_bytes "${font_hex}")
+string(REPEAT "0x[0-9a-f][0-9a-f]," 16 row_pattern)
+string(REGEX REPLACE "(${row_pattern})" "\\1\n" font_rows "${font_bytes}")
+file(WRITE "${OUTPUT}" "${font_rows}")

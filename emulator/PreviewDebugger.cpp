@@ -4,8 +4,10 @@
 #include "FrameControl.h"
 #include "emubase/Board.h"
 #include "emubase/Processor.h"
+#include "util/IniEncoding.h"
 #include <array>
 #include <charconv>
+#include <format>
 #include <utility>
 
 std::optional<std::uint16_t> preview_debugger::ParseWord(std::string_view text)
@@ -24,6 +26,13 @@ std::optional<std::uint16_t> preview_debugger::ParseAddress(std::string_view tex
     return value && !(*value & 1) ? value : std::nullopt;
 }
 
+std::optional<std::string> preview_debugger::ToUtf8(std::wstring_view text)
+{
+    const auto bytes = ini_encoding::Encode(text, ini_encoding::Encoding::utf8);
+    if (!bytes) return std::nullopt;
+    return std::string(bytes->begin(), bytes->end());
+}
+
 preview_debugger::Session::~Session()
 {
     SetHistoryEnabled(false);
@@ -40,7 +49,8 @@ std::uint16_t preview_debugger::Session::ReadWord(Processor which, std::uint16_t
 }
 std::uint16_t preview_debugger::Session::ReadPort(Processor which, std::uint16_t address) const
 { return GetProcessor(which).GetMemoryControllerConst()->GetPortView(address); }
-std::vector<preview_debugger::Line> preview_debugger::Session::Disassemble(Processor which, std::uint16_t address, unsigned count) const
+std::vector<preview_debugger::Line> preview_debugger::Session::Disassemble(Processor which, std::uint16_t address,
+    unsigned count, bool useSubtitles) const
 {
     std::vector<Line> lines;
     lines.reserve(count);
@@ -49,14 +59,30 @@ std::vector<preview_debugger::Line> preview_debugger::Session::Disassemble(Proce
         std::array<std::uint16_t, 3> words{};
         for (unsigned word = 0; word < words.size(); ++word)
             words[word] = ReadWord(which, static_cast<std::uint16_t>(address + word * 2), true);
-        auto decoded = DisassembleInstruction(words, address);
+        const auto* block = useSubtitles ? subtitles::Find(subtitles_, address, SUBTYPE_BLOCKCOMMENT) : nullptr;
+        const auto* subtitle = useSubtitles ? subtitles::Find(subtitles_, address, SUBTYPE_COMMENT | SUBTYPE_DATA) : nullptr;
+        const bool data = subtitle && (subtitle->type & SUBTYPE_DATA);
+        auto decoded = data ? std::optional{DisassembledInstruction{L".WORD", std::format(L"{:06o}", words[0]), 1}} :
+            DisassembleInstruction(words, address);
         if (!decoded) break;
         const auto length = decoded->length;
-        lines.push_back({address, words[0], std::move(*decoded)});
+        lines.push_back({address, words[0], std::move(*decoded),
+            block ? ToUtf8(block->comment).value_or("?") : "",
+            subtitle ? ToUtf8(subtitle->comment).value_or("?") : "", data});
         address = static_cast<std::uint16_t>(address + length * 2);
     }
     return lines;
 }
+std::expected<void, subtitles::FileError> preview_debugger::Session::LoadSubtitles(const std::filesystem::path& path)
+{
+    auto loaded = subtitles::LoadFile(path);
+    if (!loaded) return std::unexpected(loaded.error());
+    auto savedPath = path;
+    subtitles_ = std::move(*loaded); subtitlePath_ = std::move(savedPath); subtitlesLoaded_ = true;
+    return {};
+}
+void preview_debugger::Session::UnloadSubtitles()
+{ subtitles_.clear(); subtitlePath_.clear(); subtitlesLoaded_ = false; }
 void preview_debugger::Session::PrepareRun() { frame_control::PrepareRun(board_, cpu_, ppu_); }
 void preview_debugger::Session::Stop() { frame_control::CancelTemporaryBreakpoints(cpu_, ppu_); }
 void preview_debugger::Session::Step() { Stop(); board_.DebugTicks(); }
@@ -72,6 +98,12 @@ bool preview_debugger::Session::StepOver(Processor which)
     return true;
 }
 bool preview_debugger::Session::RunFrame() { return frame_control::RunFrame(board_, cpu_, ppu_); }
+bool preview_debugger::Session::RunTo(Processor which, std::uint16_t address)
+{
+    if ((address & 1) || address == BreakpointSet::NoBreakpoint) return false;
+    Stop(); Breakpoints(which).SetTemporary(address); PrepareRun();
+    return true;
+}
 
 void preview_debugger::Session::SetHistoryEnabled(bool enabled)
 {

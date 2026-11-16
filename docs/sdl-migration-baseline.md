@@ -89,6 +89,11 @@ processors. Optional instruction/interrupt recording keeps separate recent
 histories for CPU and PPU and is cleared on reset or state load. A display-list
 inspector shows the decoded video tags. The remaining debugger tools are still
 being migrated.
+The debugger can navigate disassembly by octal address, run to a temporary
+target, inspect the stack and load UTF-16LE `.lst` subtitles. Subtitles mark
+data words and comments; failed loads leave the current listing intact. The
+preview embeds Droid Sans for Latin and Cyrillic text; its license is in
+`third_party/LICENSE-Apache-2.0` with the accompanying font notice.
 The debugger also displays the legacy CPU and PPU port values. Its sprite
 viewer decodes CPU memory in the five legacy color modes and supports octal
 addresses, byte widths and page navigation; these controls are saved.

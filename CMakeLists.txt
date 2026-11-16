@@ -59,6 +59,17 @@ if(UKNCBTL_ENABLE_IMGUI)
   ukncbtl_toolchain(DearImGui)
   target_include_directories(DearImGui PUBLIC "${imgui_SOURCE_DIR}" "${imgui_SOURCE_DIR}/backends")
   target_link_libraries(DearImGui PUBLIC SDL3::SDL3)
+  set(ui_font_data "${CMAKE_CURRENT_BINARY_DIR}/embedded_ui_font.inc")
+  add_custom_command(OUTPUT "${ui_font_data}"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${imgui_SOURCE_DIR}/misc/fonts/DroidSans.ttf" "-DOUTPUT=${ui_font_data}"
+      -P "${PROJECT_SOURCE_DIR}/cmake/EmbedFont.cmake"
+    DEPENDS "${imgui_SOURCE_DIR}/misc/fonts/DroidSans.ttf" "${PROJECT_SOURCE_DIR}/cmake/EmbedFont.cmake" VERBATIM)
+  add_library(UiFont STATIC emulator/UiFont.cpp "${ui_font_data}")
+  ukncbtl_toolchain(UiFont)
+  target_include_directories(UiFont PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+  target_link_libraries(UiFont PRIVATE DearImGui)
+  install(FILES "${PROJECT_SOURCE_DIR}/third_party/NOTICE-DroidSans"
+    "${PROJECT_SOURCE_DIR}/third_party/LICENSE-Apache-2.0" DESTINATION licenses)
 endif()
 
 add_library(EmulatorProfiling INTERFACE)
@@ -143,7 +154,7 @@ target_link_libraries(FrameControl PUBLIC EmulatorCore)
 add_library(PreviewDebugger STATIC emulator/PreviewDebugger.cpp)
 ukncbtl_toolchain(PreviewDebugger)
 target_include_directories(PreviewDebugger PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-target_link_libraries(PreviewDebugger PRIVATE FrameControl EmulatorCore)
+target_link_libraries(PreviewDebugger PRIVATE FrameControl EmulatorCore SubtitleFile IniEncoding)
 
 add_library(PreviewSprite STATIC emulator/PreviewSprite.cpp)
 ukncbtl_toolchain(PreviewSprite)
@@ -311,7 +322,7 @@ if(UKNCBTL_ENABLE_IMGUI)
   add_executable(ukncbtl-sdl emulator/SdlMain.cpp)
   ukncbtl_toolchain(ukncbtl-sdl)
   target_include_directories(ukncbtl-sdl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard SdlDisplay SdlSprite MouseInput VirtualKeyboard PreviewOptions AutoBoot PreviewDebugger PreviewSprite DisplayListDump SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard ScreenTextCapture VideoPalette FramePacing
+  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui UiFont SdlScreenRenderer SdlKeyboard SdlDisplay SdlSprite MouseInput VirtualKeyboard PreviewOptions AutoBoot PreviewDebugger PreviewSprite DisplayListDump SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard ScreenTextCapture VideoPalette FramePacing
     EmbeddedRom EmulatorCore VideoDecoder)
 endif()
 
@@ -383,7 +394,7 @@ if(BUILD_TESTING)
   endif()
   if(UKNCBTL_ENABLE_IMGUI)
     ukncbtl_portable_test(ImGuiSdlTests tests/ImGuiSdlTests.cpp)
-    target_link_libraries(ImGuiSdlTests PRIVATE DearImGui SdlScreenRenderer)
+    target_link_libraries(ImGuiSdlTests PRIVATE DearImGui UiFont SdlScreenRenderer)
     add_test(NAME SdlFrontendSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
       $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
     set_tests_properties(SdlFrontendSmoke PROPERTIES TIMEOUT 30)

@@ -1,7 +1,11 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PreviewDebugger.h"
 #include "emubase/Emubase.h"
+#include "util/IniEncoding.h"
 #include <gtest/gtest.h>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 
 void DebugLog(const wchar_t*) {}
@@ -121,6 +125,48 @@ TEST_F(PreviewDebuggerTest, StoppingStepOverCancelsOnlyTemporaryBreakpoint)
     debugger.Stop();
     EXPECT_FALSE(debugger.Breakpoints(Processor::cpu).Contains(01002));
     EXPECT_TRUE(debugger.Breakpoints(Processor::cpu).Contains(01004));
+}
+
+TEST_F(PreviewDebuggerTest, RunToUsesAndCancelsTemporaryTargets)
+{
+    preview_debugger::Session debugger(*board);
+    using preview_debugger::Processor;
+    EXPECT_FALSE(debugger.RunTo(Processor::cpu, 01001));
+    ASSERT_TRUE(debugger.RunTo(Processor::cpu, 01002));
+    EXPECT_FALSE(debugger.RunFrame());
+    EXPECT_EQ(board->GetCPU()->GetPC(), 01002);
+    EXPECT_FALSE(debugger.Breakpoints(Processor::cpu).Contains(01002));
+}
+
+TEST_F(PreviewDebuggerTest, LoadsUnicodeSubtitlesAndKeepsInstructionDecodingIndependent)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-debug-subtitles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".lst");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    const auto bytes = ini_encoding::Encode(L";\u041f\u0440\u0438\u0432\u0435\u0442\r\n001000 .WORD ;\u0414\u0430\u043d\u043d\u044b\u0435\r\n001002 ;next\r\n",
+        ini_encoding::Encoding::utf16_le);
+    ASSERT_TRUE(bytes);
+    {
+        std::ofstream file(path, std::ios::binary);
+        ASSERT_TRUE(file.write(reinterpret_cast<const char*>(bytes->data()), static_cast<std::streamsize>(bytes->size())));
+    }
+    preview_debugger::Session debugger(*board);
+    ASSERT_TRUE(debugger.LoadSubtitles(path));
+    ASSERT_NE(debugger.SubtitlePath(), nullptr);
+    const auto lines = debugger.Disassemble(preview_debugger::Processor::cpu, 01000, 2, true);
+    ASSERT_EQ(lines.size(), 2u);
+    EXPECT_TRUE(lines[0].data);
+    EXPECT_EQ(lines[0].instruction.mnemonic, L".WORD");
+    EXPECT_EQ(lines[0].blockComment, ";\xd0\x9f\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82");
+    EXPECT_EQ(lines[0].comment, ";\xd0\x94\xd0\xb0\xd0\xbd\xd0\xbd\xd1\x8b\xd0\xb5");
+    EXPECT_EQ(lines[1].address, 01002);
+    EXPECT_EQ(lines[1].comment, ";next");
+    EXPECT_EQ(debugger.Disassemble(preview_debugger::Processor::cpu, 01000, 1)[0].instruction.mnemonic, L"INC");
+    EXPECT_FALSE(debugger.LoadSubtitles(path / "missing"));
+    EXPECT_EQ(*debugger.SubtitlePath(), path);
+    debugger.UnloadSubtitles();
+    EXPECT_EQ(debugger.SubtitlePath(), nullptr);
+    EXPECT_FALSE(debugger.Disassemble(preview_debugger::Processor::cpu, 01000, 1, true)[0].data);
 }
 
 TEST_F(PreviewDebuggerTest, HistoryCapturesInstructionsAndCanBeDisabledAndCleared)

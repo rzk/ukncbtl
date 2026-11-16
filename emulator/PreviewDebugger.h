@@ -2,9 +2,12 @@
 #pragma once
 #include "BreakpointSet.h"
 #include "InstructionHistory.h"
+#include "SubtitleFile.h"
 #include "emubase/Disasm.h"
 #include <cstdint>
 #include <optional>
+#include <filesystem>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -13,9 +16,16 @@ class CProcessor;
 namespace preview_debugger
 {
 enum class Processor { cpu, ppu };
-struct Line { std::uint16_t address, word; DisassembledInstruction instruction; };
+struct Line
+{
+    std::uint16_t address, word;
+    DisassembledInstruction instruction;
+    std::string blockComment, comment;
+    bool data = false;
+};
 [[nodiscard]] std::optional<std::uint16_t> ParseAddress(std::string_view text);
 [[nodiscard]] std::optional<std::uint16_t> ParseWord(std::string_view text);
+[[nodiscard]] std::optional<std::string> ToUtf8(std::wstring_view text);
 
 // Owns breakpoint storage borrowed by the board. The board must outlive it.
 class Session
@@ -29,13 +39,18 @@ public:
     [[nodiscard]] BreakpointSet& Breakpoints(Processor which);
     [[nodiscard]] std::uint16_t ReadWord(Processor which, std::uint16_t address, bool instruction) const;
     [[nodiscard]] std::uint16_t ReadPort(Processor which, std::uint16_t address) const;
-    [[nodiscard]] std::vector<Line> Disassemble(Processor which, std::uint16_t address, unsigned count) const;
+    [[nodiscard]] std::vector<Line> Disassemble(Processor which, std::uint16_t address, unsigned count,
+        bool useSubtitles = false) const;
+    [[nodiscard]] std::expected<void, subtitles::FileError> LoadSubtitles(const std::filesystem::path& path);
+    void UnloadSubtitles();
+    [[nodiscard]] const std::filesystem::path* SubtitlePath() const { return subtitlesLoaded_ ? &subtitlePath_ : nullptr; }
     void PrepareRun();
     void Stop();
     void Step();
     // True means a temporary breakpoint was installed and the machine should run.
     // False means step-over fell back to a single debug tick.
     [[nodiscard]] bool StepOver(Processor which);
+    [[nodiscard]] bool RunTo(Processor which, std::uint16_t address);
     [[nodiscard]] bool RunFrame();
     void SetHistoryEnabled(bool enabled);
     [[nodiscard]] bool HistoryEnabled() const { return historyEnabled_; }
@@ -48,5 +63,8 @@ private:
     BreakpointSet cpu_, ppu_;
     InstructionHistory history_;
     bool historyEnabled_ = false;
+    std::vector<DisasmSubtitleItem> subtitles_;
+    std::filesystem::path subtitlePath_;
+    bool subtitlesLoaded_ = false;
 };
 }

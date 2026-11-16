@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "SdlScreenRenderer.h"
+#include "UiFont.h"
 #include <SDL3/SDL.h>
 #include <gtest/gtest.h>
 #include <imgui.h>
@@ -26,6 +27,7 @@ protected:
         ASSERT_TRUE(renderer) << SDL_GetError();
         IMGUI_CHECKVERSION();
         ASSERT_NE(ImGui::CreateContext(), nullptr);
+        ASSERT_TRUE(ui_font::Install());
         ImGui::GetIO().IniFilename = nullptr;
         platformReady = ImGui_ImplSDL3_InitForSDLRenderer(window.get(), renderer.get());
         ASSERT_TRUE(platformReady);
@@ -74,5 +76,16 @@ TEST_F(ImGuiSdlTest, DrawsUiOverEmulatorFrameAndHandlesKeyboardEvents)
     EXPECT_EQ(r, 255); EXPECT_EQ(g, 0); EXPECT_EQ(b, 0);
     ASSERT_TRUE(SDL_ReadSurfacePixel(output.get(), 40, 40, &r, &g, &b, &a));
     EXPECT_EQ(r, 0); EXPECT_EQ(g, 0); EXPECT_EQ(b, 255);
+}
+
+TEST_F(ImGuiSdlTest, BundledFontProvidesCyrillicGlyphs)
+{
+    ImGui_ImplSDLRenderer3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    EXPECT_TRUE(ImGui::GetFont()->IsGlyphInFont(0x041f));
+    EXPECT_TRUE(ImGui::GetFont()->IsGlyphInFont(0x044f));
+    ImGui::TextUnformatted("\xd0\x9f\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82");
+    ImGui::Render();
 }
 }

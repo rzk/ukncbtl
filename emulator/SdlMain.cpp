@@ -26,6 +26,7 @@
 #include "SpriteDecoder.h"
 #include "VideoDecoder.h"
 #include "VideoPalette.h"
+#include "UiFont.h"
 #include "VirtualKeyboard.h"
 #include "emubase/Board.h"
 #include "emubase/Processor.h"
@@ -108,6 +109,7 @@ int Run(const preview_options::Options& options)
     ImGuiRuntime gui;
     IMGUI_CHECKVERSION();
     if (!ImGui::CreateContext()) return 1;
+    if (!ui_font::Install()) { SDL_Log("Could not load the UI font."); return 1; }
     ImGui::GetIO().IniFilename = nullptr;
     ImGui::StyleColorsDark();
     gui.platform = ImGui_ImplSDL3_InitForSDLRenderer(window.get(), renderer.get());
@@ -230,6 +232,10 @@ int Run(const preview_options::Options& options)
     preview_debugger::Processor debugProcessor = preview_debugger::Processor::cpu;
     std::array<char, 16> breakpointAddress{};
     std::array<char, 16> memoryAddress{'0', '0', '0', '0', '0', '0', 0};
+    std::array<char, 16> disasmAddress{};
+    std::uint16_t disasmBase = 0;
+    bool followPc = true;
+    std::string disasmError;
     std::array<char, 16> spriteAddress{};
     std::snprintf(spriteAddress.data(), spriteAddress.size(), "%06o", static_cast<unsigned>(settings.spriteAddress));
     std::string spriteError;
@@ -323,6 +329,11 @@ int Run(const preview_options::Options& options)
                 {
                     const auto format = result->filter == 1 ? screenshot_format::Format::bmp : screenshot_format::Format::png;
                     screenshotPath = screenshot_file::WithDefaultExtension(std::filesystem::path(path), format);
+                }
+                else if (result->purpose == sdl_file_dialog::Purpose::subtitles)
+                {
+                    if (!debugger.LoadSubtitles(std::filesystem::path(path)))
+                    { actionError = "Could not load the UTF-16LE disassembly listing."; showActionError = true; }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::snapshotLoad)
                 {
@@ -750,6 +761,14 @@ int Run(const preview_options::Options& options)
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Clear all")) { debugger.Breakpoints(debugProcessor).Clear(); debuggerError.clear(); }
+                ImGui::SameLine();
+                if (ImGui::Button("Run to"))
+                {
+                    const auto address = preview_debugger::ParseAddress(breakpointAddress.data());
+                    if (!address || !debugger.RunTo(debugProcessor, *address))
+                        debuggerError = "Enter an even octal address.";
+                    else { debuggerError.clear(); startMachine(started); }
+                }
                 if (!debuggerError.empty()) ImGui::TextWrapped("%s", debuggerError.c_str());
                 const auto addresses = debugger.Breakpoints(debugProcessor).Addresses();
                 std::optional<std::uint16_t> remove;
@@ -762,8 +781,34 @@ int Run(const preview_options::Options& options)
                 }
                 if (remove) (void)debugger.Breakpoints(debugProcessor).Remove(*remove);
                 ImGui::EndDisabled();
-                ImGui::SeparatorText("Disassembly at PC");
-                for (const auto& line : debugger.Disassemble(debugProcessor, processor.GetPC(), 12))
+                ImGui::SeparatorText("Disassembly");
+                ImGui::Checkbox("Follow PC", &followPc);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(100);
+                ImGui::InputText("##disasm-address", disasmAddress.data(), disasmAddress.size(), ImGuiInputTextFlags_CharsDecimal);
+                ImGui::SameLine();
+                if (ImGui::Button("Go"))
+                {
+                    const auto address = preview_debugger::ParseAddress(disasmAddress.data());
+                    if (!address) disasmError = "Enter an even octal address.";
+                    else { disasmBase = *address; followPc = false; disasmError.clear(); }
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled(fileDialog->Pending());
+                if (ImGui::Button("Load subtitles..."))
+                    if (!sdl_file_dialog::OpenSubtitles(fileDialog, *window))
+                    { actionError = "Could not open the file dialog."; showActionError = true; }
+                ImGui::EndDisabled();
+                if (const auto* path = debugger.SubtitlePath())
+                {
+                    const auto text = path->u8string();
+                    ImGui::TextUnformatted(reinterpret_cast<const char*>(text.c_str()));
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Unload subtitles")) debugger.UnloadSubtitles();
+                }
+                if (!disasmError.empty()) ImGui::TextWrapped("%s", disasmError.c_str());
+                const auto baseAddress = followPc ? processor.GetPC() : disasmBase;
+                for (const auto& line : debugger.Disassemble(debugProcessor, baseAddress, 12, true))
                 {
                     const auto ascii = [](const std::wstring& text) {
                         std::string result;
@@ -772,8 +817,25 @@ int Run(const preview_options::Options& options)
                     };
                     const auto mnemonic = ascii(line.instruction.mnemonic);
                     const auto argument = ascii(line.instruction.argument);
-                    ImGui::Text("%06o  %06o  %-8s %s", static_cast<unsigned>(line.address),
-                        static_cast<unsigned>(line.word), mnemonic.c_str(), argument.c_str());
+                    if (!line.blockComment.empty()) ImGui::TextUnformatted(line.blockComment.c_str());
+                    ImGui::Text("%06o  %06o  %-8s %s %s", static_cast<unsigned>(line.address),
+                        static_cast<unsigned>(line.word), mnemonic.c_str(), argument.c_str(), line.comment.c_str());
+                }
+                if (!followPc)
+                {
+                    if (ImGui::Button("Previous word")) disasmBase = static_cast<std::uint16_t>(disasmBase - 2);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Next word")) disasmBase = static_cast<std::uint16_t>(disasmBase + 2);
+                }
+                if (ImGui::CollapsingHeader("Stack (octal)"))
+                {
+                    const auto sp = static_cast<std::uint16_t>(processor.GetSP() & 0xfffe);
+                    for (int offset = -8; offset < 8; ++offset)
+                    {
+                        const auto address = static_cast<std::uint16_t>(sp + offset * 2);
+                        ImGui::Text("%s %06o  %06o", offset == 0 ? ">" : " ", static_cast<unsigned>(address),
+                            static_cast<unsigned>(debugger.ReadWord(debugProcessor, address, false)));
+                    }
                 }
                 if (ImGui::CollapsingHeader("Memory (octal)"))
                 {
