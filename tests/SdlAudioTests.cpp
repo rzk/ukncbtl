@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <array>
 #include <memory>
+#include <utility>
 
 void DebugLog(const wchar_t*) {}
 
@@ -88,5 +89,22 @@ TEST_F(SdlAudioTest, LegacyAndContextCallbacksReplaceEachOther)
     board->SetSoundGenCallbackWithContext(nullptr, nullptr);
     ASSERT_TRUE(board->SystemFrame());
     EXPECT_EQ(contextSamples, 2 * sdl_audio::SamplesPerFrame);
+}
+
+TEST_F(SdlAudioTest, ConfiguresSpeedAndVolumeWithoutChangingInvalidValues)
+{
+    sdl_audio::Output output(*board, *stream);
+    for (const auto [speed, ratio] : {std::pair{0, 5.0f}, std::pair{1, 1.0f}, std::pair{2, 2.0f},
+        std::pair{3, 4.0f}, std::pair{0x7fff, 0.5f}, std::pair{0x7ffe, 0.25f}, std::pair{0x7ffd, 0.1f}})
+    {
+        ASSERT_TRUE(output.Configure(static_cast<std::uint16_t>(speed), 35));
+        EXPECT_FLOAT_EQ(SDL_GetAudioStreamFrequencyRatio(stream.get()), ratio);
+        EXPECT_FLOAT_EQ(SDL_GetAudioStreamGain(stream.get()), 0.35f);
+    }
+    EXPECT_FALSE(output.Configure(4, 50));
+    EXPECT_FALSE(output.Configure(1, -1));
+    EXPECT_FALSE(output.Configure(1, 101));
+    EXPECT_FLOAT_EQ(SDL_GetAudioStreamFrequencyRatio(stream.get()), 0.1f);
+    EXPECT_FLOAT_EQ(SDL_GetAudioStreamGain(stream.get()), 0.35f);
 }
 }

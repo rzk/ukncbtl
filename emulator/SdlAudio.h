@@ -29,6 +29,8 @@ public:
     // if it exceeds the latency bound. Reset discards pending and queued audio.
     [[nodiscard]] bool SubmitFrame();
     [[nodiscard]] bool Reset();
+    // Speed follows the legacy settings values; volume is 0..100 percent.
+    [[nodiscard]] bool Configure(std::uint16_t speed, int volume);
 private:
     static void Feed(void* context, unsigned short left, unsigned short right);
     CMotherboard& board_;

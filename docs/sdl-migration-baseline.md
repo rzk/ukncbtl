@@ -80,6 +80,9 @@ screen scaling modes; the preview fits each mode into a 4:3 viewport. Window
 size, sound preference, display settings, and screenshot size are saved in the SDL
 preference directory selected by `SDL_GetPrefPath("UKNCBTL", "SDL Preview")`,
 separate from legacy settings.
+The preview also offers the legacy speed choices, volume, AY and Covox toggles.
+Audio speed and pitch track the selected rate; maximum speed uses 500% audio as
+in the legacy application. These settings are saved with the preview preferences.
 The preview preserves malformed
 settings files without overwriting them; the smoke test does not read or write
 preferences.

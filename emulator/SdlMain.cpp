@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "MediaSlots.h"
+#include "FramePacing.h"
 #include "PreviewRoms.h"
 #include "PreviewSettings.h"
 #include "PreviewSnapshot.h"
@@ -30,6 +31,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // The portable core delegates diagnostics to its host.
@@ -102,6 +104,8 @@ int Run(bool smokeTest)
     std::string actionError = startupError;
     bool showActionError = !startupError.empty();
     board.Reset();
+    board.SetSoundAY(settings.soundAY);
+    board.SetSoundCovox(settings.soundCovox);
     preview_snapshot::Session snapshots(board);
     std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audioStream(nullptr, SDL_DestroyAudioStream);
     std::unique_ptr<sdl_audio::Output> audio;
@@ -109,10 +113,17 @@ int Run(bool smokeTest)
     {
         const SDL_AudioSpec spec{SDL_AUDIO_S16LE, sdl_audio::Channels, sdl_audio::SampleRate};
         audioStream.reset(SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr));
-        if (audioStream && (!settings.sound || SDL_ResumeAudioStreamDevice(audioStream.get())))
+        if (audioStream)
+        {
             audio = std::make_unique<sdl_audio::Output>(board, *audioStream);
-        else
-            SDL_Log("Audio unavailable: %s", SDL_GetError());
+            if (!audio->Configure(settings.speed, settings.volume) ||
+                (settings.sound && !SDL_ResumeAudioStreamDevice(audioStream.get())))
+            {
+                SDL_Log("Audio unavailable: %s", SDL_GetError());
+                audio.reset(); audioStream.reset();
+            }
+        }
+        else SDL_Log("Audio unavailable: %s", SDL_GetError());
     }
     else SDL_Log("Audio unavailable: %s", SDL_GetError());
     if (smokeTest && !audio) return 1;
@@ -140,6 +151,7 @@ int Run(bool smokeTest)
         return media.Conflicts(path) || roms.Conflicts(path);
     };
     bool running = true;
+    frame_pacing::Scheduler scheduler(frame_pacing::Clock::now());
     bool done = false;
     int screenshotMode = settings.screenshotMode;
     int displayMode = settings.displayMode;
@@ -148,6 +160,8 @@ int Run(bool smokeTest)
     while (!done)
     {
         bool copyScreenshot = false;
+        bool speedChanged = false;
+        bool volumeChanged = false;
         std::optional<std::filesystem::path> screenshotPath;
         const auto started = std::chrono::steady_clock::now();
         SDL_Event event;
@@ -223,7 +237,7 @@ int Run(bool smokeTest)
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::systemRom)
                 {
-                    if (roms.LoadSystem(std::filesystem::path(path))) resetMachine();
+                    if (roms.LoadSystem(std::filesystem::path(path))) { resetMachine(); scheduler.Restart(started); }
                     else { actionError = "Could not load the system ROM image."; showActionError = true; }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::cartridge)
@@ -270,8 +284,13 @@ int Run(bool smokeTest)
             menuHeight = ImGui::GetWindowHeight();
             if (ImGui::BeginMenu("Emulator"))
             {
-                if (ImGui::MenuItem(running ? "Pause" : "Run")) { running = !running; if (!running) releaseKeys(); }
-                if (ImGui::MenuItem("Reset")) resetMachine();
+                if (ImGui::MenuItem(running ? "Pause" : "Run"))
+                {
+                    running = !running;
+                    if (!running) releaseKeys();
+                    else scheduler.Restart(started);
+                }
+                if (ImGui::MenuItem("Reset")) { resetMachine(); scheduler.Restart(started); }
                 if (ImGui::BeginMenu("System ROM"))
                 {
                     if (const auto* path = roms.SystemPath())
@@ -285,7 +304,7 @@ int Run(bool smokeTest)
                     { actionError = "Could not open the file dialog."; showActionError = true; }
                     if (ImGui::MenuItem("Use embedded ROM and reset", nullptr, false,
                         roms.Source() != preview_roms::SystemSource::embedded))
-                    { roms.UseEmbedded(); resetMachine(); }
+                    { roms.UseEmbedded(); resetMachine(); scheduler.Restart(started); }
                     ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Load state...", nullptr, false, !fileDialog->Pending()) &&
@@ -304,6 +323,32 @@ int Run(bool smokeTest)
                 {
                     settings.sound = soundEnabled;
                     settingsDirty = true;
+                }
+                if (ImGui::BeginMenu("Speed"))
+                {
+                    constexpr std::array choices{
+                        std::pair{"10%", std::uint16_t{0x7ffd}}, std::pair{"25%", std::uint16_t{0x7ffe}},
+                        std::pair{"50%", std::uint16_t{0x7fff}}, std::pair{"100%", std::uint16_t{1}},
+                        std::pair{"200%", std::uint16_t{2}}, std::pair{"400%", std::uint16_t{3}},
+                        std::pair{"Maximum", std::uint16_t{0}}};
+                    for (const auto& [label, speed] : choices)
+                        if (ImGui::MenuItem(label, nullptr, settings.speed == speed))
+                        {
+                            settings.speed = speed;
+                            settingsDirty = speedChanged = true;
+                            scheduler.Restart(started);
+                        }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Audio"))
+                {
+                    if (ImGui::MenuItem("AY sound", nullptr, &settings.soundAY))
+                    { board.SetSoundAY(settings.soundAY); settingsDirty = true; }
+                    if (ImGui::MenuItem("Covox sound", nullptr, &settings.soundCovox))
+                    { board.SetSoundCovox(settings.soundCovox); settingsDirty = true; }
+                    if (ImGui::SliderInt("Volume", &settings.volume, 0, 100, "%d%%"))
+                        settingsDirty = volumeChanged = true;
+                    ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Quit")) done = true;
                 ImGui::EndMenu();
@@ -412,6 +457,12 @@ int Run(bool smokeTest)
             if (ImGui::Button("OK")) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
+        if (audio && (speedChanged || volumeChanged) &&
+            ((speedChanged && !audio->Reset()) || !audio->Configure(settings.speed, settings.volume)))
+        {
+            SDL_Log("Audio configuration failed: %s", SDL_GetError());
+            audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
+        }
         const bool shouldPlay = running && soundEnabled && audio != nullptr;
         if (audio && shouldPlay != audioActive)
         {
@@ -425,11 +476,13 @@ int Run(bool smokeTest)
             }
             audioActive = audio && shouldPlay;
         }
-        if (running)
+        if (running && scheduler.Due(started))
         {
+            scheduler.FrameStarted(started, settings.speed, FRAMERATE);
             if (const auto key = keyDelivery.Next()) board.KeyboardEvent(key->scan, key->pressed);
             if (!board.SystemFrame()) { SDL_Log("Emulator frame failed"); return 1; }
             snapshots.FrameCompleted();
+            if (smokeTest) ++frames;
             if (audio && audioActive && !audio->SubmitFrame())
             {
                 SDL_Log("Audio submission failed: %s", SDL_GetError());
@@ -483,8 +536,8 @@ int Run(bool smokeTest)
         if (drawWidth > 0 && drawHeight > 0 && !screen.Draw(*image, destination)) { SDL_Log("Screen draw failed: %s", SDL_GetError()); return 1; }
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer.get());
         if (!SDL_RenderPresent(renderer.get())) return 1;
-        if (smokeTest && ++frames == 3) break;
-        std::this_thread::sleep_until(started + std::chrono::milliseconds(20));
+        if (smokeTest && frames >= 3) break;
+        std::this_thread::sleep_for(scheduler.Delay(frame_pacing::Clock::now(), settings.speed, running));
     }
     if (settingsPath)
     {

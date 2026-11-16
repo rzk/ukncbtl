@@ -4,6 +4,7 @@
 #include "util/IniFile.h"
 #include <expected>
 #include <filesystem>
+#include <cstdint>
 
 namespace preview_settings
 {
@@ -15,6 +16,10 @@ struct Settings
     bool sound = true;
     int displayMode = 1;
     int paletteMode = 0;
+    std::uint16_t speed = 1;
+    bool soundAY = false;
+    bool soundCovox = false;
+    int volume = 100;
 };
 
 [[nodiscard]] bool ValidWindowSize(int width, int height);

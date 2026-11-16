@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "SdlAudio.h"
+#include "FramePacing.h"
 #include "emubase/Board.h"
 #include "emubase/Emubase.h"
 
@@ -33,4 +34,11 @@ bool sdl_audio::Output::Reset()
 {
     batch_.Reset();
     return SDL_ClearAudioStream(&stream_);
+}
+
+bool sdl_audio::Output::Configure(std::uint16_t speed, int volume)
+{
+    if (!frame_pacing::IsSupportedSpeed(speed) || volume < 0 || volume > 100) return false;
+    return SDL_SetAudioStreamFrequencyRatio(&stream_, frame_pacing::AudioRatio(speed)) &&
+        SDL_SetAudioStreamGain(&stream_, static_cast<float>(volume) / 100.0f);
 }

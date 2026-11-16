@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PreviewSettings.h"
+#include "FramePacing.h"
 #include "util/ScreenScale.h"
 #include "util/SettingsCodec.h"
 #include <optional>
@@ -57,6 +58,15 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
     if (display && *display < screen_scale::Modes().size()) settings.displayMode = static_cast<int>(*display);
     const auto palette = Number(doc, L"PaletteMode");
     if (palette && *palette <= 2) settings.paletteMode = static_cast<int>(*palette);
+    const auto speed = Number(doc, L"Speed");
+    if (speed && *speed <= 0xffff && frame_pacing::IsSupportedSpeed(static_cast<std::uint16_t>(*speed)))
+        settings.speed = static_cast<std::uint16_t>(*speed);
+    const auto ay = Number(doc, L"SoundAY");
+    if (ay && *ay <= 1) settings.soundAY = *ay != 0;
+    const auto covox = Number(doc, L"SoundCovox");
+    if (covox && *covox <= 1) settings.soundCovox = *covox != 0;
+    const auto volume = Number(doc, L"Volume");
+    if (volume && *volume <= 100) settings.volume = static_cast<int>(*volume);
     return settings;
 }
 
@@ -65,7 +75,8 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
     if (!ValidWindowSize(settings.windowWidth, settings.windowHeight) || settings.screenshotMode < 0 ||
         static_cast<std::size_t>(settings.screenshotMode) >= screen_scale::Modes().size() || settings.displayMode < 0 ||
         static_cast<std::size_t>(settings.displayMode) >= screen_scale::Modes().size() ||
-        settings.paletteMode < 0 || settings.paletteMode > 2)
+        settings.paletteMode < 0 || settings.paletteMode > 2 || !frame_pacing::IsSupportedSpeed(settings.speed) ||
+        settings.volume < 0 || settings.volume > 100)
         return std::unexpected(IniFileError::invalid_entry);
     auto file = Read(path);
     if (!file) return std::unexpected(file.error());
@@ -76,7 +87,11 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         !doc.Set(section, L"ScreenshotMode", std::to_wstring(settings.screenshotMode)) ||
         !doc.Set(section, L"Sound", settings.sound ? L"1" : L"0") ||
         !doc.Set(section, L"DisplayMode", std::to_wstring(settings.displayMode)) ||
-        !doc.Set(section, L"PaletteMode", std::to_wstring(settings.paletteMode)))
+        !doc.Set(section, L"PaletteMode", std::to_wstring(settings.paletteMode)) ||
+        !doc.Set(section, L"Speed", std::to_wstring(settings.speed)) ||
+        !doc.Set(section, L"SoundAY", settings.soundAY ? L"1" : L"0") ||
+        !doc.Set(section, L"SoundCovox", settings.soundCovox ? L"1" : L"0") ||
+        !doc.Set(section, L"Volume", std::to_wstring(settings.volume)))
         return std::unexpected(IniFileError::invalid_entry);
     return (*file)->Save(path);
 }
