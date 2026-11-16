@@ -168,6 +168,10 @@ add_library(EmbeddedRom STATIC emulator/EmbeddedRom.cpp "${embedded_rom_data}")
 ukncbtl_toolchain(EmbeddedRom)
 target_include_directories(EmbeddedRom PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
+add_library(PreviewRoms STATIC emulator/PreviewRoms.cpp)
+ukncbtl_toolchain(PreviewRoms)
+target_link_libraries(PreviewRoms PRIVATE RomFile EmbeddedRom EmulatorCore)
+
 add_library(MemoryDump STATIC emulator/MemoryDump.cpp)
 ukncbtl_toolchain(MemoryDump)
 
@@ -262,7 +266,7 @@ if(UKNCBTL_ENABLE_IMGUI)
   add_executable(ukncbtl-sdl emulator/SdlMain.cpp)
   ukncbtl_toolchain(ukncbtl-sdl)
   target_include_directories(ukncbtl-sdl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard SdlAudio SdlFileDialog MediaSlots PreviewSettings PreviewSnapshot ScreenshotImage ScreenshotFile ScreenshotClipboard VideoPalette
+  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot ScreenshotImage ScreenshotFile ScreenshotClipboard VideoPalette
     EmbeddedRom EmulatorCore VideoDecoder)
 endif()
 
@@ -296,6 +300,8 @@ if(BUILD_TESTING)
   target_link_libraries(PreviewSettingsTests PRIVATE PreviewSettings IniFile)
   ukncbtl_portable_test(PreviewSnapshotTests tests/PreviewSnapshotTests.cpp)
   target_link_libraries(PreviewSnapshotTests PRIVATE PreviewSnapshot EmulatorCore)
+  ukncbtl_portable_test(PreviewRomsTests tests/PreviewRomsTests.cpp)
+  target_link_libraries(PreviewRomsTests PRIVATE PreviewRoms PreviewSnapshot EmbeddedRom EmulatorCore)
   if(UKNCBTL_ENABLE_SDL3)
     ukncbtl_portable_test(Sdl3SmokeTests tests/Sdl3SmokeTests.cpp)
     target_link_libraries(Sdl3SmokeTests PRIVATE SDL3::SDL3)

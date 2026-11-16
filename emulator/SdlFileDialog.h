@@ -11,7 +11,7 @@
 namespace sdl_file_dialog
 {
 enum class Status { selected, canceled, failed };
-enum class Purpose { disk, screenshot, snapshotLoad, snapshotSave };
+enum class Purpose { disk, screenshot, snapshotLoad, snapshotSave, systemRom, cartridge };
 struct Result
 {
     media_slots::Kind kind;
@@ -42,4 +42,5 @@ private:
 [[nodiscard]] bool SaveScreenshot(const std::shared_ptr<State>& state, SDL_Window& window);
 [[nodiscard]] bool OpenSnapshot(const std::shared_ptr<State>& state, SDL_Window& window);
 [[nodiscard]] bool SaveSnapshot(const std::shared_ptr<State>& state, SDL_Window& window);
+[[nodiscard]] bool OpenRom(const std::shared_ptr<State>& state, SDL_Window& window, Purpose purpose, int slot = -1);
 }

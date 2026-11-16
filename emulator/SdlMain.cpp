@@ -1,6 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "EmbeddedRom.h"
 #include "MediaSlots.h"
+#include "PreviewRoms.h"
 #include "PreviewSettings.h"
 #include "PreviewSnapshot.h"
 #include "ScreenshotImage.h"
@@ -97,12 +97,10 @@ int Run(bool smokeTest)
     ProcessorRuntime processor;
     CMotherboard board;
     media_slots::Slots media(board);
+    preview_roms::Roms roms(board);
     const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
     std::string actionError = startupError;
     bool showActionError = !startupError.empty();
-    std::array<std::uint8_t, 32768> rom{};
-    std::ranges::copy(embedded_rom::Bytes(), rom.begin());
-    board.LoadROM(rom);
     board.Reset();
     preview_snapshot::Session snapshots(board);
     std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audioStream(nullptr, SDL_DestroyAudioStream);
@@ -127,6 +125,19 @@ int Run(bool smokeTest)
     const auto releaseKeys = [&] {
         (void)keyboard.ReleaseAll();
         for (const auto event : keyDelivery.Reset()) board.KeyboardEvent(event.scan, event.pressed);
+    };
+    const auto resetMachine = [&] {
+        releaseKeys();
+        board.Reset();
+        snapshots.ResetTracking();
+        if (audio && !audio->Reset())
+        {
+            SDL_Log("Audio reset failed: %s", SDL_GetError());
+            audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
+        }
+    };
+    const auto conflicts = [&](const std::filesystem::path& path) {
+        return media.Conflicts(path) || roms.Conflicts(path);
     };
     bool running = true;
     bool done = false;
@@ -194,13 +205,14 @@ int Run(bool smokeTest)
                         actionError = "Could not load the state image.";
                         showActionError = true;
                     }
+                    else roms.MarkRestoredFromSnapshot();
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::snapshotSave)
                 {
                     const auto target = preview_snapshot::WithDefaultExtension(std::filesystem::path(path));
-                    if (media.Conflicts(target))
+                    if (conflicts(target))
                     {
-                        actionError = "The selected file is an attached disk image. Choose another file.";
+                        actionError = "The selected file is used by the emulator. Choose another file.";
                         showActionError = true;
                     }
                     else if (!snapshots.Save(target))
@@ -208,6 +220,24 @@ int Run(bool smokeTest)
                         actionError = "Could not save the state image.";
                         showActionError = true;
                     }
+                }
+                else if (result->purpose == sdl_file_dialog::Purpose::systemRom)
+                {
+                    if (roms.LoadSystem(std::filesystem::path(path))) resetMachine();
+                    else { actionError = "Could not load the system ROM image."; showActionError = true; }
+                }
+                else if (result->purpose == sdl_file_dialog::Purpose::cartridge)
+                {
+                    if (!roms.Insert(result->slot, std::filesystem::path(path)))
+                    {
+                        actionError = "Could not load the ROM cartridge image.";
+                        showActionError = true;
+                    }
+                }
+                else if (result->kind == media_slots::Kind::hardDisk && !roms.Inserted(result->slot))
+                {
+                    actionError = "Insert the matching hard-disk ROM cartridge first.";
+                    showActionError = true;
                 }
                 else if (!media.Attach(result->kind, result->slot, std::filesystem::path(path)))
                 {
@@ -241,16 +271,22 @@ int Run(bool smokeTest)
             if (ImGui::BeginMenu("Emulator"))
             {
                 if (ImGui::MenuItem(running ? "Pause" : "Run")) { running = !running; if (!running) releaseKeys(); }
-                if (ImGui::MenuItem("Reset"))
+                if (ImGui::MenuItem("Reset")) resetMachine();
+                if (ImGui::BeginMenu("System ROM"))
                 {
-                    releaseKeys();
-                    board.Reset();
-                    snapshots.ResetTracking();
-                    if (audio && !audio->Reset())
+                    if (const auto* path = roms.SystemPath())
                     {
-                        SDL_Log("Audio reset failed: %s", SDL_GetError());
-                        audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
+                        const auto text = path->u8string();
+                        ImGui::TextUnformatted(reinterpret_cast<const char*>(text.c_str()));
                     }
+                    else ImGui::TextDisabled(roms.Source() == preview_roms::SystemSource::embedded ? "Embedded ROM" : "Restored from state");
+                    if (ImGui::MenuItem("Load ROM and reset...", nullptr, false, !fileDialog->Pending()) &&
+                        !sdl_file_dialog::OpenRom(fileDialog, *window, sdl_file_dialog::Purpose::systemRom))
+                    { actionError = "Could not open the file dialog."; showActionError = true; }
+                    if (ImGui::MenuItem("Use embedded ROM and reset", nullptr, false,
+                        roms.Source() != preview_roms::SystemSource::embedded))
+                    { roms.UseEmbedded(); resetMachine(); }
+                    ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Load state...", nullptr, false, !fileDialog->Pending()) &&
                     !sdl_file_dialog::OpenSnapshot(fileDialog, *window))
@@ -311,6 +347,25 @@ int Run(bool smokeTest)
                 }
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Cartridges"))
+            {
+                for (int slot = 0; slot < 2; ++slot)
+                {
+                    const auto label = "Cartridge " + std::to_string(slot + 1);
+                    if (!ImGui::BeginMenu(label.c_str())) continue;
+                    if (roms.Inserted(slot))
+                    {
+                        const auto text = roms.CartridgePath(slot)->u8string();
+                        ImGui::TextUnformatted(reinterpret_cast<const char*>(text.c_str()));
+                        if (ImGui::MenuItem("Eject")) (void)roms.Eject(slot);
+                    }
+                    else if (ImGui::MenuItem("Insert...", nullptr, false, !fileDialog->Pending()) &&
+                        !sdl_file_dialog::OpenRom(fileDialog, *window, sdl_file_dialog::Purpose::cartridge, slot))
+                    { actionError = "Could not open the file dialog."; showActionError = true; }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Disks"))
             {
                 const auto driveMenu = [&](media_slots::Kind kind, int slot, const std::string& label) {
@@ -328,7 +383,12 @@ int Run(bool smokeTest)
                     }
                     else if (ImGui::MenuItem("Attach...", nullptr, false, !fileDialog->Pending()))
                     {
-                        if (!sdl_file_dialog::Open(fileDialog, *window, kind, slot))
+                        if (kind == media_slots::Kind::hardDisk && !roms.Inserted(slot))
+                        {
+                            actionError = "Insert the matching hard-disk ROM cartridge first.";
+                            showActionError = true;
+                        }
+                        else if (!sdl_file_dialog::Open(fileDialog, *window, kind, slot))
                         {
                             actionError = "Could not open the file dialog.";
                             showActionError = true;
@@ -395,11 +455,11 @@ int Run(bool smokeTest)
                     actionError = "Could not copy the screenshot to the clipboard.";
                     showActionError = true;
                 }
-                if (screenshotPath && media.Conflicts(*screenshotPath))
+                if (screenshotPath && conflicts(*screenshotPath))
                 {
                     if (showActionError) actionError += "\n";
                     else actionError.clear();
-                    actionError += "The selected file is an attached disk image. Choose another file.";
+                    actionError += "The selected file is used by the emulator. Choose another file.";
                     showActionError = true;
                 }
                 else if (screenshotPath && !screenshot_file::Save(*screenshotPath, *capture))

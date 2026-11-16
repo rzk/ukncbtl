@@ -72,17 +72,20 @@ It supports screenshot capture to PNG/BMP files or the SDL clipboard, with
 the existing screenshot size modes. It also supports basic SDL audio output and
 attaching/ejecting floppy and hard-disk images through SDL file dialogs. Disks
 may be modified by the emulated machine; read-only mounts are indicated in the
-menu. The Display menu offers the legacy RGB, GRB and grayscale palettes and
+menu. Two ROM cartridge slots and an external system ROM can be selected; a
+hard disk requires a cartridge in the matching slot. Changing the system ROM
+resets the machine. ROM and disk paths are not restored automatically. The
+Display menu offers the legacy RGB, GRB and grayscale palettes and
 screen scaling modes; the preview fits each mode into a 4:3 viewport. Window
 size, sound preference, display settings, and screenshot size are saved in the SDL
 preference directory selected by `SDL_GetPrefPath("UKNCBTL", "SDL Preview")`,
 separate from legacy settings.
-Disk paths are not restored automatically. The preview preserves malformed
+The preview preserves malformed
 settings files without overwriting them; the smoke test does not read or write
 preferences.
 The SDL preview can save and load legacy-compatible `.uknc` state images. A
-successful load pauses the machine; attached disk images remain attached and
-are not stored in the state image. Interactive dialogs still need testing.
+successful load pauses the machine; attached disks and cartridges remain
+attached and are not stored in the state image. Interactive dialogs still need testing.
 Audio output, file dialogs and disk interaction need interactive testing on each
 platform. Linux dialogs may require an available desktop portal.
 The `SdlFrontendSmoke` test runs three frames using SDL's dummy video driver;

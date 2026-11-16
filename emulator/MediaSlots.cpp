@@ -49,6 +49,8 @@ std::expected<void, media_slots::Error> media_slots::Slots::Attach(Kind kind, in
     if (!Valid(kind, slot)) return std::unexpected(Error::invalid_slot);
     if (path.empty()) return std::unexpected(Error::empty_path);
     if (Attached(kind, slot)) return std::unexpected(Error::occupied);
+    if (kind == Kind::hardDisk && !board_.IsROMCartridgeLoaded(slot + 1))
+        return std::unexpected(Error::missing_cartridge);
     // Copy before attaching so allocation failure cannot leave an untracked mount.
     auto savedPath = path;
     const bool attached = kind == Kind::floppy ? board_.AttachFloppyImage(slot, path) : board_.AttachHardImage(slot + 1, path);

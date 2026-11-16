@@ -67,3 +67,18 @@ TEST(SdlFileDialog, PreservesSnapshotPurposeAcrossCallback)
         EXPECT_EQ(result->path, "state.uknc");
     }
 }
+
+TEST(SdlFileDialog, PreservesRomPurposeAndCartridgeSlot)
+{
+    sdl_file_dialog::State state;
+    for (const auto purpose : {sdl_file_dialog::Purpose::systemRom, sdl_file_dialog::Purpose::cartridge})
+    {
+        ASSERT_TRUE(state.Begin());
+        state.Complete({media_slots::Kind::floppy, 1, sdl_file_dialog::Status::selected, "rom.bin", purpose, -1});
+        const auto result = state.Take();
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->purpose, purpose);
+        EXPECT_EQ(result->slot, 1);
+        EXPECT_EQ(result->path, "rom.bin");
+    }
+}

@@ -3,6 +3,7 @@
 #include "emubase/Emubase.h"
 #include <gtest/gtest.h>
 #include <chrono>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -61,6 +62,8 @@ TEST_F(MediaSlotsTest, AttachesAndEjectsAllDriveSlots)
     }
     for (int slot = 0; slot < 2; ++slot)
     {
+        const std::array<std::uint8_t, 24 * 1024> cartridge{};
+        board.LoadROMCartridge(slot + 1, cartridge);
         ASSERT_TRUE(media.Attach(media_slots::Kind::hardDisk, slot, hard));
         EXPECT_TRUE(board.IsHardImageAttached(slot + 1));
         ASSERT_NE(media.Path(media_slots::Kind::hardDisk, slot), nullptr);
@@ -77,6 +80,13 @@ TEST_F(MediaSlotsTest, RejectsInvalidOrOccupiedSlotsWithoutDetachingExistingDisk
     board.Reset();
     media_slots::Slots media(board);
     using Kind = media_slots::Kind;
+    const auto missingCartridge = media.Attach(Kind::hardDisk, 0, hard);
+    ASSERT_FALSE(missingCartridge);
+    EXPECT_EQ(missingCartridge.error(), media_slots::Error::missing_cartridge);
+    EXPECT_FALSE(board.IsHardImageAttached(1));
+    const std::array<std::uint8_t, 24 * 1024> cartridge{};
+    board.LoadROMCartridge(1, cartridge);
+    board.LoadROMCartridge(2, cartridge);
     for (const auto [kind, slot] : {std::pair{Kind::floppy, -1}, std::pair{Kind::floppy, 4},
                                    std::pair{Kind::hardDisk, -1}, std::pair{Kind::hardDisk, 2}})
     {
@@ -114,6 +124,8 @@ TEST_F(MediaSlotsTest, DetectsHardLinkToMountedDisk)
     if (error) GTEST_SKIP() << "Hard links unavailable: " << error.message();
     CMotherboard board;
     board.Reset();
+    const std::array<std::uint8_t, 24 * 1024> cartridge{};
+    board.LoadROMCartridge(1, cartridge);
     media_slots::Slots media(board);
     ASSERT_TRUE(media.Attach(media_slots::Kind::hardDisk, 0, hard));
     EXPECT_TRUE(media.Conflicts(alias));

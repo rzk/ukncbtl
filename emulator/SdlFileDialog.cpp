@@ -101,3 +101,14 @@ bool sdl_file_dialog::SaveSnapshot(const std::shared_ptr<State>& state, SDL_Wind
     SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr);
     return true;
 }
+
+bool sdl_file_dialog::OpenRom(const std::shared_ptr<State>& state, SDL_Window& window, Purpose purpose, int slot)
+{
+    if (!state || (purpose != Purpose::systemRom && purpose != Purpose::cartridge)) return false;
+    if (purpose == Purpose::cartridge && (slot < 0 || slot >= 2)) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, slot, purpose);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"ROM images", "bin;rom"}, {"All files", "*"}};
+    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
+    return true;
+}

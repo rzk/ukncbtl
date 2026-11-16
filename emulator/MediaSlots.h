@@ -10,10 +10,11 @@ class CMotherboard;
 namespace media_slots
 {
 enum class Kind { floppy, hardDisk };
-enum class Error { invalid_slot, empty_path, occupied, attach_failed, detach_failed };
+enum class Error { invalid_slot, empty_path, occupied, missing_cartridge, attach_failed, detach_failed };
 
 // Slots use zero-based indexes: four floppy drives and two hard disks. This
-// object exclusively manages attachments on its borrowed board.
+// object exclusively manages attachments on its borrowed board. A hard disk
+// requires a cartridge in the matching slot, as in the legacy frontend.
 class Slots
 {
 public:
