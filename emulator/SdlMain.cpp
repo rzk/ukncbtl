@@ -7,6 +7,7 @@
 #include "PreviewPrinter.h"
 #include "PreviewSettings.h"
 #include "PreviewSnapshot.h"
+#include "PreviewTape.h"
 #include "ScreenshotImage.h"
 #include "ScreenshotClipboard.h"
 #include "ScreenshotFile.h"
@@ -104,6 +105,7 @@ int Run(bool smokeTest)
     media_slots::Slots media(board);
     preview_roms::Roms roms(board);
     preview_printer::Session printer(board);
+    preview_tape::Session tape(board);
     const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
     std::string actionError = startupError;
     bool showActionError = !startupError.empty();
@@ -161,7 +163,7 @@ int Run(bool smokeTest)
         }
     };
     const auto conflicts = [&](const std::filesystem::path& path) {
-        return media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path);
+        return media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path) || tape.Conflicts(path);
     };
     bool running = true;
     frame_pacing::Scheduler scheduler(frame_pacing::Clock::now());
@@ -212,7 +214,18 @@ int Run(bool smokeTest)
             else if (result->status == sdl_file_dialog::Status::selected)
             {
                 const std::u8string path(reinterpret_cast<const char8_t*>(result->path.data()), result->path.size());
-                if (result->purpose == sdl_file_dialog::Purpose::createDisk)
+                if (result->purpose == sdl_file_dialog::Purpose::tapeOpen ||
+                    result->purpose == sdl_file_dialog::Purpose::tapeCreate)
+                {
+                    auto target = std::filesystem::path(path);
+                    const bool creating = result->purpose == sdl_file_dialog::Purpose::tapeCreate;
+                    if (creating && !target.has_extension()) target += ".wav";
+                    if ((creating && conflicts(target)) || (!creating && (printer.Conflicts(target) || tape.Conflicts(target))))
+                    { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
+                    else if (!(creating ? tape.Create(target) : tape.Open(target)))
+                    { actionError = creating ? "Could not create the WAV file." : "Could not open the WAV file or its format is unsupported."; showActionError = true; }
+                }
+                else if (result->purpose == sdl_file_dialog::Purpose::createDisk)
                 {
                     auto target = std::filesystem::path(path);
                     if (!target.has_extension()) target += ".dsk";
@@ -231,8 +244,8 @@ int Run(bool smokeTest)
                 }
                 else if (result->purpose != sdl_file_dialog::Purpose::screenshot &&
                     result->purpose != sdl_file_dialog::Purpose::snapshotSave &&
-                    printer.Conflicts(std::filesystem::path(path)))
-                { actionError = "The selected file is used for printer output. Choose another file."; showActionError = true; }
+                    (printer.Conflicts(std::filesystem::path(path)) || tape.Conflicts(std::filesystem::path(path))))
+                { actionError = "The selected file is used for printer or tape output. Choose another file."; showActionError = true; }
                 else if (result->purpose == sdl_file_dialog::Purpose::screenshot)
                 {
                     const auto format = result->filter == 1 ? screenshot_format::Format::bmp : screenshot_format::Format::png;
@@ -526,6 +539,39 @@ int Run(bool smokeTest)
                     driveMenu(media_slots::Kind::hardDisk, slot, "Hard disk " + std::to_string(slot + 1));
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Tape"))
+            {
+                if (tape.Inserted())
+                {
+                    const auto path = tape.Path().u8string();
+                    ImGui::TextUnformatted(reinterpret_cast<const char*>(path.c_str()));
+                    const auto position = tape::Centiseconds(tape.Position(), tape.Frequency());
+                    const auto length = tape::Centiseconds(tape.Length(), tape.Frequency());
+                    ImGui::Text("%llu:%02llu.%02llu / %llu:%02llu.%02llu  (%d Hz)",
+                        static_cast<unsigned long long>(position / 6000), static_cast<unsigned long long>(position / 100 % 60),
+                        static_cast<unsigned long long>(position % 100), static_cast<unsigned long long>(length / 6000),
+                        static_cast<unsigned long long>(length / 100 % 60), static_cast<unsigned long long>(length % 100), tape.Frequency());
+                    if (ImGui::MenuItem(tape.Playing() ? "Stop" : tape.Recording() ? "Record" : "Play"))
+                    {
+                        if (tape.Playing()) tape.Stop();
+                        else (void)tape.Play();
+                    }
+                    if (ImGui::MenuItem("Rewind") && !tape.Rewind())
+                    { actionError = "Could not rewind the WAV file."; showActionError = true; }
+                    if (ImGui::MenuItem("Eject") && !tape.Close())
+                    { actionError = "Could not finish the WAV file."; showActionError = true; }
+                }
+                else
+                {
+                    if (ImGui::MenuItem("Open WAV...", nullptr, false, !fileDialog->Pending()) &&
+                        !sdl_file_dialog::OpenTape(fileDialog, *window))
+                    { actionError = "Could not open the file dialog."; showActionError = true; }
+                    if (ImGui::MenuItem("Create WAV...", nullptr, false, !fileDialog->Pending()) &&
+                        !sdl_file_dialog::SaveTape(fileDialog, *window))
+                    { actionError = "Could not open the file dialog."; showActionError = true; }
+                }
+                ImGui::EndMenu();
+            }
             ImGui::EndMainMenuBar();
         }
         if (showActionError) { ImGui::OpenPopup("Error"); showActionError = false; }
@@ -593,6 +639,7 @@ int Run(bool smokeTest)
             }
             if (!board.SystemFrame()) { SDL_Log("Emulator frame failed"); return 1; }
             if (!printer.Check()) { actionError = "Printer output failed and was stopped."; showActionError = true; }
+            if (tape.TakeError()) { actionError = "Tape I/O failed and playback or recording was stopped."; showActionError = true; }
             snapshots.FrameCompleted();
             if (smokeTest) ++frames;
             if (audio && audioActive && !audio->SubmitFrame())
@@ -643,6 +690,11 @@ int Run(bool smokeTest)
         if (!SDL_RenderPresent(renderer.get())) return 1;
         if (smokeTest && frames >= 3) break;
         std::this_thread::sleep_for(scheduler.Delay(frame_pacing::Clock::now(), settings.speed, running));
+    }
+    if (!tape.Close())
+    {
+        SDL_Log("Could not finish the WAV file.");
+        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Tape", "Could not finish the WAV file.", window.get());
     }
     if (!printer.Stop())
     {

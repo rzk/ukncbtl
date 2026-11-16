@@ -90,6 +90,10 @@ The Emulator menu can enable the emulated mouse; its setting is saved with the
 preview preferences. Pointer motion is scaled to the displayed screen, and mouse
 input is released when the window loses focus, emulation pauses, or ImGui
 captures the pointer. Short button presses are queued for emulated frames.
+The Tape menu opens PCM WAV files or creates 44.1 kHz mono recordings, with
+play, record, stop, rewind and eject controls. Playback stops at the end of the
+file, and I/O and finalization failures are reported. Tape paths are not restored
+automatically; mounted tape files are protected from preview output operations.
 The preview preserves malformed
 settings files without overwriting them; the smoke test does not read or write
 preferences.

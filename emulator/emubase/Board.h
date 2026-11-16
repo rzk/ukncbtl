@@ -71,11 +71,13 @@ struct kbd_row
 // Output:
 //   result     Bit to put in tape input port.
 using TAPEREADCALLBACK = bool (*)(unsigned int samples);
+using TAPEREADCONTEXTCALLBACK = bool (*)(void* context, unsigned int samples);
 
 // Tape emulator callback used to write a data to tape.
 // Input:
 //   value      Sample value to write.
 using TAPEWRITECALLBACK = void (*)(int value, unsigned int samples);
+using TAPEWRITECONTEXTCALLBACK = void (*)(void* context, int value, unsigned int samples);
 
 // Sound generator callback function type
 using SOUNDGENCALLBACK = void (*)(unsigned short L, unsigned short R);
@@ -313,6 +315,8 @@ public:  // System control
     void        SetTapeReadCallback(TAPEREADCALLBACK callback, int sampleRate);
     /// \brief Assign write read callback function.
     void        SetTapeWriteCallback(TAPEWRITECALLBACK callback, int sampleRate);
+    void        SetTapeReadCallbackWithContext(TAPEREADCONTEXTCALLBACK callback, void* context, int sampleRate);
+    void        SetTapeWriteCallbackWithContext(TAPEWRITECONTEXTCALLBACK callback, void* context, int sampleRate);
     /// \brief Assign sound output callback function.
     void        SetSoundGenCallback(SOUNDGENCALLBACK callback);
     // Setting either sound callback replaces the other; context is borrowed.
@@ -374,6 +378,9 @@ private:
 private:
     TAPEREADCALLBACK    m_TapeReadCallback;
     TAPEWRITECALLBACK   m_TapeWriteCallback;
+    TAPEREADCONTEXTCALLBACK m_TapeReadContextCallback = nullptr;
+    TAPEWRITECONTEXTCALLBACK m_TapeWriteContextCallback = nullptr;
+    void* m_TapeContext = nullptr;
     int                 m_nTapeSampleRate;
     uint64_t            m_tapeSamplePhase = 0;
     SOUNDGENCALLBACK    m_SoundGenCallback;

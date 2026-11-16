@@ -132,3 +132,23 @@ bool sdl_file_dialog::SavePrinter(const std::shared_ptr<State>& state, SDL_Windo
     SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr);
     return true;
 }
+
+bool sdl_file_dialog::OpenTape(const std::shared_ptr<State>& state, SDL_Window& window)
+{
+    if (!state) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::tapeOpen);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"WAV audio", "wav"}, {"All files", "*"}};
+    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
+    return true;
+}
+
+bool sdl_file_dialog::SaveTape(const std::shared_ptr<State>& state, SDL_Window& window)
+{
+    if (!state) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::tapeCreate);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"WAV audio", "wav"}};
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
+    return true;
+}

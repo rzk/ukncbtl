@@ -144,6 +144,11 @@ ukncbtl_toolchain(HostInput)
 add_library(WavPcmFile STATIC emulator/util/WavPcmFile.cpp)
 ukncbtl_toolchain(WavPcmFile)
 
+add_library(PreviewTape STATIC emulator/PreviewTape.cpp)
+ukncbtl_toolchain(PreviewTape)
+target_include_directories(PreviewTape PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+target_link_libraries(PreviewTape PRIVATE WavPcmFile EmulatorCore)
+
 add_library(DiskImageData STATIC emulator/DiskImageData.cpp)
 ukncbtl_toolchain(DiskImageData)
 
@@ -274,7 +279,7 @@ if(UKNCBTL_ENABLE_IMGUI)
   add_executable(ukncbtl-sdl emulator/SdlMain.cpp)
   ukncbtl_toolchain(ukncbtl-sdl)
   target_include_directories(ukncbtl-sdl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard MouseInput SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard VideoPalette FramePacing
+  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard MouseInput SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard VideoPalette FramePacing
     EmbeddedRom EmulatorCore VideoDecoder)
 endif()
 
@@ -356,6 +361,8 @@ if(BUILD_TESTING)
   ukncbtl_portable_test(InputTests tests/InputTests.cpp)
   target_link_libraries(InputTests PRIVATE HostInput)
   ukncbtl_portable_test(TapeTests tests/TapeTests.cpp)
+  ukncbtl_portable_test(PreviewTapeTests tests/PreviewTapeTests.cpp)
+  target_link_libraries(PreviewTapeTests PRIVATE PreviewTape WavPcmFile EmulatorCore)
   ukncbtl_portable_test(WavPcmFileTests tests/WavPcmFileTests.cpp)
   target_link_libraries(WavPcmFileTests PRIVATE WavPcmFile)
   ukncbtl_portable_test(DiskImageBuildTests tests/DiskImageBuildTests.cpp)

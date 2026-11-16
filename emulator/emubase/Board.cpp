@@ -784,27 +784,29 @@ bool CMotherboard::SystemFrame()
             DoSound();
         }
 
-        if (m_TapeReadCallback != nullptr || m_TapeWriteCallback != nullptr)
+        if (m_TapeReadCallback || m_TapeWriteCallback || m_TapeReadContextCallback || m_TapeWriteContextCallback)
         {
             m_tapeSamplePhase += static_cast<uint64_t>(m_nTapeSampleRate);
             const auto samples = static_cast<unsigned int>(m_tapeSamplePhase / tapeTicksPerSecond);
             m_tapeSamplePhase %= tapeTicksPerSecond;
             if (samples != 0)
             {
-                if (m_TapeReadCallback != nullptr)  // Tape reading
+                if (m_TapeReadCallback || m_TapeReadContextCallback)  // Tape reading
                 {
-                    bool tapeBit = (*m_TapeReadCallback)(samples);
+                    bool tapeBit = m_TapeReadContextCallback ? m_TapeReadContextCallback(m_TapeContext, samples) :
+                        m_TapeReadCallback(samples);
                     CSecondMemoryController* pMemCtl = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
                     if (pMemCtl->TapeInput(tapeBit))
                     {
                         m_timerflags |= 040;  // Set bit 5 of timer state: external event ready to read
                     }
                 }
-                else if (m_TapeWriteCallback != nullptr)  // Tape writing
+                else if (m_TapeWriteCallback || m_TapeWriteContextCallback)  // Tape writing
                 {
                     CSecondMemoryController* pMemCtl = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
                     unsigned int value = pMemCtl->TapeOutput() ? 0xffffffff : 0;
-                    (*m_TapeWriteCallback)(value, samples);
+                    if (m_TapeWriteContextCallback) m_TapeWriteContextCallback(m_TapeContext, value, samples);
+                    else m_TapeWriteCallback(value, samples);
                 }
             }
         }
@@ -1549,6 +1551,8 @@ void CMotherboard::SetSound(uint16_t val)
 
 void CMotherboard::SetTapeReadCallback(TAPEREADCALLBACK callback, int sampleRate)
 {
+    m_TapeReadContextCallback = nullptr;
+    if (callback && sampleRate > 0) { m_TapeWriteContextCallback = nullptr; m_TapeContext = nullptr; }
     m_tapeSamplePhase = 0;
     if (callback == nullptr || sampleRate <= 0)  // Reset callback
     {
@@ -1565,6 +1569,8 @@ void CMotherboard::SetTapeReadCallback(TAPEREADCALLBACK callback, int sampleRate
 
 void CMotherboard::SetTapeWriteCallback(TAPEWRITECALLBACK callback, int sampleRate)
 {
+    m_TapeWriteContextCallback = nullptr;
+    if (callback && sampleRate > 0) { m_TapeReadContextCallback = nullptr; m_TapeContext = nullptr; }
     m_tapeSamplePhase = 0;
     if (callback == nullptr || sampleRate <= 0)  // Reset callback
     {
@@ -1576,6 +1582,32 @@ void CMotherboard::SetTapeWriteCallback(TAPEWRITECALLBACK callback, int sampleRa
         m_TapeWriteCallback = callback;
         m_nTapeSampleRate = sampleRate;
         m_TapeReadCallback = nullptr;
+    }
+}
+
+void CMotherboard::SetTapeReadCallbackWithContext(TAPEREADCONTEXTCALLBACK callback, void* context, int sampleRate)
+{
+    SetTapeReadCallback(nullptr, 0);
+    if (callback && sampleRate > 0)
+    {
+        m_TapeWriteCallback = nullptr;
+        m_TapeWriteContextCallback = nullptr;
+        m_TapeReadContextCallback = callback;
+        m_TapeContext = context;
+        m_nTapeSampleRate = sampleRate;
+    }
+}
+
+void CMotherboard::SetTapeWriteCallbackWithContext(TAPEWRITECONTEXTCALLBACK callback, void* context, int sampleRate)
+{
+    SetTapeWriteCallback(nullptr, 0);
+    if (callback && sampleRate > 0)
+    {
+        m_TapeReadCallback = nullptr;
+        m_TapeReadContextCallback = nullptr;
+        m_TapeWriteContextCallback = callback;
+        m_TapeContext = context;
+        m_nTapeSampleRate = sampleRate;
     }
 }
 

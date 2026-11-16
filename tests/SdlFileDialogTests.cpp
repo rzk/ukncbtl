@@ -101,3 +101,16 @@ TEST(SdlFileDialog, PreservesDiskGeometryAndPrinterPurpose)
         "printer.log", sdl_file_dialog::Purpose::printer});
     EXPECT_EQ(state.Take()->purpose, sdl_file_dialog::Purpose::printer);
 }
+
+TEST(SdlFileDialog, PreservesTapePurpose)
+{
+    sdl_file_dialog::State state;
+    for (const auto purpose : {sdl_file_dialog::Purpose::tapeOpen, sdl_file_dialog::Purpose::tapeCreate})
+    {
+        ASSERT_TRUE(state.Begin());
+        state.Complete({media_slots::Kind::floppy, -1, sdl_file_dialog::Status::selected, "tape.wav", purpose});
+        const auto result = state.Take();
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->purpose, purpose);
+    }
+}
