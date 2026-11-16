@@ -11,7 +11,9 @@
 #include "ScreenshotImage.h"
 #include "ScreenshotClipboard.h"
 #include "ScreenshotFile.h"
+#include "ScreenTextCapture.h"
 #include "SdlAudio.h"
+#include "SdlDisplay.h"
 #include "SdlKeyboard.h"
 #include "SdlFileDialog.h"
 #include "SdlScreenRenderer.h"
@@ -175,6 +177,9 @@ int Run(bool smokeTest)
     while (!done)
     {
         bool copyScreenshot = false;
+        bool copyScreenText = false;
+        bool fullscreenShortcut = false;
+        bool toggleFullscreen = false;
         bool speedChanged = false;
         bool volumeChanged = false;
         std::optional<std::filesystem::path> screenshotPath;
@@ -185,6 +190,10 @@ int Run(bool smokeTest)
         while (SDL_PollEvent(&event))
         {
             ImGui_ImplSDL3_ProcessEvent(&event);
+            if (event.type == SDL_EVENT_KEY_DOWN && event.key.windowID == SDL_GetWindowID(window.get()) &&
+                event.key.scancode == SDL_SCANCODE_F10 && !event.key.repeat &&
+                !(event.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT | SDL_KMOD_GUI)))
+                fullscreenShortcut = true;
             if ((event.type == SDL_EVENT_MOUSE_MOTION && event.motion.windowID == SDL_GetWindowID(window.get())) ||
                 ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
                     event.button.windowID == SDL_GetWindowID(window.get())))
@@ -317,6 +326,7 @@ int Run(bool smokeTest)
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
+        if (fullscreenShortcut && !ImGui::GetIO().WantCaptureKeyboard && !fileDialog->Pending()) toggleFullscreen = true;
         if (ImGui::GetIO().WantCaptureKeyboard) releaseKeys();
         const auto selectScaleMode = [&](int& mode, int& setting) {
             const auto modes = screen_scale::Modes();
@@ -434,6 +444,9 @@ int Run(bool smokeTest)
             }
             if (ImGui::BeginMenu("Display"))
             {
+                if (ImGui::MenuItem("Fullscreen", "F10", (SDL_GetWindowFlags(window.get()) & SDL_WINDOW_FULLSCREEN) != 0))
+                    toggleFullscreen = true;
+                ImGui::Separator();
                 if (ImGui::BeginMenu("Color"))
                 {
                     constexpr std::array labels{"RGB", "GRB", "Grayscale"};
@@ -456,6 +469,7 @@ int Run(bool smokeTest)
             if (ImGui::BeginMenu("Screenshot"))
             {
                 if (ImGui::MenuItem("Copy to clipboard")) copyScreenshot = true;
+                if (ImGui::MenuItem("Copy screen text")) copyScreenText = true;
                 if (ImGui::MenuItem("Save as...", nullptr, false, !fileDialog->Pending()))
                 {
                     if (!sdl_file_dialog::SaveScreenshot(fileDialog, *window))
@@ -581,6 +595,8 @@ int Run(bool smokeTest)
             if (ImGui::Button("OK")) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
+        if (toggleFullscreen && !sdl_display::ToggleFullscreen(*window))
+        { actionError = "Could not change fullscreen mode."; showActionError = true; }
         if (audio && (speedChanged || volumeChanged) &&
             ((speedChanged && !audio->Reset()) || !audio->Configure(settings.speed, settings.volume)))
         {
@@ -649,6 +665,12 @@ int Run(bool smokeTest)
             }
         }
         const auto palette = video_palette::Get(static_cast<video_palette::Mode>(paletteMode));
+        if (copyScreenText)
+        {
+            const auto text = screen_text::Capture(board);
+            if (!text || !SDL_SetClipboardText(text->c_str()))
+            { actionError = "Could not copy screen text to the clipboard."; showActionError = true; }
+        }
         if (!video::RenderRgb(board, pixels, palette)) return 1;
         const auto image = screenshot_image::Prepare(pixels, displayMode);
         if (!image) return 1;

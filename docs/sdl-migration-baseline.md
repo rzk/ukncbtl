@@ -79,8 +79,10 @@ output refuse files currently used by the emulator. Two ROM cartridge slots and 
 hard disk requires a cartridge in the matching slot. Changing the system ROM
 resets the machine. ROM and disk paths are not restored automatically. The
 Display menu offers the legacy RGB, GRB and grayscale palettes and
-screen scaling modes; the preview fits each mode into a 4:3 viewport. Window
-size, sound preference, display settings, and screenshot size are saved in the SDL
+screen scaling modes; the preview fits each mode into a 4:3 viewport.
+Fullscreen can be toggled in the Display menu or with F10. Screen text can be
+copied as UTF-8 using the UKNC character mapping from the Screenshot menu.
+Window size, sound preference, display settings, and screenshot size are saved in the SDL
 preference directory selected by `SDL_GetPrefPath("UKNCBTL", "SDL Preview")`,
 separate from legacy settings.
 The preview also offers the legacy speed choices, volume, AY and Covox toggles.
