@@ -1,8 +1,10 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "EmbeddedRom.h"
+#include "MediaSlots.h"
 #include "ScreenshotImage.h"
 #include "SdlAudio.h"
 #include "SdlKeyboard.h"
+#include "SdlMediaDialog.h"
 #include "SdlScreenRenderer.h"
 #include "VideoDecoder.h"
 #include "emubase/Board.h"
@@ -17,6 +19,7 @@
 #include <cstdio>
 #include <cwchar>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -84,6 +87,10 @@ int Run(bool smokeTest)
 
     ProcessorRuntime processor;
     CMotherboard board;
+    media_slots::Slots media(board);
+    const auto mediaDialog = std::make_shared<sdl_media_dialog::State>();
+    std::string mediaError;
+    bool showMediaError = false;
     std::array<std::uint8_t, 32768> rom{};
     std::ranges::copy(embedded_rom::Bytes(), rom.begin());
     board.LoadROM(rom);
@@ -137,6 +144,23 @@ int Run(bool smokeTest)
                 done = true;
         }
         if (done) break;
+        if (const auto result = mediaDialog->Take())
+        {
+            if (result->status == sdl_media_dialog::Status::failed)
+            {
+                mediaError = "Could not open the file dialog.";
+                showMediaError = true;
+            }
+            else if (result->status == sdl_media_dialog::Status::selected)
+            {
+                const std::u8string path(reinterpret_cast<const char8_t*>(result->path.data()), result->path.size());
+                if (!media.Attach(result->kind, result->slot, std::filesystem::path(path)))
+                {
+                    mediaError = "Could not attach the disk image. Check the file and the selected drive.";
+                    showMediaError = true;
+                }
+            }
+        }
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
@@ -162,7 +186,46 @@ int Run(bool smokeTest)
                 if (ImGui::MenuItem("Quit")) done = true;
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Disks"))
+            {
+                const auto driveMenu = [&](media_slots::Kind kind, int slot, const std::string& label) {
+                    if (!ImGui::BeginMenu(label.c_str())) return;
+                    if (media.Attached(kind, slot))
+                    {
+                        const auto path = media.Path(kind, slot)->u8string();
+                        ImGui::TextUnformatted(reinterpret_cast<const char*>(path.c_str()));
+                        if (media.ReadOnly(kind, slot)) ImGui::TextDisabled("Read-only");
+                        if (ImGui::MenuItem("Eject") && !media.Eject(kind, slot))
+                        {
+                            mediaError = "Could not eject the disk image.";
+                            showMediaError = true;
+                        }
+                    }
+                    else if (ImGui::MenuItem("Attach...", nullptr, false, !mediaDialog->Pending()))
+                    {
+                        if (!sdl_media_dialog::Open(mediaDialog, *window, kind, slot))
+                        {
+                            mediaError = "Could not open the file dialog.";
+                            showMediaError = true;
+                        }
+                    }
+                    ImGui::EndMenu();
+                };
+                for (int slot = 0; slot < 4; ++slot)
+                    driveMenu(media_slots::Kind::floppy, slot, "Floppy " + std::to_string(slot + 1));
+                ImGui::Separator();
+                for (int slot = 0; slot < 2; ++slot)
+                    driveMenu(media_slots::Kind::hardDisk, slot, "Hard disk " + std::to_string(slot + 1));
+                ImGui::EndMenu();
+            }
             ImGui::EndMainMenuBar();
+        }
+        if (showMediaError) { ImGui::OpenPopup("Disk error"); showMediaError = false; }
+        if (ImGui::BeginPopupModal("Disk error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::TextWrapped("%s", mediaError.c_str());
+            if (ImGui::Button("OK")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
         const bool shouldPlay = running && soundEnabled && audio != nullptr;
         if (audio && shouldPlay != audioActive)
