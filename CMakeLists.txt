@@ -140,6 +140,11 @@ ukncbtl_toolchain(FrameControl)
 target_include_directories(FrameControl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
 target_link_libraries(FrameControl PUBLIC EmulatorCore)
 
+add_library(PreviewDebugger STATIC emulator/PreviewDebugger.cpp)
+ukncbtl_toolchain(PreviewDebugger)
+target_include_directories(PreviewDebugger PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+target_link_libraries(PreviewDebugger PRIVATE FrameControl EmulatorCore)
+
 add_library(FrameTiming STATIC emulator/FrameTiming.cpp)
 ukncbtl_toolchain(FrameTiming)
 
@@ -298,7 +303,7 @@ if(UKNCBTL_ENABLE_IMGUI)
   add_executable(ukncbtl-sdl emulator/SdlMain.cpp)
   ukncbtl_toolchain(ukncbtl-sdl)
   target_include_directories(ukncbtl-sdl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard SdlDisplay MouseInput VirtualKeyboard PreviewOptions AutoBoot SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard ScreenTextCapture VideoPalette FramePacing
+  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard SdlDisplay MouseInput VirtualKeyboard PreviewOptions AutoBoot PreviewDebugger SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard ScreenTextCapture VideoPalette FramePacing
     EmbeddedRom EmulatorCore VideoDecoder)
 endif()
 
@@ -336,6 +341,8 @@ if(BUILD_TESTING)
   target_link_libraries(VirtualKeyboardTests PRIVATE VirtualKeyboard)
   ukncbtl_portable_test(PreviewOptionsTests tests/PreviewOptionsTests.cpp)
   target_link_libraries(PreviewOptionsTests PRIVATE PreviewOptions AutoBoot)
+  ukncbtl_portable_test(PreviewDebuggerTests tests/PreviewDebuggerTests.cpp)
+  target_link_libraries(PreviewDebuggerTests PRIVATE PreviewDebugger FrameControl EmulatorCore)
   ukncbtl_portable_test(PreviewSettingsTests tests/PreviewSettingsTests.cpp)
   target_link_libraries(PreviewSettingsTests PRIVATE PreviewSettings IniFile)
   ukncbtl_portable_test(PreviewSnapshotTests tests/PreviewSnapshotTests.cpp)

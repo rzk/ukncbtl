@@ -7,6 +7,7 @@
 #include "PreviewRoms.h"
 #include "PreviewPrinter.h"
 #include "PreviewOptions.h"
+#include "PreviewDebugger.h"
 #include "PreviewSettings.h"
 #include "PreviewSnapshot.h"
 #include "PreviewTape.h"
@@ -127,6 +128,7 @@ int Run(const preview_options::Options& options)
         { SDL_Log("Could not attach requested hard disk %d; check its ROM cartridge and image.", slot + 1); return 1; }
     preview_printer::Session printer(board);
     preview_tape::Session tape(board);
+    preview_debugger::Session debugger(board);
     const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
     std::string actionError = startupError;
     bool showActionError = !startupError.empty();
@@ -191,6 +193,7 @@ int Run(const preview_options::Options& options)
     const auto resetMachine = [&] {
         releaseKeys();
         releaseMouse();
+        debugger.Stop();
         board.Reset();
         board.SetMouse(settings.mouse);
         printer.Synchronize();
@@ -207,7 +210,20 @@ int Run(const preview_options::Options& options)
     bool running = smokeTest || options.boot != 0 || options.run.value_or(settings.autostart);
     if (options.boot) (void)autoBoot.Start(options.boot);
     frame_pacing::Scheduler scheduler(frame_pacing::Clock::now());
+    const auto pauseMachine = [&] {
+        running = false;
+        releaseKeys(); releaseMouse(); debugger.Stop();
+        if (!printer.Flush()) { actionError = "Printer output failed and was stopped."; showActionError = true; }
+    };
+    const auto startMachine = [&](frame_pacing::Clock::time_point now) {
+        debugger.PrepareRun(); running = true; scheduler.Restart(now);
+    };
     bool done = false;
+    bool showDebugger = smokeTest;
+    preview_debugger::Processor debugProcessor = preview_debugger::Processor::cpu;
+    std::array<char, 16> breakpointAddress{};
+    std::array<char, 16> memoryAddress{'0', '0', '0', '0', '0', '0', 0};
+    std::string debuggerError;
     int screenshotMode = settings.screenshotMode;
     int displayMode = settings.displayMode;
     int paletteMode = settings.paletteMode;
@@ -303,6 +319,7 @@ int Run(const preview_options::Options& options)
                     if (!snapshots.Load(std::filesystem::path(path), [&] {
                         releaseKeys();
                         releaseMouse();
+                        debugger.Stop();
                         running = false;
                         if (audio)
                         {
@@ -391,13 +408,8 @@ int Run(const preview_options::Options& options)
             {
                 if (ImGui::MenuItem(running ? "Pause" : "Run"))
                 {
-                    running = !running;
-                    if (!running)
-                    {
-                        releaseKeys();
-                        if (!printer.Flush()) { actionError = "Printer output failed and was stopped."; showActionError = true; }
-                    }
-                    else scheduler.Restart(started);
+                    if (running) pauseMachine();
+                    else startMachine(started);
                 }
                 if (ImGui::MenuItem("Reset")) { resetMachine(); scheduler.Restart(started); }
                 if (ImGui::MenuItem("Start automatically", nullptr, &settings.autostart)) settingsDirty = true;
@@ -410,8 +422,7 @@ int Run(const preview_options::Options& options)
                         {
                             resetMachine();
                             (void)autoBoot.Start(selection);
-                            running = true;
-                            scheduler.Restart(started);
+                            startMachine(started);
                         }
                     }
                     ImGui::EndMenu();
@@ -526,6 +537,11 @@ int Run(const preview_options::Options& options)
                     selectScaleMode(displayMode, settings.displayMode);
                     ImGui::EndMenu();
                 }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Debug"))
+            {
+                ImGui::MenuItem("Debugger", nullptr, &showDebugger);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Screenshot"))
@@ -679,6 +695,99 @@ int Run(const preview_options::Options& options)
             ImGui::End();
             if (wasOpen != settings.keyboard) { releaseVirtualKeys(); settingsDirty = true; }
         }
+        if (showDebugger)
+        {
+            ImGui::SetNextWindowSize(ImVec2(520, 540), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Debugger", &showDebugger))
+            {
+                if (ImGui::RadioButton("CPU", debugProcessor == preview_debugger::Processor::cpu))
+                    debugProcessor = preview_debugger::Processor::cpu;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("PPU", debugProcessor == preview_debugger::Processor::ppu))
+                    debugProcessor = preview_debugger::Processor::ppu;
+                ImGui::SameLine();
+                if (ImGui::Button(running ? "Pause" : "Run"))
+                { if (running) pauseMachine(); else startMachine(started); }
+                ImGui::SameLine();
+                ImGui::BeginDisabled(running);
+                if (ImGui::Button("Step")) debugger.Step();
+                ImGui::SameLine();
+                if (ImGui::Button("Step over") && debugger.StepOver(debugProcessor)) startMachine(started);
+                ImGui::EndDisabled();
+                ImGui::TextDisabled("Step advances both processors, as in the legacy debugger.");
+                auto& processor = debugger.GetProcessor(debugProcessor);
+                constexpr std::array registerNames{"R0", "R1", "R2", "R3", "R4", "R5", "SP", "PC"};
+                for (int reg = 0; reg < 8; ++reg)
+                {
+                    if (reg % 4) ImGui::SameLine();
+                    ImGui::Text("%s: %06o", registerNames[reg], static_cast<unsigned>(processor.GetReg(reg)));
+                }
+                ImGui::Text("PSW: %06o   CPC: %06o   CPSW: %06o   %s", static_cast<unsigned>(processor.GetPSW()),
+                    static_cast<unsigned>(processor.GetCPC()), static_cast<unsigned>(processor.GetCPSW()),
+                    processor.IsHaltMode() ? "HALT" : "USER");
+                ImGui::SeparatorText("Breakpoints (octal; pause to edit)");
+                ImGui::BeginDisabled(running);
+                ImGui::SetNextItemWidth(110);
+                ImGui::InputText("##breakpoint", breakpointAddress.data(), breakpointAddress.size(), ImGuiInputTextFlags_CharsDecimal);
+                ImGui::SameLine();
+                if (ImGui::Button("Add"))
+                {
+                    const auto address = preview_debugger::ParseAddress(breakpointAddress.data());
+                    if (!address || !debugger.Breakpoints(debugProcessor).Add(*address))
+                        debuggerError = "Enter an even octal address; duplicates and full lists are rejected.";
+                    else debuggerError.clear();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Clear all")) { debugger.Breakpoints(debugProcessor).Clear(); debuggerError.clear(); }
+                if (!debuggerError.empty()) ImGui::TextWrapped("%s", debuggerError.c_str());
+                const auto addresses = debugger.Breakpoints(debugProcessor).Addresses();
+                std::optional<std::uint16_t> remove;
+                for (const auto address : addresses)
+                {
+                    ImGui::PushID(static_cast<int>(address));
+                    ImGui::Text("%06o", static_cast<unsigned>(address)); ImGui::SameLine();
+                    if (ImGui::SmallButton("Remove")) remove = address;
+                    ImGui::PopID();
+                }
+                if (remove) (void)debugger.Breakpoints(debugProcessor).Remove(*remove);
+                ImGui::EndDisabled();
+                ImGui::SeparatorText("Disassembly at PC");
+                for (const auto& line : debugger.Disassemble(debugProcessor, processor.GetPC(), 12))
+                {
+                    const auto ascii = [](const std::wstring& text) {
+                        std::string result;
+                        for (const auto ch : text) result.push_back(ch >= 0 && ch < 128 ? static_cast<char>(ch) : '?');
+                        return result;
+                    };
+                    const auto mnemonic = ascii(line.instruction.mnemonic);
+                    const auto argument = ascii(line.instruction.argument);
+                    ImGui::Text("%06o  %06o  %-8s %s", static_cast<unsigned>(line.address),
+                        static_cast<unsigned>(line.word), mnemonic.c_str(), argument.c_str());
+                }
+                if (ImGui::CollapsingHeader("Memory (octal)"))
+                {
+                    ImGui::SetNextItemWidth(110);
+                    ImGui::InputText("Address", memoryAddress.data(), memoryAddress.size(), ImGuiInputTextFlags_CharsDecimal);
+                    if (ImGui::Button("Use PC"))
+                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(processor.GetPC()));
+                    ImGui::SameLine();
+                    if (ImGui::Button("Use SP"))
+                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(processor.GetSP()));
+                    const auto base = preview_debugger::ParseAddress(memoryAddress.data());
+                    if (!base) ImGui::TextDisabled("Enter an even octal address.");
+                    else for (unsigned row = 0; row < 8; ++row)
+                    {
+                        const auto address = static_cast<std::uint16_t>(*base + row * 8);
+                        ImGui::Text("%06o  %06o %06o %06o %06o", static_cast<unsigned>(address),
+                            static_cast<unsigned>(debugger.ReadWord(debugProcessor, address, false)),
+                            static_cast<unsigned>(debugger.ReadWord(debugProcessor, static_cast<std::uint16_t>(address + 2), false)),
+                            static_cast<unsigned>(debugger.ReadWord(debugProcessor, static_cast<std::uint16_t>(address + 4), false)),
+                            static_cast<unsigned>(debugger.ReadWord(debugProcessor, static_cast<std::uint16_t>(address + 6), false)));
+                    }
+                }
+            }
+            ImGui::End();
+        }
         if (showActionError) { ImGui::OpenPopup("Error"); showActionError = false; }
         if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
@@ -744,17 +853,25 @@ int Run(const preview_options::Options& options)
                 const auto sample = mouse.Next();
                 board.MouseMove(sample.dx, sample.dy, sample.left, sample.right);
             }
-            if (!board.SystemFrame()) { SDL_Log("Emulator frame failed"); return 1; }
-            if (const auto event = autoBoot.FrameCompleted())
-                queueKey(sdl_keyboard::Source::automatic, {event->scan, event->pressed});
+            const bool completed = debugger.RunFrame();
+            if (!completed)
+            {
+                pauseMachine();
+                showDebugger = true;
+            }
             if (!printer.Check()) { actionError = "Printer output failed and was stopped."; showActionError = true; }
             if (tape.TakeError()) { actionError = "Tape I/O failed and playback or recording was stopped."; showActionError = true; }
-            snapshots.FrameCompleted();
-            if (smokeTest) ++frames;
-            if (audio && audioActive && !audio->SubmitFrame())
+            if (completed)
             {
-                SDL_Log("Audio submission failed: %s", SDL_GetError());
-                audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
+                if (const auto event = autoBoot.FrameCompleted())
+                    queueKey(sdl_keyboard::Source::automatic, {event->scan, event->pressed});
+                snapshots.FrameCompleted();
+                if (smokeTest) ++frames;
+                if (audio && audioActive && !audio->SubmitFrame())
+                {
+                    SDL_Log("Audio submission failed: %s", SDL_GetError());
+                    audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
+                }
             }
         }
         const auto palette = video_palette::Get(static_cast<video_palette::Mode>(paletteMode));

@@ -6,6 +6,7 @@
 #include <string_view>
 #include <tchar.h>
 #include "emubase/Defines.h"
+#include "DebugStep.h"
 
 struct ConsoleCommandParams
 {
@@ -157,8 +158,6 @@ inline std::expected<Parsed, Error> Parse(const TCHAR* command)
 // No target means execute a single instruction instead of running to a breakpoint.
 inline std::optional<uint16_t> StepOverTarget(uint16_t opcode, uint16_t pc, int words)
 {
-    if ((opcode & ~uint16_t{077}) == PI_JMP || (opcode & ~uint16_t{0377}) == PI_BR ||
-        words < 1 || words > 3) return std::nullopt;
-    return static_cast<uint16_t>(pc + words * 2);
+    return debug_step::StepOverTarget(opcode, pc, words);
 }
 }

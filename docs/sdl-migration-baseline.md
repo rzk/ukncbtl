@@ -81,6 +81,11 @@ The Display menu also opens an on-screen UKNC keyboard. Its labels show the
 machine's Latin key positions; Shift and Ctrl latch for multi-key combinations.
 The keyboard visibility is saved, and keys are released on focus loss, pause,
 reset or window closure. Virtual and physical keys share the same input queue.
+The Debug menu opens an initial debugger with CPU/PPU registers, disassembly,
+memory inspection and per-processor octal breakpoints. It can pause, run, step,
+and step over using the legacy core's breakpoint and debug-tick behavior. A
+breakpoint pauses the machine and opens the debugger; stepping advances both
+processors. The remaining debugger tools are still being migrated.
 It supports screenshot capture to PNG/BMP files or the SDL clipboard, with
 the existing screenshot size modes. It also supports basic SDL audio output and
 attaching/ejecting floppy and hard-disk images through SDL file dialogs. Disks
