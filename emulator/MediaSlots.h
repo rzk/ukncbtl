@@ -25,6 +25,8 @@ public:
     [[nodiscard]] bool Attached(Kind kind, int slot) const;
     [[nodiscard]] bool ReadOnly(Kind kind, int slot) const;
     [[nodiscard]] const std::filesystem::path* Path(Kind kind, int slot) const;
+    // Detect existing aliases (including hard links) to mounted disk images.
+    [[nodiscard]] bool Conflicts(const std::filesystem::path& path) const;
 private:
     CMotherboard& board_;
     std::array<std::filesystem::path, 4> floppyPaths_{};

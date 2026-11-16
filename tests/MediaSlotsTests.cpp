@@ -37,6 +37,7 @@ protected:
         std::error_code error;
         std::filesystem::remove(floppy, error);
         std::filesystem::remove(hard, error);
+        std::filesystem::remove(directory / "alias.img", error);
         std::filesystem::remove(directory, error);
         CProcessor::Done();
     }
@@ -93,11 +94,30 @@ TEST_F(MediaSlotsTest, RejectsInvalidOrOccupiedSlotsWithoutDetachingExistingDisk
         ASSERT_FALSE(missing); EXPECT_EQ(missing.error(), media_slots::Error::attach_failed);
         const auto& path = kind == Kind::floppy ? floppy : hard;
         ASSERT_TRUE(media.Attach(kind, 0, path));
+        EXPECT_TRUE(media.Conflicts(path));
+        EXPECT_TRUE(media.Conflicts(path.parent_path() / "." / path.filename()));
+        EXPECT_FALSE(media.Conflicts(directory / "missing.img"));
         const auto occupied = media.Attach(kind, 0, directory / "missing.img");
         ASSERT_FALSE(occupied); EXPECT_EQ(occupied.error(), media_slots::Error::occupied);
         ASSERT_TRUE(media.Attached(kind, 0));
         EXPECT_EQ(*media.Path(kind, 0), path);
         ASSERT_TRUE(media.Eject(kind, 0));
+        EXPECT_FALSE(media.Conflicts(path));
     }
+}
+
+TEST_F(MediaSlotsTest, DetectsHardLinkToMountedDisk)
+{
+    const auto alias = directory / "alias.img";
+    std::error_code error;
+    std::filesystem::create_hard_link(hard, alias, error);
+    if (error) GTEST_SKIP() << "Hard links unavailable: " << error.message();
+    CMotherboard board;
+    board.Reset();
+    media_slots::Slots media(board);
+    ASSERT_TRUE(media.Attach(media_slots::Kind::hardDisk, 0, hard));
+    EXPECT_TRUE(media.Conflicts(alias));
+    ASSERT_TRUE(media.Eject(media_slots::Kind::hardDisk, 0));
+    EXPECT_FALSE(media.Conflicts(alias));
 }
 }

@@ -2,6 +2,7 @@
 #include "EmbeddedRom.h"
 #include "MediaSlots.h"
 #include "PreviewSettings.h"
+#include "PreviewSnapshot.h"
 #include "ScreenshotImage.h"
 #include "ScreenshotClipboard.h"
 #include "ScreenshotFile.h"
@@ -119,6 +120,7 @@ int Run(bool smokeTest)
     std::ranges::copy(embedded_rom::Bytes(), rom.begin());
     board.LoadROM(rom);
     board.Reset();
+    preview_snapshot::Session snapshots(board);
     std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audioStream(nullptr, SDL_DestroyAudioStream);
     std::unique_ptr<sdl_audio::Output> audio;
     if (SDL_InitSubSystem(SDL_INIT_AUDIO))
@@ -186,6 +188,42 @@ int Run(bool smokeTest)
                     const auto format = result->filter == 1 ? screenshot_format::Format::bmp : screenshot_format::Format::png;
                     screenshotPath = screenshot_file::WithDefaultExtension(std::filesystem::path(path), format);
                 }
+                else if (result->purpose == sdl_file_dialog::Purpose::snapshotLoad)
+                {
+                    if (!snapshots.Load(std::filesystem::path(path), [&] {
+                        releaseKeys();
+                        running = false;
+                        if (audio)
+                        {
+                            const bool paused = SDL_PauseAudioStreamDevice(audioStream.get());
+                            const bool cleared = audio->Reset();
+                            if (!paused || !cleared)
+                            {
+                                SDL_Log("Audio pause failed: %s", SDL_GetError());
+                                audio.reset(); audioStream.reset(); soundEnabled = false;
+                            }
+                            audioActive = false;
+                        }
+                    }))
+                    {
+                        actionError = "Could not load the state image.";
+                        showActionError = true;
+                    }
+                }
+                else if (result->purpose == sdl_file_dialog::Purpose::snapshotSave)
+                {
+                    const auto target = preview_snapshot::WithDefaultExtension(std::filesystem::path(path));
+                    if (media.Conflicts(target))
+                    {
+                        actionError = "The selected file is an attached disk image. Choose another file.";
+                        showActionError = true;
+                    }
+                    else if (!snapshots.Save(target))
+                    {
+                        actionError = "Could not save the state image.";
+                        showActionError = true;
+                    }
+                }
                 else if (!media.Attach(result->kind, result->slot, std::filesystem::path(path)))
                 {
                     actionError = "Could not attach the disk image. Check the file and the selected drive.";
@@ -208,11 +246,24 @@ int Run(bool smokeTest)
                 {
                     releaseKeys();
                     board.Reset();
+                    snapshots.ResetTracking();
                     if (audio && !audio->Reset())
                     {
                         SDL_Log("Audio reset failed: %s", SDL_GetError());
                         audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
                     }
+                }
+                if (ImGui::MenuItem("Load state...", nullptr, false, !fileDialog->Pending()) &&
+                    !sdl_file_dialog::OpenSnapshot(fileDialog, *window))
+                {
+                    actionError = "Could not open the file dialog.";
+                    showActionError = true;
+                }
+                if (ImGui::MenuItem("Save state...", nullptr, false, !fileDialog->Pending()) &&
+                    !sdl_file_dialog::SaveSnapshot(fileDialog, *window))
+                {
+                    actionError = "Could not open the file dialog.";
+                    showActionError = true;
                 }
                 if (ImGui::MenuItem("Sound", nullptr, &soundEnabled, audio != nullptr))
                 {
@@ -309,6 +360,7 @@ int Run(bool smokeTest)
         {
             if (const auto key = keyDelivery.Next()) board.KeyboardEvent(key->scan, key->pressed);
             if (!board.SystemFrame()) { SDL_Log("Emulator frame failed"); return 1; }
+            snapshots.FrameCompleted();
             if (audio && audioActive && !audio->SubmitFrame())
             {
                 SDL_Log("Audio submission failed: %s", SDL_GetError());
@@ -333,7 +385,14 @@ int Run(bool smokeTest)
                     actionError = "Could not copy the screenshot to the clipboard.";
                     showActionError = true;
                 }
-                if (screenshotPath && !screenshot_file::Save(*screenshotPath, *capture))
+                if (screenshotPath && media.Conflicts(*screenshotPath))
+                {
+                    if (showActionError) actionError += "\n";
+                    else actionError.clear();
+                    actionError += "The selected file is an attached disk image. Choose another file.";
+                    showActionError = true;
+                }
+                else if (screenshotPath && !screenshot_file::Save(*screenshotPath, *capture))
                 {
                     if (showActionError) actionError += "\n";
                     else actionError.clear();

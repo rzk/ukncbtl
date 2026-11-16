@@ -250,11 +250,16 @@ ukncbtl_toolchain(EmulatorSnapshot)
 target_include_directories(EmulatorSnapshot PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
 target_link_libraries(EmulatorSnapshot PUBLIC EmulatorCore)
 
+add_library(PreviewSnapshot STATIC emulator/PreviewSnapshot.cpp)
+ukncbtl_toolchain(PreviewSnapshot)
+target_include_directories(PreviewSnapshot PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+target_link_libraries(PreviewSnapshot PRIVATE EmulatorSnapshot FrameTiming)
+
 if(UKNCBTL_ENABLE_IMGUI)
   add_executable(ukncbtl-sdl emulator/SdlMain.cpp)
   ukncbtl_toolchain(ukncbtl-sdl)
   target_include_directories(ukncbtl-sdl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard SdlAudio SdlFileDialog MediaSlots PreviewSettings ScreenshotImage ScreenshotFile ScreenshotClipboard
+  target_link_libraries(ukncbtl-sdl PRIVATE DearImGui SdlScreenRenderer SdlKeyboard SdlAudio SdlFileDialog MediaSlots PreviewSettings PreviewSnapshot ScreenshotImage ScreenshotFile ScreenshotClipboard
     EmbeddedRom EmulatorCore VideoDecoder)
 endif()
 
@@ -284,6 +289,8 @@ if(BUILD_TESTING)
   target_link_libraries(MediaSlotsTests PRIVATE MediaSlots EmulatorCore)
   ukncbtl_portable_test(PreviewSettingsTests tests/PreviewSettingsTests.cpp)
   target_link_libraries(PreviewSettingsTests PRIVATE PreviewSettings IniFile)
+  ukncbtl_portable_test(PreviewSnapshotTests tests/PreviewSnapshotTests.cpp)
+  target_link_libraries(PreviewSnapshotTests PRIVATE PreviewSnapshot EmulatorCore)
   if(UKNCBTL_ENABLE_SDL3)
     ukncbtl_portable_test(Sdl3SmokeTests tests/Sdl3SmokeTests.cpp)
     target_link_libraries(Sdl3SmokeTests PRIVATE SDL3::SDL3)

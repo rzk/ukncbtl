@@ -53,3 +53,17 @@ TEST(SdlFileDialog, PreservesScreenshotFilterAcrossCallback)
     EXPECT_EQ(result->filter, 1);
     EXPECT_EQ(result->path, "image");
 }
+
+TEST(SdlFileDialog, PreservesSnapshotPurposeAcrossCallback)
+{
+    sdl_file_dialog::State state;
+    for (const auto purpose : {sdl_file_dialog::Purpose::snapshotLoad, sdl_file_dialog::Purpose::snapshotSave})
+    {
+        ASSERT_TRUE(state.Begin());
+        state.Complete({media_slots::Kind::floppy, -1, sdl_file_dialog::Status::selected, "state.uknc", purpose, -1});
+        const auto result = state.Take();
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->purpose, purpose);
+        EXPECT_EQ(result->path, "state.uknc");
+    }
+}

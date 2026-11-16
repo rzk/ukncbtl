@@ -78,6 +78,9 @@ separate from legacy settings.
 Disk paths are not restored automatically. The preview preserves malformed
 settings files without overwriting them; the smoke test does not read or write
 preferences.
+The SDL preview can save and load legacy-compatible `.uknc` state images. A
+successful load pauses the machine; attached disk images remain attached and
+are not stored in the state image. Interactive dialogs still need testing.
 Audio output, file dialogs and disk interaction need interactive testing on each
 platform. Linux dialogs may require an available desktop portal.
 The `SdlFrontendSmoke` test runs three frames using SDL's dummy video driver;

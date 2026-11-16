@@ -11,7 +11,7 @@
 namespace sdl_file_dialog
 {
 enum class Status { selected, canceled, failed };
-enum class Purpose { disk, screenshot };
+enum class Purpose { disk, screenshot, snapshotLoad, snapshotSave };
 struct Result
 {
     media_slots::Kind kind;
@@ -40,4 +40,6 @@ private:
 [[nodiscard]] bool Open(const std::shared_ptr<State>& state, SDL_Window& window,
     media_slots::Kind kind, int slot);
 [[nodiscard]] bool SaveScreenshot(const std::shared_ptr<State>& state, SDL_Window& window);
+[[nodiscard]] bool OpenSnapshot(const std::shared_ptr<State>& state, SDL_Window& window);
+[[nodiscard]] bool SaveSnapshot(const std::shared_ptr<State>& state, SDL_Window& window);
 }

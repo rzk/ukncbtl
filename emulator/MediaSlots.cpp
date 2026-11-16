@@ -30,6 +30,20 @@ const std::filesystem::path* media_slots::Slots::Path(Kind kind, int slot) const
     return kind == Kind::floppy ? &floppyPaths_[slot] : &hardPaths_[slot];
 }
 
+bool media_slots::Slots::Conflicts(const std::filesystem::path& path) const
+{
+    if (path.empty()) return false;
+    for (const auto kind : {Kind::floppy, Kind::hardDisk})
+        for (int slot = 0; slot < (kind == Kind::floppy ? 4 : 2); ++slot)
+            if (const auto* mounted = Path(kind, slot))
+            {
+                if (*mounted == path) return true;
+                std::error_code error;
+                if (std::filesystem::equivalent(*mounted, path, error) && !error) return true;
+            }
+    return false;
+}
+
 std::expected<void, media_slots::Error> media_slots::Slots::Attach(Kind kind, int slot, const std::filesystem::path& path)
 {
     if (!Valid(kind, slot)) return std::unexpected(Error::invalid_slot);

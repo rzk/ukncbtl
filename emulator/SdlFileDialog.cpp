@@ -81,3 +81,23 @@ bool sdl_file_dialog::SaveScreenshot(const std::shared_ptr<State>& state, SDL_Wi
     SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr);
     return true;
 }
+
+bool sdl_file_dialog::OpenSnapshot(const std::shared_ptr<State>& state, SDL_Window& window)
+{
+    if (!state) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::snapshotLoad);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"UKNC state images", "uknc"}, {"All files", "*"}};
+    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
+    return true;
+}
+
+bool sdl_file_dialog::SaveSnapshot(const std::shared_ptr<State>& state, SDL_Window& window)
+{
+    if (!state) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::snapshotSave);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"UKNC state images", "uknc"}, {"All files", "*"}};
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr);
+    return true;
+}
