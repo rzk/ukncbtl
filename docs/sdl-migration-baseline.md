@@ -196,6 +196,10 @@ closes after saving; restart to apply the imported settings.
 The SDL preview can save and load legacy-compatible `.uknc` state images. A
 successful load pauses the machine; attached disks and cartridges remain
 attached and are not stored in the state image. Interactive dialogs still need testing.
+On Windows, dropping one file onto the SDL window opens a chooser for disk,
+cartridge, ROM, tape, state or disassembly subtitles. Disks can be mounted
+read-only, and occupied media slots must be ejected first. The chosen action
+uses the same validation and persistence rules as the file dialogs.
 Audio output, file dialogs and disk interaction need interactive testing on each
 platform. Linux dialogs may require an available desktop portal.
 The `SdlFrontendSmoke` test runs three frames using SDL's dummy video driver;

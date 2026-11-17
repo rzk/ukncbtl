@@ -4,6 +4,29 @@
 #include <memory>
 #include <thread>
 
+TEST(SdlFileDialog, DropBatchCopiesOnePathAndRejectsMultipleFiles)
+{
+    sdl_file_dialog::DropBatch batch;
+    std::string path = "disk-日本.dsk";
+    batch.Begin();
+    batch.Add(path.c_str());
+    path.clear();
+    EXPECT_EQ(batch.Finish(), "disk-日本.dsk");
+    EXPECT_FALSE(batch.Rejected());
+    batch.Begin();
+    batch.Add("first.dsk");
+    batch.Add("second.dsk");
+    EXPECT_FALSE(batch.Finish());
+    EXPECT_TRUE(batch.Rejected());
+    batch.Begin();
+    batch.Add(nullptr);
+    EXPECT_TRUE(batch.Rejected());
+    EXPECT_FALSE(batch.Finish());
+    batch.Begin();
+    EXPECT_FALSE(batch.Finish());
+    EXPECT_FALSE(batch.Rejected());
+}
+
 TEST(SdlFileDialog, HandsWorkerThreadResultToMainThread)
 {
     auto state = std::make_shared<sdl_file_dialog::State>();

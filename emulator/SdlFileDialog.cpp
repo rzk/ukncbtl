@@ -33,6 +33,26 @@ bool sdl_file_dialog::State::Pending() const
     return pending_;
 }
 
+void sdl_file_dialog::DropBatch::Begin()
+{
+    path_.reset();
+    rejected_ = false;
+}
+
+void sdl_file_dialog::DropBatch::Add(const char* path)
+{
+    if (rejected_) return;
+    if (!path || !*path || path_) { path_.reset(); rejected_ = true; return; }
+    path_ = path;
+}
+
+std::optional<std::string> sdl_file_dialog::DropBatch::Finish()
+{
+    auto result = std::move(path_);
+    path_.reset();
+    return result;
+}
+
 namespace
 {
 struct Request {

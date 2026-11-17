@@ -324,6 +324,10 @@ int Run(const preview_options::Options& options)
     int screenshotMode = settings.screenshotMode;
     int displayMode = settings.displayMode;
     int paletteMode = settings.paletteMode;
+    sdl_file_dialog::DropBatch dropBatch;
+    std::optional<std::string> droppedFile;
+    bool showDropChooser = false, dropReadOnly = false;
+    if (smokeTest) { droppedFile = "smoke-test.dsk"; showDropChooser = true; }
     unsigned frames = 0;
     while (true)
     {
@@ -349,6 +353,24 @@ int Run(const preview_options::Options& options)
         while (SDL_PollEvent(&event))
         {
             ImGui_ImplSDL3_ProcessEvent(&event);
+            if ((event.type == SDL_EVENT_DROP_BEGIN || event.type == SDL_EVENT_DROP_FILE ||
+                event.type == SDL_EVENT_DROP_COMPLETE) && event.drop.windowID == SDL_GetWindowID(window.get()))
+            {
+                if (event.type == SDL_EVENT_DROP_BEGIN) dropBatch.Begin();
+                else if (event.type == SDL_EVENT_DROP_FILE) dropBatch.Add(event.drop.data);
+                else if (event.type == SDL_EVENT_DROP_COMPLETE)
+                {
+                    auto path = dropBatch.Finish();
+                    if (dropBatch.Rejected())
+                    { actionError = "Drop one file at a time."; showActionError = true; }
+                    else if (path)
+                    {
+                        if (fileDialog->Pending() || droppedFile)
+                        { actionError = "Finish the current file selection before dropping another file."; showActionError = true; }
+                        else { droppedFile = std::move(path); dropReadOnly = false; showDropChooser = true; }
+                    }
+                }
+            }
             if (event.type == SDL_EVENT_KEY_DOWN && event.key.windowID == SDL_GetWindowID(window.get()))
                 if (const auto shortcut = sdl_shortcuts::Classify(event.key)) shortcuts.push_back(*shortcut);
             if ((event.type == SDL_EVENT_MOUSE_MOTION && event.motion.windowID == SDL_GetWindowID(window.get())) ||
@@ -1578,6 +1600,64 @@ int Run(const preview_options::Options& options)
             if (showActionError && !actionError.empty()) actionError += "\n";
             else actionError.clear();
             actionError += "Trace output failed and tracing was stopped."; showActionError = true;
+        }
+        if (showDropChooser) { ImGui::OpenPopup("Open dropped file"); showDropChooser = false; }
+        if (ImGui::BeginPopupModal("Open dropped file", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            if (droppedFile)
+            {
+                ImGui::TextWrapped("%s", droppedFile->c_str());
+                ImGui::TextUnformatted("Choose how to use this file:");
+                ImGui::Checkbox("Mount disk read-only", &dropReadOnly);
+                ImGui::TextDisabled("Eject media first; hard disks also require a cartridge.");
+                const auto choose = [&](const char* label, sdl_file_dialog::Purpose purpose,
+                    media_slots::Kind kind, int slot, bool enabled) {
+                    ImGui::BeginDisabled(!enabled);
+                    if (ImGui::Button(label))
+                    {
+                        if (fileDialog->Begin())
+                        {
+                            fileDialog->Complete({kind, slot, sdl_file_dialog::Status::selected,
+                                *droppedFile, purpose, -1, 0, 0, dropReadOnly});
+                            droppedFile.reset();
+                            ImGui::CloseCurrentPopup();
+                        }
+                        else
+                        {
+                            actionError = "Finish the current file selection and try again.";
+                            showActionError = true;
+                        }
+                    }
+                    ImGui::EndDisabled();
+                };
+                for (int slot = 0; slot < 4; ++slot)
+                {
+                    if (slot) ImGui::SameLine();
+                    const auto label = std::format("Floppy {}", slot);
+                    choose(label.c_str(), sdl_file_dialog::Purpose::disk, media_slots::Kind::floppy, slot,
+                        !media.Attached(media_slots::Kind::floppy, slot));
+                }
+                for (int slot = 0; slot < 2; ++slot)
+                {
+                    if (slot) ImGui::SameLine();
+                    const auto label = std::format("Hard disk {}", slot + 1);
+                    choose(label.c_str(), sdl_file_dialog::Purpose::disk, media_slots::Kind::hardDisk, slot,
+                        roms.Inserted(slot) && !media.Attached(media_slots::Kind::hardDisk, slot));
+                }
+                for (int slot = 0; slot < 2; ++slot)
+                {
+                    if (slot) ImGui::SameLine();
+                    const auto label = std::format("Cartridge {}", slot + 1);
+                    choose(label.c_str(), sdl_file_dialog::Purpose::cartridge, media_slots::Kind::floppy, slot,
+                        !roms.Inserted(slot));
+                }
+                choose("System ROM and reset", sdl_file_dialog::Purpose::systemRom, media_slots::Kind::floppy, -1, true);
+                choose("Load state", sdl_file_dialog::Purpose::snapshotLoad, media_slots::Kind::floppy, -1, true);
+                choose("Open tape", sdl_file_dialog::Purpose::tapeOpen, media_slots::Kind::floppy, -1, !tape.Inserted());
+                choose("Load disassembly subtitles", sdl_file_dialog::Purpose::subtitles, media_slots::Kind::floppy, -1, true);
+                if (ImGui::Button("Cancel")) { droppedFile.reset(); ImGui::CloseCurrentPopup(); }
+            }
+            ImGui::EndPopup();
         }
         if (showFloppyQuit) { ImGui::OpenPopup("Unsaved floppy changes"); showFloppyQuit = false; }
         if (ImGui::BeginPopupModal("Unsaved floppy changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))

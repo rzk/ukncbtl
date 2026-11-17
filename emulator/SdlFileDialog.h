@@ -40,6 +40,20 @@ private:
     std::optional<Result> result_;
 };
 
+// A desktop drop may contain several files. Accept exactly one, without
+// silently choosing one of several or retaining SDL-owned event memory.
+class DropBatch
+{
+public:
+    void Begin();
+    void Add(const char* path);
+    [[nodiscard]] std::optional<std::string> Finish();
+    [[nodiscard]] bool Rejected() const { return rejected_; }
+private:
+    std::optional<std::string> path_;
+    bool rejected_ = false;
+};
+
 // Call on the SDL main thread. At most one dialog may be outstanding.
 [[nodiscard]] bool Open(const std::shared_ptr<State>& state, SDL_Window& window,
     media_slots::Kind kind, int slot, bool readOnly = false);
