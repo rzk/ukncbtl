@@ -1,19 +1,11 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include <gtest/gtest.h>
 #include "util/ScreenScale.h"
-#include <array>
+#include <climits>
+#include <cstdint>
+#include <span>
 #include <vector>
 #include <algorithm>
-extern int g_SourceWidth,g_SourceHeight;
-void CALLBACK PrepareScreenCopy(const void*,void*);
-void CALLBACK PrepareScreenUpscale(const void*,void*);
-void CALLBACK PrepareScreenUpscale2(const void*,void*);
-void CALLBACK PrepareScreenUpscale2d(const void*,void*);
-void CALLBACK PrepareScreenUpscale3(const void*,void*);
-void CALLBACK PrepareScreenUpscale4(const void*,void*);
-void CALLBACK PrepareScreenUpscale175(const void*,void*);
-void CALLBACK PrepareScreenUpscale5(const void*,void*);
 namespace {
 uint32_t Mix(uint32_t a,uint32_t b) {
     const auto blue=((a&255)+(b&255))/2;
@@ -61,14 +53,6 @@ TEST_P(ScalePixels, ShortInputsAreRejectedBeforeWriting) {
     EXPECT_FALSE(screen_scale::Apply(GetParam(),std::span(source).first(source.size()-1),dest));
     EXPECT_FALSE(screen_scale::Apply(GetParam(),source,std::span(dest).first(dest.size()-1)));
     EXPECT_TRUE(std::ranges::all_of(dest,[](auto value){return value==0xdeadbeef;}));
-}
-TEST_P(ScalePixels, RendererDuplicateMatchesCompleteSharedOutput) {
-    const std::array callbacks{PrepareScreenCopy,PrepareScreenUpscale,PrepareScreenUpscale2,PrepareScreenUpscale2d,PrepareScreenUpscale3,PrepareScreenUpscale4,PrepareScreenUpscale175,PrepareScreenUpscale5};
-    g_SourceWidth=640; g_SourceHeight=288; const auto source=Source(); const auto info=screen_scale::GetMode(GetParam());
-    std::vector<uint32_t> expected(info.width*info.height),actual(expected.size()+2,0xdeadbeef);
-    ASSERT_TRUE(screen_scale::Apply(GetParam(),source,expected)); callbacks[GetParam()](source.data(),actual.data()+1);
-    EXPECT_EQ(0xdeadbeef,actual.front()); EXPECT_EQ(0xdeadbeef,actual.back());
-    EXPECT_TRUE(std::equal(expected.begin(),expected.end(),actual.begin()+1));
 }
 INSTANTIATE_TEST_SUITE_P(AllModes,ScalePixels,testing::Range(0,8));
 TEST(ScaleEdges, InvalidModesUseDefaultDimensionsAndPixels) {

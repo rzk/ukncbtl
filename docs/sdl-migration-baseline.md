@@ -307,7 +307,8 @@ permitted; never commit user disk images, ROMs or recordings without checking.
 ## Reference material
 
 - The menus and dialogs in `emulator/res/UKNCBTL.rc` inventory visible actions.
-- `third_party/RenderVfw/RenderVfw.cpp` defines the bundled renderer modes.
+- `emulator/util/ScreenScale.cpp` implements the former renderer modes; the
+  upstream renderer attribution is retained in `third_party/NOTICE-RenderVfw`.
 - `tests/` and [unit-test-plan.md](unit-test-plan.md) describe existing automated
   checks. Automated tests do not replace platform-specific manual checks.
 - `README.md` describes the existing media formats and emulator capabilities.
