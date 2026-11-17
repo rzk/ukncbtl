@@ -1,0 +1,33 @@
+name: CodeQL analysis
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze C and C++
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Windows SDK and linker environment
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
+      - name: Configure SDL frontend
+        run: cmake --preset windows-clang -DBUILD_TESTING=OFF
+      - name: Build SDL frontend
+        run: cmake --build --preset windows-clang
+      - name: Analyze and upload results
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:c-cpp
