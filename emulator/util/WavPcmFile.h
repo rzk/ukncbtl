@@ -50,6 +50,8 @@ public:
     [[nodiscard]] std::expected<void, WavError> SetPosition(uint32_t position);
     [[nodiscard]] std::expected<uint32_t, WavError> ReadOne();
     [[nodiscard]] std::expected<void, WavError> WriteOne(uint32_t value);
+    // Flush a recording with a valid header, retaining its current position.
+    [[nodiscard]] std::expected<void, WavError> Sync();
     [[nodiscard]] std::expected<void, WavError> Close();
 
 private:

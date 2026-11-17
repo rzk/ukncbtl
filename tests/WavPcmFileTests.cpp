@@ -189,6 +189,31 @@ TEST_F(WavFile, RecordingOverwriteAppendAndCloseRoundTrip)
     EXPECT_EQ(44100,read->Frequency()); EXPECT_EQ(3,read->Length());
     EXPECT_EQ(0x82000000u,read->ReadOne()); EXPECT_EQ(0x81000000u,read->ReadOne()); EXPECT_EQ(0xff000000u,read->ReadOne());
 }
+TEST_F(WavFile, SyncProducesReadableSnapshotsAndPreservesWritePosition)
+{
+    auto writer = WavPcmFile::Create(path, 44100); ASSERT_TRUE(writer);
+    for (int count = 0; count < 4; ++count)
+    {
+        ASSERT_TRUE(writer->Sync());
+        EXPECT_EQ(writer->Position(), count);
+        auto reader = WavPcmFile::Open(path); ASSERT_TRUE(reader);
+        EXPECT_EQ(reader->Length(), count);
+        for (int i = 0; i < count; ++i) EXPECT_EQ(reader->ReadOne(), static_cast<uint32_t>(i + 1) << 24);
+        ASSERT_TRUE(reader->Close());
+        ASSERT_TRUE(writer->WriteOne(static_cast<uint32_t>(count + 1) << 24));
+    }
+    ASSERT_TRUE(writer->SetPosition(1));
+    ASSERT_TRUE(writer->Sync());
+    EXPECT_EQ(writer->Position(), 1u);
+    ASSERT_TRUE(writer->WriteOne(0xaa000000));
+    ASSERT_TRUE(writer->Sync());
+    auto reader = WavPcmFile::Open(path); ASSERT_TRUE(reader);
+    EXPECT_EQ(reader->Length(), 4u);
+    EXPECT_EQ(reader->ReadOne(), 0x01000000u);
+    EXPECT_EQ(reader->ReadOne(), 0xaa000000u);
+    EXPECT_EQ(reader->ReadOne(), 0x03000000u);
+    EXPECT_EQ(reader->ReadOne(), 0x04000000u);
+}
 TEST_F(WavFile, DestructorFinalizesAndMoveTransfersOwnership)
 {
     {
@@ -210,6 +235,7 @@ TEST_F(WavFile, ModesClosedOperationsAndRepeatedClose)
     EXPECT_EQ(std::unexpected(WavError::io_error),writer->WriteOne(0));
     EXPECT_EQ(std::unexpected(WavError::io_error),writer->SetPosition(0));
     auto reader = WavPcmFile::Open(path); ASSERT_TRUE(reader);
+    EXPECT_EQ(std::unexpected(WavError::io_error), reader->Sync());
     EXPECT_EQ(std::unexpected(WavError::io_error),reader->WriteOne(0));
     EXPECT_EQ(std::unexpected(WavError::end_of_data),reader->ReadOne());
     ASSERT_TRUE(reader->Close()); EXPECT_EQ(std::unexpected(WavError::io_error),reader->ReadOne());

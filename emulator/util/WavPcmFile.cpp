@@ -55,6 +55,7 @@ std::expected<WavPcmFile, WavError> WavPcmFile::Create(const std::filesystem::pa
     std::ranges::copy(wave, header.begin() + 8);
     std::ranges::copy(formatId, header.begin() + 12);
     const auto bytes = std::span{header};
+    little_endian::write<uint32_t>(bytes.subspan<4, 4>(), 36);
     little_endian::write<uint32_t>(bytes.subspan<16, 4>(), 16);
     little_endian::write<uint16_t>(bytes.subspan<20, 2>(), pcmFormat);
     little_endian::write<uint16_t>(bytes.subspan<22, 2>(), channels);
@@ -202,26 +203,32 @@ std::expected<void, WavError> WavPcmFile::WriteOne(uint32_t value)
     return {};
 }
 
+std::expected<void, WavError> WavPcmFile::Sync()
+{
+    if (!file_ || !writing_) return std::unexpected(WavError::io_error);
+    bool ok = true;
+    if (dataSize_ & 1)
+    {
+        const uint8_t padding = 0;
+        file_->seekp(dataOffset_ + dataSize_, std::ios::beg);
+        ok = static_cast<bool>(*file_) && static_cast<bool>(file_->write(reinterpret_cast<const char*>(&padding), 1));
+    }
+    std::array<uint8_t, 4> sizeBytes{};
+    little_endian::write<uint32_t>(sizeBytes, 36 + dataSize_ + (dataSize_ & 1));
+    if (ok) { file_->seekp(4, std::ios::beg); ok = static_cast<bool>(*file_); }
+    if (ok) ok = static_cast<bool>(file_->write(reinterpret_cast<const char*>(sizeBytes.data()), sizeBytes.size()));
+    little_endian::write<uint32_t>(sizeBytes, dataSize_);
+    if (ok) { file_->seekp(40, std::ios::beg); ok = static_cast<bool>(*file_); }
+    if (ok) ok = static_cast<bool>(file_->write(reinterpret_cast<const char*>(sizeBytes.data()), sizeBytes.size()));
+    if (ok) { file_->seekp(dataOffset_ + static_cast<std::uint64_t>(position_) * blockAlign_, std::ios::beg); ok = static_cast<bool>(*file_); }
+    if (ok) { file_->flush(); ok = static_cast<bool>(*file_); }
+    return ok ? std::expected<void, WavError>{} : std::unexpected(WavError::io_error);
+}
+
 std::expected<void, WavError> WavPcmFile::Close()
 {
     if (!file_) return {};
-    bool ok = true;
-    if (writing_)
-    {
-        if (dataSize_ & 1)
-        {
-            const uint8_t padding = 0;
-            file_->seekp(dataOffset_ + dataSize_, std::ios::beg);
-            ok = static_cast<bool>(*file_) && static_cast<bool>(file_->write(reinterpret_cast<const char*>(&padding), 1));
-        }
-        std::array<uint8_t, 4> sizeBytes{};
-        little_endian::write<uint32_t>(sizeBytes, 36 + dataSize_ + (dataSize_ & 1));
-        if (ok) { file_->seekp(4, std::ios::beg); ok = static_cast<bool>(*file_); }
-        if (ok) ok = static_cast<bool>(file_->write(reinterpret_cast<const char*>(sizeBytes.data()), sizeBytes.size()));
-        little_endian::write<uint32_t>(sizeBytes, dataSize_);
-        if (ok) { file_->seekp(40, std::ios::beg); ok = static_cast<bool>(*file_); }
-        if (ok) ok = static_cast<bool>(file_->write(reinterpret_cast<const char*>(sizeBytes.data()), sizeBytes.size()));
-    }
+    bool ok = !writing_ || static_cast<bool>(Sync());
     file_->close();
     if (file_->fail()) ok = false;
     file_.reset();

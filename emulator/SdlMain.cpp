@@ -1866,7 +1866,6 @@ int Run(const preview_options::Options& options)
                 showDebugger = true;
             }
             if (!printer.Check()) { actionError = "Printer output failed and was stopped."; showActionError = true; }
-            if (tape.TakeError()) { actionError = "Tape I/O failed and playback or recording was stopped."; showActionError = true; }
             if (completed)
             {
                 if (const auto event = autoBoot.FrameCompleted())
@@ -1880,6 +1879,7 @@ int Run(const preview_options::Options& options)
                 }
             }
         }
+        if (tape.TakeError()) { actionError = "Tape I/O failed and playback or recording was stopped."; showActionError = true; }
         const auto palette = video_palette::Get(static_cast<video_palette::Mode>(paletteMode));
         if (copyScreenText)
         {

@@ -51,6 +51,16 @@ TEST_F(PreviewTapeTest, RecordsFramesRewindsAndReopensForPlayback)
     EXPECT_EQ(tape.Position(), 882);
     tape.Stop();
     EXPECT_FALSE(tape.Playing());
+    {
+        auto stoppedRecording = WavPcmFile::Open(path);
+        ASSERT_TRUE(stoppedRecording);
+        EXPECT_EQ(stoppedRecording->Length(), 882u);
+    }
+    ASSERT_TRUE(tape.Play());
+    ASSERT_TRUE(board->SystemFrame());
+    tape.Stop();
+    EXPECT_FALSE(tape.TakeError());
+    EXPECT_EQ(tape.Length(), 1764u);
     ASSERT_TRUE(tape.Rewind());
     EXPECT_EQ(tape.Position(), 0);
     ASSERT_TRUE(tape.Close());
@@ -63,10 +73,11 @@ TEST_F(PreviewTapeTest, RecordsFramesRewindsAndReopensForPlayback)
     }
     ASSERT_TRUE(tape.Open(path));
     EXPECT_FALSE(tape.Recording());
-    EXPECT_EQ(tape.Length(), 882);
+    EXPECT_EQ(tape.Length(), 1764);
     ASSERT_TRUE(tape.Play());
     ASSERT_TRUE(board->SystemFrame());
     EXPECT_EQ(tape.Position(), 882);
+    ASSERT_TRUE(board->SystemFrame());
     EXPECT_FALSE(tape.Playing());
     EXPECT_FALSE(tape.TakeError());
     ASSERT_TRUE(tape.Close());

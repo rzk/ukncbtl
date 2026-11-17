@@ -51,7 +51,11 @@ bool preview_tape::Session::Play()
 void preview_tape::Session::Stop()
 {
     if (!state_.Stop()) return;
-    if (Recording()) board_.SetTapeWriteCallbackWithContext(nullptr, nullptr, 0);
+    if (Recording())
+    {
+        board_.SetTapeWriteCallbackWithContext(nullptr, nullptr, 0);
+        if (file_ && !file_->Sync()) error_ = true;
+    }
     else board_.SetTapeReadCallbackWithContext(nullptr, nullptr, 0);
 }
 

@@ -188,7 +188,8 @@ captures the pointer. Short button presses are queued for emulated frames.
 The Tape menu opens PCM WAV files or creates 44.1 kHz mono recordings, with
 play, record, stop, rewind and eject controls. A tape panel shows position and
 signal, and allows seeking in stopped playback. Playback stops at end of file,
-and I/O and finalization failures are reported. With media restoration enabled,
+and stopping a recording flushes a playable WAV while keeping the tape mounted
+for resumption. I/O and finalization failures are reported. With media restoration enabled,
 playback tapes reopen stopped; recording sessions are never restored automatically.
 Mounted tape files are protected from other emulator output operations.
 The preview preserves malformed
