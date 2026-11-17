@@ -281,9 +281,11 @@ permitted; never commit user disk images, ROMs or recordings without checking.
   emulated network station setting and internal device behavior remain.
 - Renderer plugins and the bundled Windows renderer are removed; retained
   display modes become application-owned functionality.
-- Application-owned WinAPI, MASM, Visual Studio projects and Visual Studio
-  generator support are removed by the end of the migration. SDL's own native
-  platform implementations are not application-owned WinAPI code.
+- The historical checked-in Visual Studio 2015 solution and project files have
+  been removed, and the CPU overflow routines now use Clang-assembled source
+  instead of MASM. Application-owned WinAPI and Visual Studio generator support
+  are removed by the end of the migration. SDL's own native platform
+  implementations are not application-owned WinAPI code.
 
 ## Reference material
 

@@ -78,8 +78,8 @@ debug build, or open the CMake project in Visual Studio.
 All C++ targets require C++23, including the renderer, tests and benchmarks.
 CMake selects the compiler's corresponding standard mode (MSVC may spell this
 `/std:c++latest`). Use a current MSVC toolset with `std::expected`, `std::print`
-and C++23 ranges support. The checked-in historical VS2015 projects are not the
-supported build entry point; configure and build through CMake.
+and C++23 ranges support. Configure and build through CMake; the historical
+VS2015 project files have been removed.
 The emulator requires the x64 target. CMake also supports older
 installed Visual Studio generators; select the matching generator explicitly.
 The build also produces `RenderVfw.dll` beside the executable; keep both files
