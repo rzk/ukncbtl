@@ -1,8 +1,8 @@
 # Correctness, benchmarks and profiling
 
 Use GoogleTest for correctness, Google Benchmark for speed measurements, and
-Tracy to locate bottlenecks. All three are integrated with CMake on Windows x64
-and MSVC. Commands below run from the repository root in a Windows developer
+Tracy to locate bottlenecks. Benchmarks and ASan currently require the legacy
+Windows x64/MSVC build; Tracy also supports the SDL frontend. Commands below run from the repository root in a Windows developer
 shell with Ninja, the MSVC compiler and Clang available on `PATH`.
 
 ## Build options and dependencies
@@ -20,7 +20,7 @@ respective executables. With Tracy off, profiling macros compile away and no
 Tracy dependency is downloaded or linked. Turning all three options off builds
 the application without fetching any of these dependencies.
 
-The application and fetched libraries use the static MSVC runtime (`/MT`, or
+The legacy application and fetched libraries use the static MSVC runtime (`/MT`, or
 `/MTd` for Debug). CMake's `FETCHCONTENT_SOURCE_DIR_GOOGLETEST`,
 `FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK` and `FETCHCONTENT_SOURCE_DIR_TRACY`
 can point at local checkouts of the pinned revisions for offline builds.
@@ -93,9 +93,9 @@ build configuration, and measure with Tracy disabled. A quick smoke run uses
 Use a separate directory to keep instrumented timings out of benchmark baselines:
 
 ```powershell
-cmake -S . -B build/profile -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF -DUKNCBTL_ENABLE_TRACY=ON
-cmake --build build/profile --target UKNCBTL --parallel
-./build/profile/UKNCBTL.exe
+cmake -S . -B build/profile -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF -DUKNCBTL_ENABLE_TRACY=ON
+cmake --build build/profile --target ukncbtl-sdl --parallel
+./build/profile/ukncbtl-sdl.exe
 ```
 
 Open the Tracy **0.12.2** profiler from the [upstream release](https://github.com/wolfpld/tracy/releases/tag/v0.12.2)
@@ -104,9 +104,10 @@ the workload of interest. The client uses on-demand collection and listens only
 on localhost. Capture collection begins when the profiler connects.
 
 Frame markers delimit iterations of the host main loop, including paused
-iterations. Named zones identify `Emulator frame`, `Core frame`, `Video decode`,
-`Prepare screen`, `Screen draw`, `Screen scale`, `Audio submit`,
-`Audio buffer wait` and `Frame pacing wait`. Audio and pacing waits are deliberate
+iterations. SDL zones cover the main loop, events, ImGui frame setup and interface, emulation,
+video decode, screen scaling and drawing, audio submission, rendering, presentation,
+and pacing. The legacy frontend also reports `Prepare screen` and `Audio buffer wait`.
+Audio and pacing waits are deliberate
 throttling, so inspect them separately from computation. The screen-scaling zone
 appears only on paths that call the CPU scaler. No per-instruction or per-sample
 zones are emitted, to keep the capture size and instrumentation cost manageable.

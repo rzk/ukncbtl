@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "SdlScreenRenderer.h"
+#include "util/Profiler.h"
 #include <limits>
 #include <span>
 #include <utility>
@@ -9,6 +10,7 @@ sdl_screen::Renderer::Renderer(SDL_Renderer& renderer) : renderer_(&renderer) {}
 std::expected<void, sdl_screen::Error> sdl_screen::Renderer::Draw(
     const screenshot_image::Image& image, const SDL_FRect& destination)
 {
+    UKNC_PROFILE_SCOPE("Screen draw");
     if (image.width <= 0 || image.height <= 0 ||
         image.width > (std::numeric_limits<int>::max)() / 4)
         return std::unexpected(Error::invalid_image);

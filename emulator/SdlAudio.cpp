@@ -3,6 +3,7 @@
 #include "FramePacing.h"
 #include "emubase/Board.h"
 #include "emubase/Emubase.h"
+#include "util/Profiler.h"
 #include <SDL3/SDL_stdinc.h>
 #include <utility>
 
@@ -33,6 +34,7 @@ void sdl_audio::Output::Feed(void* context, unsigned short left, unsigned short 
 
 bool sdl_audio::Output::SubmitFrame()
 {
+    UKNC_PROFILE_SCOPE("Audio submit");
     const int queued = SDL_GetAudioStreamQueued(&stream_);
     if (queued < 0) return false;
     if (queued > MaxQueuedBytes - FrameBytes && !SDL_ClearAudioStream(&stream_)) return false;

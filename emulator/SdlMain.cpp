@@ -35,6 +35,7 @@
 #include "emubase/Board.h"
 #include "emubase/Processor.h"
 #include "util/ScreenScale.h"
+#include "util/Profiler.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <imgui.h>
@@ -360,7 +361,11 @@ int Run(const preview_options::Options& options)
         std::optional<std::filesystem::path> screenshotPath;
         std::vector<SDL_Event> mouseEvents;
         bool focusLost = false;
+        UKNC_PROFILE_FRAME();
+        UKNC_PROFILE_SCOPE("SDL main loop");
         const auto started = std::chrono::steady_clock::now();
+        {
+        UKNC_PROFILE_SCOPE("SDL events");
         SDL_Event event;
         while (SDL_PollEvent(&event))
         {
@@ -416,6 +421,7 @@ int Run(const preview_options::Options& options)
             if (event.type == SDL_EVENT_QUIT ||
                 (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(window.get())))
                 done = true;
+        }
         }
         if (done) continue;
         if (const auto result = fileDialog->Take())
@@ -620,9 +626,12 @@ int Run(const preview_options::Options& options)
             if (ui_appearance::Apply(settings.uiTheme, settings.uiScale))
             { appliedTheme = settings.uiTheme; appliedScale = settings.uiScale; }
         }
+        {
+        UKNC_PROFILE_SCOPE("ImGui new frame");
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
+        }
         if (debugger.TraceMask() && settings.traceMask != debugger.TraceMask())
         { settings.traceMask = debugger.TraceMask(); settingsDirty = true; }
         for (const auto shortcut : shortcuts)
@@ -681,7 +690,9 @@ int Run(const preview_options::Options& options)
             else if (!sdl_file_dialog::Open(fileDialog, *window, kind, slot, readOnly))
             { actionError = "Could not open the file dialog."; showActionError = true; }
         };
-        float menuHeight = 0;
+        float menuHeight = 0, toolbarHeight = 0, statusHeight = 0;
+        {
+        UKNC_PROFILE_SCOPE("ImGui interface");
         if (ImGui::BeginMainMenuBar())
         {
             menuHeight = ImGui::GetWindowHeight();
@@ -1064,8 +1075,8 @@ int Run(const preview_options::Options& options)
             ImGui::EndMainMenuBar();
         }
         const float barHeight = ImGui::GetFrameHeight() + 2 * ImGui::GetStyle().WindowPadding.y;
-        const float toolbarHeight = settings.toolbar ? barHeight : 0.0f;
-        const float statusHeight = settings.statusBar ? barHeight : 0.0f;
+        toolbarHeight = settings.toolbar ? barHeight : 0.0f;
+        statusHeight = settings.statusBar ? barHeight : 0.0f;
         constexpr ImGuiWindowFlags barFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing;
         if (settings.toolbar)
@@ -1925,6 +1936,7 @@ int Run(const preview_options::Options& options)
             if (ImGui::Button("OK")) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
+        }
         if (toggleFullscreen && !sdl_display::ToggleFullscreen(*window))
         { actionError = "Could not change fullscreen mode."; showActionError = true; }
         if (audio.IsOpen() && (speedChanged || volumeChanged) &&
@@ -1969,6 +1981,7 @@ int Run(const preview_options::Options& options)
         }
         if (!done && running && scheduler.Due(started))
         {
+            UKNC_PROFILE_SCOPE("Emulator frame");
             scheduler.FrameStarted(started, settings.speed, FRAMERATE);
             if (const auto key = keyDelivery.Next()) board.KeyboardEvent(key->scan, key->pressed);
             if (settings.mouse)
@@ -2038,13 +2051,22 @@ int Run(const preview_options::Options& options)
                 }
             }
         }
+        {
+        UKNC_PROFILE_SCOPE("SDL render");
         ImGui::Render();
         if (!SDL_SetRenderDrawColor(renderer.get(), 0, 0, 0, 255) || !SDL_RenderClear(renderer.get())) return 1;
         if (destination.w > 0 && destination.h > 0 && !screen.Draw(*image, destination)) { SDL_Log("Screen draw failed: %s", SDL_GetError()); return 1; }
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer.get());
-        if (!SDL_RenderPresent(renderer.get())) return 1;
+        {
+            UKNC_PROFILE_SCOPE("SDL present");
+            if (!SDL_RenderPresent(renderer.get())) return 1;
+        }
+        }
         if (smokeTest && frames >= 3) done = true;
-        std::this_thread::sleep_for(scheduler.Delay(frame_pacing::Clock::now(), settings.speed, running));
+        {
+            UKNC_PROFILE_SCOPE("Frame pacing wait");
+            std::this_thread::sleep_for(scheduler.Delay(frame_pacing::Clock::now(), settings.speed, running));
+        }
     }
     if (!tape.Close())
     {
