@@ -143,7 +143,7 @@ bool preview_settings::SameFile(const std::filesystem::path& first, const std::f
 }
 
 std::expected<preview_settings::Settings, IniFileError> preview_settings::ImportLegacy(
-    const std::filesystem::path& path, ImportEncoding encoding, const Settings& current)
+    const std::filesystem::path& path, ImportEncoding encoding, const Settings& current, bool importMedia)
 {
     std::expected<IniFile, IniFileError> file = std::unexpected(IniFileError::unsupported_encoding);
     switch (encoding)
@@ -171,6 +171,9 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Import
     boolean(L"Keyboard", result.keyboard);
     boolean(L"Autostart", result.autostart);
     boolean(L"Debug", result.debuggerVisible);
+    boolean(L"Toolbar", result.toolbar);
+    boolean(L"DebugMemoryByte", result.memoryBytes);
+    boolean(L"DebugMemoryNumeral", result.memoryHex);
     // The legacy flag selects CPU when true; the SDL flag selects PPU.
     if (const auto value = number(L"DebugCpuPpu"); value && *value <= 1)
     { result.debuggerPpu = *value == 0; imported = true; }
@@ -190,6 +193,55 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Import
     { result.spriteWidth = static_cast<int>(*value); imported = true; }
     if (const auto value = number(L"SpriteMode"); value && *value <= 4)
     { result.spriteMode = static_cast<int>(*value); imported = true; }
+    if (const auto value = number(L"DebugMemoryMode"); value && *value <= 5)
+    {
+        constexpr std::array modes{3, 4, 5, 6, 1, 2}; // RAM0/1/2, ROM, CPU, PPU.
+        result.memorySource = modes[*value]; imported = true;
+    }
+    const auto importBreakpoints = [&](std::wstring_view prefix, SavedBreakpoints& target) {
+        SavedBreakpoints values = EmptyBreakpoints();
+        std::size_t count = 0;
+        for (int index = 0; index < 16; ++index)
+        {
+            auto key = std::wstring(prefix);
+            key.push_back(index < 10 ? static_cast<wchar_t>(L'0' + index) : static_cast<wchar_t>(L'A' + index - 10));
+            const auto value = number(key);
+            if (!value || *value >= BreakpointSet::NoBreakpoint || (*value & 1) ||
+                std::find(values.begin(), values.begin() + count, *value) != values.begin() + count || count == values.size()) continue;
+            values[count++] = static_cast<std::uint16_t>(*value);
+        }
+        if (count) { std::sort(values.begin(), values.begin() + count); target = values; imported = true; }
+    };
+    importBreakpoints(L"DebugBreakptCpu", result.cpuBreakpoints);
+    importBreakpoints(L"DebugBreakptPpu", result.ppuBreakpoints);
+    if (importMedia)
+    {
+        bool foundMedia = false;
+        const auto readPath = [&](std::wstring_view key, std::filesystem::path& target) {
+            const auto text = doc.Get(L"UKNCBTL", key);
+            if (!text || text->size() > 32768) return;
+            if (text->empty()) { target.clear(); imported = true; return; }
+            const auto encoded = ini_encoding::Encode(*text, ini_encoding::Encoding::utf8);
+            if (!encoded) return;
+            try
+            {
+                const std::u8string bytes(encoded->begin(), encoded->end());
+                auto mediaPath = std::filesystem::path(bytes);
+                if (mediaPath.is_relative()) mediaPath = path.parent_path() / mediaPath;
+                target = std::filesystem::absolute(mediaPath).lexically_normal();
+                foundMedia = true; imported = true;
+            }
+            catch (const std::filesystem::filesystem_error&) {}
+        };
+        for (int index = 0; index < 4; ++index) readPath(L"Floppy" + std::to_wstring(index), result.floppies[index]);
+        for (int index = 0; index < 2; ++index)
+        {
+            readPath(L"Cartridge" + std::to_wstring(index + 1), result.cartridges[index]);
+            // Legacy callers use one-based slots with a key helper that adds one.
+            readPath(L"Hard" + std::to_wstring(index + 2), result.hardDisks[index]);
+        }
+        if (foundMedia) result.restoreMedia = true;
+    }
     if (!imported) return std::unexpected(IniFileError::invalid_entry);
     return result;
 }

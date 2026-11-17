@@ -57,7 +57,7 @@ enum class ImportEncoding { unicode, windows1251, windows1252 };
 // Imports recognized values into the supplied settings without changing the source.
 // Unrecognized or invalid values leave the corresponding current setting intact.
 [[nodiscard]] std::expected<Settings, IniFileError> ImportLegacy(
-    const std::filesystem::path& path, ImportEncoding encoding, const Settings& current);
+    const std::filesystem::path& path, ImportEncoding encoding, const Settings& current, bool importMedia = false);
 
 [[nodiscard]] bool ValidWindowSize(int width, int height);
 // Compares existing aliases and normalized paths that may not exist yet.

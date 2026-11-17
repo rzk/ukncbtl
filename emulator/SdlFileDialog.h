@@ -56,6 +56,7 @@ private:
     std::uint16_t start, std::uint16_t end);
 [[nodiscard]] bool SaveDisplayList(const std::shared_ptr<State>& state, SDL_Window& window);
 [[nodiscard]] bool SaveConsoleLog(const std::shared_ptr<State>& state, SDL_Window& window);
+// 0..2 select text encoding; 3..5 also request saved media paths.
 [[nodiscard]] bool OpenLegacySettings(const std::shared_ptr<State>& state, SDL_Window& window, int encoding);
 [[nodiscard]] bool SaveTrace(const std::shared_ptr<State>& state, SDL_Window& window, std::uint16_t mask);
 }

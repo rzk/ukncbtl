@@ -166,9 +166,12 @@ The preview preserves malformed
 settings files without overwriting them; the smoke test does not read or write
 preferences.
 The Emulator menu can import compatible legacy preferences from an explicitly
-selected UTF-8, UTF-16LE, Windows-1251 or Windows-1252 INI file. It preserves
-other SDL preferences and closes the frontend after saving; restart to apply
-the imported settings. Media paths and unsupported legacy options are not imported.
+selected UTF-8, UTF-16LE, Windows-1251 or Windows-1252 INI file. It imports
+compatible debugger, display and sound settings and breakpoints, preserving
+unrelated SDL preferences. An explicit import option also copies legacy floppy,
+cartridge and hard-disk paths and enables restoration on the next launch.
+Relative media paths are resolved against the legacy INI directory. The frontend
+closes after saving; restart to apply the imported settings.
 The SDL preview can save and load legacy-compatible `.uknc` state images. A
 successful load pauses the machine; attached disks and cartridges remain
 attached and are not stored in the state image. Interactive dialogs still need testing.

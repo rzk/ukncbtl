@@ -371,7 +371,7 @@ int Run(const preview_options::Options& options)
                         SDL_GetWindowSize(window.get(), &width, &height) && preview_settings::ValidWindowSize(width, height))
                     { current.windowWidth = width; current.windowHeight = height; }
                     const auto imported = preview_settings::ImportLegacy(source,
-                        static_cast<preview_settings::ImportEncoding>(result->slot), current);
+                        static_cast<preview_settings::ImportEncoding>(result->slot % 3), current, result->slot >= 3);
                     if (!settingsPath || same || conflicts(source) || !imported || !preview_settings::Save(*settingsPath, *imported))
                     { actionError = "Could not import settings. Check the source, encoding and settings file."; showActionError = true; }
                     else
@@ -591,9 +591,15 @@ int Run(const preview_options::Options& options)
                 if (ImGui::BeginMenu("Import legacy settings and exit", settingsPath.has_value() && !fileDialog->Pending()))
                 {
                     constexpr std::array labels{"UTF-8 or UTF-16LE...", "Windows-1251...", "Windows-1252..."};
-                    for (int index = 0; index < static_cast<int>(labels.size()); ++index)
-                        if (ImGui::MenuItem(labels[index]) && !sdl_file_dialog::OpenLegacySettings(fileDialog, *window, index))
-                        { actionError = "Could not open the file dialog."; showActionError = true; }
+                    for (int media = 0; media < 2; ++media)
+                        if (ImGui::BeginMenu(media ? "Settings and media paths" : "Settings only"))
+                        {
+                            if (media) ImGui::TextDisabled("Media will be restored on the next launch.");
+                            for (int index = 0; index < static_cast<int>(labels.size()); ++index)
+                                if (ImGui::MenuItem(labels[index]) && !sdl_file_dialog::OpenLegacySettings(fileDialog, *window, index + media * 3))
+                                { actionError = "Could not open the file dialog."; showActionError = true; }
+                            ImGui::EndMenu();
+                        }
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Network station"))

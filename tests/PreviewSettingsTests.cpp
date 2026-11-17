@@ -97,6 +97,56 @@ TEST_F(PreviewSettingsTest, ImportsCompatibleLegacyValuesAndKeepsUnrelatedSettin
     EXPECT_NE(Read().find("[UKNCBTL]"), std::string::npos);
 }
 
+TEST_F(PreviewSettingsTest, ImportsLegacyDebuggerPreferencesAndValidBreakpoints)
+{
+    Write("[UKNCBTL]\nToolbar=0\nDebugMemoryMode=2\nDebugMemoryByte=1\nDebugMemoryNumeral=1\n"
+          "DebugBreakptCpu0=4096\nDebugBreakptCpu1=512\nDebugBreakptCpu2=512\n"
+          "DebugBreakptCpu3=513\nDebugBreakptCpuF=65534\nDebugBreakptPpu0=1024\n");
+    preview_settings::Settings current;
+    current.ppuBreakpoints[0] = 01000;
+    const auto result = preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::unicode, current);
+    ASSERT_TRUE(result);
+    EXPECT_FALSE(result->toolbar);
+    EXPECT_EQ(result->memorySource, 5);
+    EXPECT_TRUE(result->memoryBytes);
+    EXPECT_TRUE(result->memoryHex);
+    EXPECT_EQ(result->cpuBreakpoints[0], 01000);
+    EXPECT_EQ(result->cpuBreakpoints[1], 010000);
+    EXPECT_EQ(result->cpuBreakpoints[2], 0177776);
+    EXPECT_EQ(result->cpuBreakpoints[3], BreakpointSet::NoBreakpoint);
+    EXPECT_EQ(result->ppuBreakpoints[0], 02000);
+    EXPECT_EQ(result->ppuBreakpoints[1], BreakpointSet::NoBreakpoint);
+}
+
+TEST_F(PreviewSettingsTest, MediaImportIsOptInAndUsesLegacySlotsAndEncoding)
+{
+    Write("[UKNCBTL]\nSound=0\nFloppy0=disk-\xcf.dsk\nFloppy1=\nCartridge1=cart1.rom\n"
+          "Cartridge2=cart2.rom\nHard2=hard1.img\nHard3=hard2.img\n");
+    preview_settings::Settings current;
+    current.floppies[1] = directory / "keep.dsk";
+    const auto normal = preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::windows1251, current);
+    ASSERT_TRUE(normal);
+    EXPECT_FALSE(normal->restoreMedia);
+    EXPECT_TRUE(normal->floppies[0].empty());
+    EXPECT_EQ(normal->floppies[1], current.floppies[1]);
+    const auto withMedia = preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::windows1251, current, true);
+    ASSERT_TRUE(withMedia);
+    EXPECT_TRUE(withMedia->restoreMedia);
+    EXPECT_EQ(withMedia->floppies[0], directory / std::filesystem::path(u8"disk-\u041f.dsk"));
+    EXPECT_TRUE(withMedia->floppies[1].empty());
+    EXPECT_EQ(withMedia->cartridges[0], directory / "cart1.rom");
+    EXPECT_EQ(withMedia->cartridges[1], directory / "cart2.rom");
+    EXPECT_EQ(withMedia->hardDisks[0], directory / "hard1.img");
+    EXPECT_EQ(withMedia->hardDisks[1], directory / "hard2.img");
+    const auto destination = directory / "imported.ini";
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{destination};
+    ASSERT_TRUE(preview_settings::Save(destination, *withMedia));
+    const auto reread = preview_settings::Load(destination);
+    ASSERT_TRUE(reread);
+    EXPECT_EQ(reread->floppies[0], withMedia->floppies[0]);
+    EXPECT_EQ(reread->hardDisks, withMedia->hardDisks);
+}
+
 TEST_F(PreviewSettingsTest, MediaPathsRoundTripAndInvalidEncodedPathsAreIgnored)
 {
     preview_settings::Settings input;
