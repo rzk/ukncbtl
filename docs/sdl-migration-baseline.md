@@ -40,7 +40,7 @@ ukncbtl-import-ini windows-1251 old.ini new.ini
 Use `windows-1252` for that code page. The source code page must be known; it
 is never detected automatically. On Windows, command-line paths are limited by
 the process's narrow-character encoding; use ASCII paths if necessary. Import
-is not yet exposed in the application UI.
+is available separately from the SDL frontend's settings import.
 
 Debug `trace.log` output is UTF-8 without a byte-order mark. Earlier Windows
 builds wrote text using the system's active code page.
@@ -138,6 +138,10 @@ automatically; mounted tape files are protected from preview output operations.
 The preview preserves malformed
 settings files without overwriting them; the smoke test does not read or write
 preferences.
+The Emulator menu can import compatible legacy preferences from an explicitly
+selected UTF-8, UTF-16LE, Windows-1251 or Windows-1252 INI file. It preserves
+other SDL preferences and closes the frontend after saving; restart to apply
+the imported settings. Media paths and unsupported legacy options are not imported.
 The SDL preview can save and load legacy-compatible `.uknc` state images. A
 successful load pauses the machine; attached disks and cartridges remain
 attached and are not stored in the state image. Interactive dialogs still need testing.

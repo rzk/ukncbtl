@@ -73,6 +73,16 @@ bool sdl_file_dialog::Open(const std::shared_ptr<State>& state, SDL_Window& wind
     return true;
 }
 
+bool sdl_file_dialog::OpenLegacySettings(const std::shared_ptr<State>& state, SDL_Window& window, int encoding)
+{
+    if (!state || encoding < 0 || encoding > 2) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, encoding, Purpose::legacySettings);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"INI settings", "ini"}, {"All files", "*"}};
+    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
+    return true;
+}
+
 bool sdl_file_dialog::SaveScreenshot(const std::shared_ptr<State>& state, SDL_Window& window)
 {
     if (!state) return false;

@@ -92,6 +92,7 @@ int Run(const preview_options::Options& options)
     std::optional<std::filesystem::path> settingsPath;
     std::string startupError;
     bool settingsDirty = false;
+    bool importedSettings = false;
     if (!smokeTest)
     {
         const std::unique_ptr<char, decltype(&SDL_free)> directory(SDL_GetPrefPath("UKNCBTL", "SDL Preview"), SDL_free);
@@ -320,7 +321,35 @@ int Run(const preview_options::Options& options)
             else if (result->status == sdl_file_dialog::Status::selected)
             {
                 const std::u8string path(reinterpret_cast<const char8_t*>(result->path.data()), result->path.size());
-                if (result->purpose == sdl_file_dialog::Purpose::memoryDump ||
+                if (result->purpose == sdl_file_dialog::Purpose::legacySettings)
+                {
+                    const auto source = std::filesystem::path(path);
+                    std::error_code error;
+                    const bool same = settingsPath && std::filesystem::equivalent(source, *settingsPath, error);
+                    auto current = settings;
+                    current.cpuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::cpu).PermanentAddresses();
+                    current.ppuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::ppu).PermanentAddresses();
+                    current.debuggerVisible = showDebugger;
+                    current.consoleVisible = showConsole;
+                    current.debuggerPpu = debugProcessor == preview_debugger::Processor::ppu;
+                    int width = 0, height = 0;
+                    const auto flags = SDL_GetWindowFlags(window.get());
+                    if (!(flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) &&
+                        SDL_GetWindowSize(window.get(), &width, &height) && preview_settings::ValidWindowSize(width, height))
+                    { current.windowWidth = width; current.windowHeight = height; }
+                    const auto imported = preview_settings::ImportLegacy(source,
+                        static_cast<preview_settings::ImportEncoding>(result->slot), current);
+                    if (!settingsPath || same || conflicts(source) || !imported || !preview_settings::Save(*settingsPath, *imported))
+                    { actionError = "Could not import settings. Check the source, encoding and settings file."; showActionError = true; }
+                    else
+                    {
+                        importedSettings = true;
+                        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Settings imported",
+                            "Settings were imported. The emulator will close; start it again to apply them.", window.get());
+                        done = true;
+                    }
+                }
+                else if (result->purpose == sdl_file_dialog::Purpose::memoryDump ||
                     result->purpose == sdl_file_dialog::Purpose::displayListDump ||
                     result->purpose == sdl_file_dialog::Purpose::consoleLog)
                 {
@@ -476,6 +505,14 @@ int Run(const preview_options::Options& options)
                 }
                 if (ImGui::MenuItem("Reset")) { resetMachine(); scheduler.Restart(started); }
                 if (ImGui::MenuItem("Start automatically", nullptr, &settings.autostart)) settingsDirty = true;
+                if (ImGui::BeginMenu("Import legacy settings and exit", settingsPath.has_value() && !fileDialog->Pending()))
+                {
+                    constexpr std::array labels{"UTF-8 or UTF-16LE...", "Windows-1251...", "Windows-1252..."};
+                    for (int index = 0; index < static_cast<int>(labels.size()); ++index)
+                        if (ImGui::MenuItem(labels[index]) && !sdl_file_dialog::OpenLegacySettings(fileDialog, *window, index))
+                        { actionError = "Could not open the file dialog."; showActionError = true; }
+                    ImGui::EndMenu();
+                }
                 if (ImGui::BeginMenu("Network station"))
                 {
                     ImGui::SetNextItemWidth(120);
@@ -1273,7 +1310,7 @@ int Run(const preview_options::Options& options)
         SDL_Log("Could not finish the printer output file.");
         (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Printer", "Could not finish the printer output file.", window.get());
     }
-    if (settingsPath)
+    if (settingsPath && !importedSettings)
     {
         const auto cpuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::cpu).PermanentAddresses();
         const auto ppuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::ppu).PermanentAddresses();

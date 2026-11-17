@@ -43,6 +43,12 @@ struct Settings
     std::array<std::uint16_t, BreakpointSet::Capacity - 1> ppuBreakpoints = EmptyBreakpoints();
 };
 
+enum class ImportEncoding { unicode, windows1251, windows1252 };
+// Imports recognized values into the supplied settings without changing the source.
+// Unrecognized or invalid values leave the corresponding current setting intact.
+[[nodiscard]] std::expected<Settings, IniFileError> ImportLegacy(
+    const std::filesystem::path& path, ImportEncoding encoding, const Settings& current);
+
 [[nodiscard]] bool ValidWindowSize(int width, int height);
 // Missing files and invalid individual values use defaults. Other read errors
 // are returned to the caller, which should avoid overwriting the file.

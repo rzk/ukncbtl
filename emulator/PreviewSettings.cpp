@@ -68,6 +68,58 @@ bool preview_settings::ValidWindowSize(int width, int height)
     return width >= 320 && width <= 7680 && height >= 240 && height <= 4320;
 }
 
+std::expected<preview_settings::Settings, IniFileError> preview_settings::ImportLegacy(
+    const std::filesystem::path& path, ImportEncoding encoding, const Settings& current)
+{
+    std::expected<IniFile, IniFileError> file = std::unexpected(IniFileError::unsupported_encoding);
+    switch (encoding)
+    {
+    case ImportEncoding::unicode: file = IniFile::Open(path); break;
+    case ImportEncoding::windows1251: file = IniFile::OpenLegacy(path, ini_encoding::LegacyEncoding::windows_1251); break;
+    case ImportEncoding::windows1252: file = IniFile::OpenLegacy(path, ini_encoding::LegacyEncoding::windows_1252); break;
+    }
+    if (!file) return std::unexpected(file.error());
+    const auto& doc = file->Document();
+    auto result = current;
+    bool imported = false;
+    const auto number = [&](std::wstring_view key) -> std::optional<std::uint32_t> {
+        const auto text = doc.Get(L"UKNCBTL", key);
+        return text && text->size() < 64 ? settings_codec::DecodeDword(*text) : std::nullopt;
+    };
+    const auto boolean = [&](std::wstring_view key, bool& target) {
+        const auto value = number(key);
+        if (value && *value <= 1) { target = *value != 0; imported = true; }
+    };
+    boolean(L"Sound", result.sound);
+    boolean(L"SoundAY", result.soundAY);
+    boolean(L"SoundCovox", result.soundCovox);
+    boolean(L"Mouse", result.mouse);
+    boolean(L"Keyboard", result.keyboard);
+    boolean(L"Autostart", result.autostart);
+    boolean(L"Debug", result.debuggerVisible);
+    // The legacy flag selects CPU when true; the SDL flag selects PPU.
+    if (const auto value = number(L"DebugCpuPpu"); value && *value <= 1)
+    { result.debuggerPpu = *value == 0; imported = true; }
+    if (const auto value = number(L"ScreenViewMode"); value && *value >= 1 && *value <= 3)
+    { result.paletteMode = *value == 1 ? 0 : *value == 2 ? 2 : 1; imported = true; }
+    if (const auto value = number(L"ScreenshotMode"); value && *value < screen_scale::Modes().size())
+    { result.screenshotMode = static_cast<int>(*value); imported = true; }
+    if (const auto value = number(L"RealSpeed"); value && *value <= 0xffff && frame_pacing::IsSupportedSpeed(static_cast<std::uint16_t>(*value)))
+    { result.speed = static_cast<std::uint16_t>(*value); imported = true; }
+    if (const auto value = number(L"SoundVolume"); value && *value <= 0xffff)
+    { result.volume = static_cast<int>((*value * 100u + 32767u) / 65535u); imported = true; }
+    if (const auto value = number(L"NetStation"); value && *value <= 0xffff)
+    { result.networkStation = static_cast<std::uint16_t>(*value); imported = true; }
+    if (const auto value = number(L"SpriteAddress"); value && *value <= 0xffff)
+    { result.spriteAddress = static_cast<std::uint16_t>(*value); imported = true; }
+    if (const auto value = number(L"SpriteWidth"); value && *value >= 1 && *value <= 32)
+    { result.spriteWidth = static_cast<int>(*value); imported = true; }
+    if (const auto value = number(L"SpriteMode"); value && *value <= 4)
+    { result.spriteMode = static_cast<int>(*value); imported = true; }
+    if (!imported) return std::unexpected(IniFileError::invalid_entry);
+    return result;
+}
+
 std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(const std::filesystem::path& path)
 {
     auto file = Read(path);

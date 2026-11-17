@@ -68,6 +68,54 @@ TEST_F(PreviewSettingsTest, MissingFileUsesDefaultsWithoutCreatingIt)
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
+TEST_F(PreviewSettingsTest, ImportsCompatibleLegacyValuesAndKeepsUnrelatedSettings)
+{
+    Write("[UKNCBTL]\nSound=0\nSoundAY=1\nMouse=1\nKeyboard=0\nAutostart=0\n"
+          "ScreenViewMode=2\nScreenshotMode=6\nRealSpeed=2\nSoundVolume=32768\n"
+          "Debug=1\nDebugCpuPpu=1\nNetStation=123\nSpriteWidth=7\nSpriteMode=3\n");
+    preview_settings::Settings current;
+    current.windowWidth = 1200;
+    current.cpuBreakpoints[0] = 01000;
+    const auto result = preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::unicode, current);
+    ASSERT_TRUE(result);
+    EXPECT_FALSE(result->sound);
+    EXPECT_TRUE(result->soundAY);
+    EXPECT_TRUE(result->mouse);
+    EXPECT_FALSE(result->keyboard);
+    EXPECT_FALSE(result->autostart);
+    EXPECT_EQ(result->paletteMode, 2);
+    EXPECT_EQ(result->screenshotMode, 6);
+    EXPECT_EQ(result->speed, 2);
+    EXPECT_EQ(result->volume, 50);
+    EXPECT_TRUE(result->debuggerVisible);
+    EXPECT_FALSE(result->debuggerPpu);
+    EXPECT_EQ(result->networkStation, 123);
+    EXPECT_EQ(result->spriteWidth, 7);
+    EXPECT_EQ(result->spriteMode, 3);
+    EXPECT_EQ(result->windowWidth, 1200);
+    EXPECT_EQ(result->cpuBreakpoints[0], 01000);
+    EXPECT_NE(Read().find("[UKNCBTL]"), std::string::npos);
+}
+
+TEST_F(PreviewSettingsTest, ImportRejectsUnrecognizedFilesAndIgnoresInvalidValues)
+{
+    Write("[Other]\nSound=1\n");
+    EXPECT_FALSE(preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::unicode, {}));
+    Write("[UKNCBTL]\nSound=2\nRealSpeed=65536\nSpriteWidth=0\nMouse=1\n");
+    preview_settings::Settings current;
+    current.sound = false;
+    current.speed = 2;
+    current.spriteWidth = 8;
+    const auto result = preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::windows1251, current);
+    ASSERT_TRUE(result);
+    EXPECT_FALSE(result->sound);
+    EXPECT_EQ(result->speed, 2);
+    EXPECT_EQ(result->spriteWidth, 8);
+    EXPECT_TRUE(result->mouse);
+    Write("\xff\xfe[\0");
+    EXPECT_FALSE(preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::windows1252, current));
+}
+
 TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
 {
     Write("; retain\n[Other]\nKey=value\n[SDLPreview]\nExtra=keep\n");
