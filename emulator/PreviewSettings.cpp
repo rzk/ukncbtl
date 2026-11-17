@@ -245,6 +245,10 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
     if (memoryBytes && *memoryBytes <= 1) settings.memoryBytes = *memoryBytes != 0;
     const auto memoryHex = Number(doc, L"MemoryHex");
     if (memoryHex && *memoryHex <= 1) settings.memoryHex = *memoryHex != 0;
+    const auto toolbar = Number(doc, L"Toolbar");
+    if (toolbar && *toolbar <= 1) settings.toolbar = *toolbar != 0;
+    const auto statusBar = Number(doc, L"StatusBar");
+    if (statusBar && *statusBar <= 1) settings.statusBar = *statusBar != 0;
     return settings;
 }
 
@@ -285,7 +289,9 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         !doc.Set(section, L"NetworkStation", std::to_wstring(settings.networkStation)) ||
         !doc.Set(section, L"MemorySource", std::to_wstring(settings.memorySource)) ||
         !doc.Set(section, L"MemoryBytes", settings.memoryBytes ? L"1" : L"0") ||
-        !doc.Set(section, L"MemoryHex", settings.memoryHex ? L"1" : L"0"))
+        !doc.Set(section, L"MemoryHex", settings.memoryHex ? L"1" : L"0") ||
+        !doc.Set(section, L"Toolbar", settings.toolbar ? L"1" : L"0") ||
+        !doc.Set(section, L"StatusBar", settings.statusBar ? L"1" : L"0"))
         return std::unexpected(IniFileError::invalid_entry);
     for (std::size_t index = 0; index < settings.cpuBreakpoints.size(); ++index)
         if (!doc.Set(section, BreakpointKey(L"CpuBreakpoint", index), std::to_wstring(settings.cpuBreakpoints[index])) ||

@@ -48,6 +48,8 @@ struct Settings
     int memorySource = 0;
     bool memoryBytes = false;
     bool memoryHex = false;
+    bool toolbar = true;
+    bool statusBar = true;
 };
 
 enum class ImportEncoding { unicode, windows1251, windows1252 };

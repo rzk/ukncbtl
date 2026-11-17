@@ -24,6 +24,7 @@
 #include "SdlKeyboard.h"
 #include "SdlFileDialog.h"
 #include "SdlScreenRenderer.h"
+#include "SdlShortcuts.h"
 #include "SdlSprite.h"
 #include "SpriteDecoder.h"
 #include "VideoDecoder.h"
@@ -292,7 +293,7 @@ int Run(const preview_options::Options& options)
     {
         bool copyScreenshot = false;
         bool copyScreenText = false;
-        bool fullscreenShortcut = false;
+        std::vector<sdl_shortcuts::Action> shortcuts;
         bool toggleFullscreen = false;
         bool speedChanged = false;
         bool volumeChanged = false;
@@ -304,10 +305,8 @@ int Run(const preview_options::Options& options)
         while (SDL_PollEvent(&event))
         {
             ImGui_ImplSDL3_ProcessEvent(&event);
-            if (event.type == SDL_EVENT_KEY_DOWN && event.key.windowID == SDL_GetWindowID(window.get()) &&
-                event.key.scancode == SDL_SCANCODE_F10 && !event.key.repeat &&
-                !(event.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT | SDL_KMOD_GUI)))
-                fullscreenShortcut = true;
+            if (event.type == SDL_EVENT_KEY_DOWN && event.key.windowID == SDL_GetWindowID(window.get()))
+                if (const auto shortcut = sdl_shortcuts::Classify(event.key)) shortcuts.push_back(*shortcut);
             if ((event.type == SDL_EVENT_MOUSE_MOTION && event.motion.windowID == SDL_GetWindowID(window.get())) ||
                 ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
                     event.button.windowID == SDL_GetWindowID(window.get())))
@@ -510,7 +509,20 @@ int Run(const preview_options::Options& options)
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
-        if (fullscreenShortcut && !ImGui::GetIO().WantCaptureKeyboard && !fileDialog->Pending()) toggleFullscreen = true;
+        for (const auto shortcut : shortcuts)
+        {
+            if (!sdl_shortcuts::Allowed(shortcut, running, focusLost || ImGui::GetIO().WantCaptureKeyboard,
+                fileDialog->Pending() || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))) continue;
+            switch (shortcut)
+            {
+            case sdl_shortcuts::Action::fullscreen: toggleFullscreen = true; break;
+            case sdl_shortcuts::Action::toggleRun: if (running) pauseMachine(); else startMachine(started); break;
+            case sdl_shortcuts::Action::reset: resetMachine(); scheduler.Restart(started); break;
+            case sdl_shortcuts::Action::step: debugger.Step(); showDebugger = true; break;
+            case sdl_shortcuts::Action::stepOver:
+                showDebugger = true; if (debugger.StepOver(debugProcessor)) startMachine(started); break;
+            }
+        }
         if (ImGui::GetIO().WantCaptureKeyboard) releasePhysicalKeys();
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
             if (const auto event = virtualKeys.ReleasePointer())
@@ -685,6 +697,8 @@ int Run(const preview_options::Options& options)
             }
             if (ImGui::BeginMenu("Display"))
             {
+                if (ImGui::MenuItem("Toolbar", nullptr, &settings.toolbar)) settingsDirty = true;
+                if (ImGui::MenuItem("Status bar", nullptr, &settings.statusBar)) settingsDirty = true;
                 if (ImGui::MenuItem("On-screen keyboard", nullptr, &settings.keyboard))
                 {
                     if (!settings.keyboard) releaseVirtualKeys();
@@ -852,6 +866,40 @@ int Run(const preview_options::Options& options)
                 ImGui::EndMenu();
             }
             ImGui::EndMainMenuBar();
+        }
+        const float barHeight = ImGui::GetFrameHeight() + 2 * ImGui::GetStyle().WindowPadding.y;
+        const float toolbarHeight = settings.toolbar ? barHeight : 0.0f;
+        const float statusHeight = settings.statusBar ? barHeight : 0.0f;
+        constexpr ImGuiWindowFlags barFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing;
+        if (settings.toolbar)
+        {
+            ImGui::SetNextWindowPos(ImVec2(0, menuHeight));
+            ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x, toolbarHeight));
+            if (ImGui::Begin("##toolbar", nullptr, barFlags))
+            {
+                if (ImGui::Button(running ? "Pause" : "Run")) { if (running) pauseMachine(); else startMachine(started); }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset")) { resetMachine(); scheduler.Restart(started); }
+                ImGui::SameLine();
+                if (ImGui::Button("Debugger")) showDebugger = !showDebugger;
+                ImGui::SameLine();
+                if (ImGui::Button("Fullscreen")) toggleFullscreen = true;
+            }
+            ImGui::End();
+        }
+        if (settings.statusBar)
+        {
+            ImGui::SetNextWindowPos(ImVec2(0, std::max(menuHeight + toolbarHeight, ImGui::GetIO().DisplaySize.y - statusHeight)));
+            ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x, statusHeight));
+            if (ImGui::Begin("##status", nullptr, barFlags))
+            {
+                const auto uptime = snapshots.Uptime();
+                ImGui::Text("%s  |  Uptime %02u:%02u:%02u  |  %s  |  %s", running ? "Running" : "Paused",
+                    uptime / 3600, uptime / 60 % 60, uptime % 60,
+                    debugProcessor == preview_debugger::Processor::cpu ? "CPU" : "PPU", soundEnabled ? "Sound on" : "Sound off");
+            }
+            ImGui::End();
         }
         if (settings.keyboard)
         {
@@ -1305,11 +1353,8 @@ int Run(const preview_options::Options& options)
         int width = 0, height = 0;
         if (!SDL_GetRenderOutputSize(renderer.get(), &width, &height)) return 1;
         const auto scale = ImGui::GetIO().DisplayFramebufferScale;
-        const float top = menuHeight * scale.y;
-        const float availableHeight = std::max(0.0f, static_cast<float>(height) - top);
-        const float drawWidth = std::min(static_cast<float>(width), availableHeight * 4.0f / 3.0f);
-        const float drawHeight = drawWidth * 3.0f / 4.0f;
-        const SDL_FRect destination{(width - drawWidth) / 2.0f, top + (availableHeight - drawHeight) / 2.0f, drawWidth, drawHeight};
+        const auto destination = sdl_display::Viewport(static_cast<float>(width), static_cast<float>(height), scale.y,
+            menuHeight + toolbarHeight, statusHeight);
         if (!settings.mouse || !running || focusLost || ImGui::GetIO().WantCaptureMouse ||
             !(SDL_GetWindowFlags(window.get()) & SDL_WINDOW_INPUT_FOCUS) ||
             SDL_GetMouseFocus() != window.get() || scale.x <= 0 || scale.y <= 0)
@@ -1403,7 +1448,7 @@ int Run(const preview_options::Options& options)
         }
         ImGui::Render();
         if (!SDL_SetRenderDrawColor(renderer.get(), 0, 0, 0, 255) || !SDL_RenderClear(renderer.get())) return 1;
-        if (drawWidth > 0 && drawHeight > 0 && !screen.Draw(*image, destination)) { SDL_Log("Screen draw failed: %s", SDL_GetError()); return 1; }
+        if (destination.w > 0 && destination.h > 0 && !screen.Draw(*image, destination)) { SDL_Log("Screen draw failed: %s", SDL_GetError()); return 1; }
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer.get());
         if (!SDL_RenderPresent(renderer.get())) return 1;
         if (smokeTest && frames >= 3) break;

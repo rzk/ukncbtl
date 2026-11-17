@@ -8,6 +8,19 @@
 
 namespace
 {
+TEST(SdlDisplay, FitsViewportBetweenBarsAtDifferentScales)
+{
+    const auto screen = sdl_display::Viewport(1280, 960, 2, 30, 20);
+    EXPECT_NEAR(screen.x, 66.6667f, 0.001f);
+    EXPECT_FLOAT_EQ(screen.y, 60);
+    EXPECT_NEAR(screen.w, 1146.6666f, 0.001f);
+    EXPECT_FLOAT_EQ(screen.h, 860);
+    const auto tiny = sdl_display::Viewport(200, 20, 1, 40, 20);
+    EXPECT_FLOAT_EQ(tiny.w, 0);
+    EXPECT_FLOAT_EQ(tiny.h, 0);
+    EXPECT_GE(tiny.y, 0);
+}
+
 class SdlDisplayTest : public testing::Test
 {
 protected:

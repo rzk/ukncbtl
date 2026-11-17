@@ -135,6 +135,12 @@ Display menu offers the legacy RGB, GRB and grayscale palettes and
 screen scaling modes; the preview fits each mode into a 4:3 viewport.
 Fullscreen can be toggled in the Display menu or with F10. Screen text can be
 copied as UTF-8 using the UKNC character mapping from the Screenshot menu.
+The optional toolbar provides run, reset, debugger and fullscreen controls; the
+status bar shows running state, emulated uptime, processor and sound. Both can be
+hidden in the Display menu. While paused, F8 steps and Shift+F8 steps over;
+while running F8 remains available to the emulated keyboard. Media play/pause
+and stop keys toggle execution and reset. Shortcuts are suppressed while ImGui
+captures keyboard input or an SDL file dialog is pending.
 Window size, sound preference, display settings, and screenshot size are saved in the SDL
 preference directory selected by `SDL_GetPrefPath("UKNCBTL", "SDL Preview")`,
 separate from legacy settings.

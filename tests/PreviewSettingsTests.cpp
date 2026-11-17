@@ -146,6 +146,7 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     input.debuggerVisible = true; input.consoleVisible = true; input.debuggerPpu = true;
     input.networkStation = 01234;
     input.memorySource = 5; input.memoryBytes = true; input.memoryHex = true;
+    input.toolbar = false; input.statusBar = false;
     input.cpuBreakpoints[0] = 0; input.cpuBreakpoints[1] = 0177776;
     input.ppuBreakpoints[0] = 01000;
     ASSERT_TRUE(preview_settings::Save(path, input));
@@ -175,6 +176,8 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     EXPECT_EQ(output->memorySource, input.memorySource);
     EXPECT_EQ(output->memoryBytes, input.memoryBytes);
     EXPECT_EQ(output->memoryHex, input.memoryHex);
+    EXPECT_EQ(output->toolbar, input.toolbar);
+    EXPECT_EQ(output->statusBar, input.statusBar);
     EXPECT_EQ(output->cpuBreakpoints, input.cpuBreakpoints);
     EXPECT_EQ(output->ppuBreakpoints, input.ppuBreakpoints);
     const auto file = IniFile::Open(path);
