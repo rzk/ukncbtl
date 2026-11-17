@@ -35,6 +35,7 @@ struct Line
 [[nodiscard]] std::optional<std::uint16_t> ParseAddress(std::string_view text);
 [[nodiscard]] std::optional<std::uint16_t> ParseWord(std::string_view text);
 [[nodiscard]] std::optional<std::uint16_t> ParseMemoryValue(std::string_view text, bool hex, bool byteMode);
+[[nodiscard]] std::string FormatValue(std::uint16_t value, bool hex, bool byteMode = false);
 [[nodiscard]] std::optional<std::string> ToUtf8(std::wstring_view text);
 
 // Owns breakpoint storage borrowed by the board. The board must outlive it.

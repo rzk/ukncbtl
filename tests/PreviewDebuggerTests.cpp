@@ -56,6 +56,16 @@ TEST(PreviewDebugger, ParsesMemoryValuesInSelectedRadixAndWidth)
     EXPECT_FALSE(ParseMemoryValue("200000", false, false));
 }
 
+TEST(PreviewDebugger, FormatsClipboardValuesInOctalAndHexadecimal)
+{
+    using preview_debugger::FormatValue;
+    EXPECT_EQ(FormatValue(0, false), "000000");
+    EXPECT_EQ(FormatValue(0xffff, false), "177777");
+    EXPECT_EQ(FormatValue(0xabcd, true), "ABCD");
+    EXPECT_EQ(FormatValue(0xabcd, false, true), "315");
+    EXPECT_EQ(FormatValue(0xabcd, true, true), "CD");
+}
+
 TEST_F(PreviewDebuggerTest, DisassemblyAndStepUseSelectedProcessorState)
 {
     preview_debugger::Session debugger(*board);

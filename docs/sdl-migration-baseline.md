@@ -105,6 +105,10 @@ Memory search navigates forward or backward through the selected source, wraps
 around the address space, and skips inaccessible locations without reading devices.
 Memory exports use the chosen source and write inaccessible words as zero.
 The disassembly view displays hints for the selected processor's current instruction.
+Right-click debugger registers, stack, ports, memory cells or disassembly lines
+to copy values and addresses in octal or hexadecimal. Disassembly and memory
+context menus also navigate between views; instruction menus can manage
+breakpoints or run to an address while paused.
 The debugger can navigate disassembly by octal address, run to a temporary
 target, inspect the stack and load UTF-16LE `.lst` subtitles. Subtitles mark
 data words and comments; failed loads leave the current listing intact. The

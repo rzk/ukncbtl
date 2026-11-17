@@ -322,6 +322,7 @@ int Run(const preview_options::Options& options)
     std::string spriteError;
     std::string debuggerError;
     std::string registerError, memoryError;
+    bool openMemory = false;
     int screenshotMode = settings.screenshotMode;
     int displayMode = settings.displayMode;
     int paletteMode = settings.paletteMode;
@@ -1163,6 +1164,35 @@ int Run(const preview_options::Options& options)
             ImGui::SetNextWindowSize(ImVec2(520, 540), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Debugger", &showDebugger))
             {
+                const auto copyValueMenu = [&](std::uint16_t value, bool byteMode = false) {
+                    for (const bool hex : {false, true})
+                    {
+                        if (ImGui::MenuItem(hex ? "Copy value (hex)" : "Copy value (octal)"))
+                        {
+                            const auto text = preview_debugger::FormatValue(value, hex, byteMode);
+                            if (!SDL_SetClipboardText(text.c_str()))
+                            { actionError = "Could not copy the debugger value to the clipboard."; showActionError = true; }
+                        }
+                    }
+                };
+                const auto copyAddressMenu = [&](std::uint16_t address) {
+                    for (const bool hex : {false, true})
+                    {
+                        if (ImGui::MenuItem(hex ? "Copy address (hex)" : "Copy address (octal)"))
+                        {
+                            const auto text = preview_debugger::FormatValue(address, hex);
+                            if (!SDL_SetClipboardText(text.c_str()))
+                            { actionError = "Could not copy the debugger address to the clipboard."; showActionError = true; }
+                        }
+                    }
+                };
+                const auto goMemory = [&](std::uint16_t address) {
+                    std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(address));
+                    if (settings.memorySource != static_cast<int>(preview_debugger::MemorySource::selected))
+                    { settings.memorySource = static_cast<int>(preview_debugger::MemorySource::selected); settingsDirty = true; }
+                    if ((address & 1) && !settings.memoryBytes) { settings.memoryBytes = true; settingsDirty = true; }
+                    openMemory = true;
+                };
                 if (ImGui::RadioButton("CPU", debugProcessor == preview_debugger::Processor::cpu))
                     debugProcessor = preview_debugger::Processor::cpu;
                 ImGui::SameLine();
@@ -1191,22 +1221,34 @@ int Run(const preview_options::Options& options)
                 constexpr std::array registerNames{"R0", "R1", "R2", "R3", "R4", "R5", "SP", "PC"};
                 for (int reg = 0; reg < 8; ++reg)
                 {
+                    ImGui::PushID(reg);
                     if (reg % 4) ImGui::SameLine();
                     const bool changed = debugger.RegisterChanged(debugProcessor, reg);
                     if (changed)
                         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_PlotHistogram));
                     ImGui::Text("%s: %06o", registerNames[reg], static_cast<unsigned>(processor.GetReg(reg)));
                     if (changed) ImGui::PopStyleColor();
+                    if (ImGui::BeginPopupContextItem("register-context"))
+                    {
+                        copyValueMenu(processor.GetReg(reg));
+                        if (ImGui::MenuItem("Show address in memory")) goMemory(processor.GetReg(reg));
+                        ImGui::EndPopup();
+                    }
+                    ImGui::PopID();
                 }
                 const std::array statusValues{processor.GetPSW(), processor.GetCPC(), processor.GetCPSW()};
                 constexpr std::array statusNames{"PSW", "CPC", "CPSW"};
                 for (int index = 0; index < 3; ++index)
                 {
+                    ImGui::PushID(index);
                     if (index) ImGui::SameLine();
                     const bool changed = debugger.RegisterChanged(debugProcessor, index + 8);
                     if (changed) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_PlotHistogram));
                     ImGui::Text("%s: %06o", statusNames[index], static_cast<unsigned>(statusValues[index]));
                     if (changed) ImGui::PopStyleColor();
+                    if (ImGui::BeginPopupContextItem("status-context"))
+                    { copyValueMenu(statusValues[index]); ImGui::EndPopup(); }
+                    ImGui::PopID();
                 }
                 ImGui::SameLine(); ImGui::TextUnformatted(processor.IsHaltMode() ? "HALT" : "USER");
                 if (smokeTest) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
@@ -1298,6 +1340,7 @@ int Run(const preview_options::Options& options)
                 const auto baseAddress = followPc ? processor.GetPC() : disasmBase;
                 for (const auto& line : debugger.Disassemble(debugProcessor, baseAddress, 12, true))
                 {
+                    ImGui::PushID(static_cast<int>(line.address));
                     const auto ascii = [](const std::wstring& text) {
                         std::string result;
                         for (const auto ch : text) result.push_back(ch >= 0 && ch < 128 ? static_cast<char>(ch) : '?');
@@ -1308,6 +1351,28 @@ int Run(const preview_options::Options& options)
                     if (!line.blockComment.empty()) ImGui::TextUnformatted(line.blockComment.c_str());
                     ImGui::Text("%06o  %06o  %-8s %s %s", static_cast<unsigned>(line.address),
                         static_cast<unsigned>(line.word), mnemonic.c_str(), argument.c_str(), line.comment.c_str());
+                    if (ImGui::BeginPopupContextItem("disassembly-context"))
+                    {
+                        copyAddressMenu(line.address);
+                        copyValueMenu(line.word);
+                        if (ImGui::MenuItem("Show address in memory")) goMemory(line.address);
+                        ImGui::Separator();
+                        auto& breakpoints = debugger.Breakpoints(debugProcessor);
+                        const bool present = breakpoints.Contains(line.address);
+                        if (ImGui::MenuItem(present ? "Remove breakpoint" : "Add breakpoint", nullptr, false, !running && !(line.address & 1)))
+                        {
+                            const bool changed = present ? breakpoints.Remove(line.address) : breakpoints.Add(line.address);
+                            if (!changed) debuggerError = "Could not change the breakpoint; the list may be full.";
+                            else debuggerError.clear();
+                        }
+                        if (ImGui::MenuItem("Run to address", nullptr, false, !running && !(line.address & 1)))
+                        {
+                            if (debugger.RunTo(debugProcessor, line.address)) startMachine(started);
+                            else debuggerError = "Could not run to this address.";
+                        }
+                        ImGui::EndPopup();
+                    }
+                    ImGui::PopID();
                 }
                 if (!followPc)
                 {
@@ -1315,17 +1380,28 @@ int Run(const preview_options::Options& options)
                     ImGui::SameLine();
                     if (ImGui::Button("Next word")) disasmBase = static_cast<std::uint16_t>(disasmBase + 2);
                 }
+                if (smokeTest) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
                 if (ImGui::CollapsingHeader("Stack (octal)"))
                 {
                     const auto sp = static_cast<std::uint16_t>(processor.GetSP() & 0xfffe);
                     for (int offset = -8; offset < 8; ++offset)
                     {
                         const auto address = static_cast<std::uint16_t>(sp + offset * 2);
-                        ImGui::Text("%s %06o  %06o", offset == 0 ? ">" : " ", static_cast<unsigned>(address),
-                            static_cast<unsigned>(debugger.ReadWord(debugProcessor, address, false)));
+                        const auto value = debugger.InspectMemory(preview_debugger::MemorySource::selected, debugProcessor, address, false);
+                        ImGui::PushID(offset);
+                        const auto text = value ? preview_debugger::FormatValue(*value, false) : "------";
+                        ImGui::Text("%s %06o  %s", offset == 0 ? ">" : " ", static_cast<unsigned>(address), text.c_str());
+                        if (ImGui::BeginPopupContextItem("stack-context"))
+                        {
+                            copyAddressMenu(address);
+                            if (value) copyValueMenu(*value);
+                            if (ImGui::MenuItem("Show address in memory")) goMemory(address);
+                            ImGui::EndPopup();
+                        }
+                        ImGui::PopID();
                     }
                 }
-                if (smokeTest) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+                if (smokeTest || openMemory) { ImGui::SetNextItemOpen(true, ImGuiCond_Always); openMemory = false; }
                 if (ImGui::CollapsingHeader("Memory"))
                 {
                     constexpr std::array memorySources{"Selected processor", "CPU", "PPU", "RAM 0", "RAM 1", "RAM 2", "ROM"};
@@ -1379,6 +1455,22 @@ int Run(const preview_options::Options& options)
                             if (changed) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_PlotHistogram));
                             ImGui::TextUnformatted(text.c_str());
                             if (changed) ImGui::PopStyleColor();
+                            ImGui::PushID(static_cast<int>(cellAddress));
+                            if (ImGui::BeginPopupContextItem("memory-context"))
+                            {
+                                copyAddressMenu(cellAddress);
+                                if (cell) copyValueMenu(*cell, settings.memoryBytes);
+                                const bool mapped = memorySource == preview_debugger::MemorySource::selected ||
+                                    memorySource == preview_debugger::MemorySource::cpu || memorySource == preview_debugger::MemorySource::ppu;
+                                if (ImGui::MenuItem("Show in disassembly", nullptr, false, mapped && !(cellAddress & 1)))
+                                {
+                                    debugProcessor = memoryProcessor;
+                                    disasmBase = cellAddress;
+                                    followPc = false;
+                                }
+                                ImGui::EndPopup();
+                            }
+                            ImGui::PopID();
                         }
                     }
                     ImGui::SetNextItemWidth(110);
@@ -1444,8 +1536,14 @@ int Run(const preview_options::Options& options)
                     const std::span<const std::uint16_t> ports = debugProcessor == preview_debugger::Processor::cpu ?
                         std::span<const std::uint16_t>(cpuPorts) : std::span<const std::uint16_t>(ppuPorts);
                     for (const auto port : ports)
-                        ImGui::Text("%06o  %06o", static_cast<unsigned>(port),
-                            static_cast<unsigned>(debugger.ReadPort(debugProcessor, port)));
+                    {
+                        const auto value = debugger.ReadPort(debugProcessor, port);
+                        ImGui::PushID(static_cast<int>(port));
+                        ImGui::Text("%06o  %06o", static_cast<unsigned>(port), static_cast<unsigned>(value));
+                        if (ImGui::BeginPopupContextItem("port-context"))
+                        { copyAddressMenu(port); copyValueMenu(value); ImGui::EndPopup(); }
+                        ImGui::PopID();
+                    }
                     if (debugProcessor == preview_debugger::Processor::ppu)
                     {
                         ImGui::Text("177710  %06o", static_cast<unsigned>(board.GetTimerStateView()));

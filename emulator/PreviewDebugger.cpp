@@ -38,6 +38,13 @@ std::optional<std::uint16_t> preview_debugger::ParseMemoryValue(std::string_view
     return static_cast<std::uint16_t>(value);
 }
 
+std::string preview_debugger::FormatValue(std::uint16_t value, bool hex, bool byteMode)
+{
+    if (byteMode) value &= 0xff;
+    if (hex) return byteMode ? std::format("{:02X}", value) : std::format("{:04X}", value);
+    return byteMode ? std::format("{:03o}", value) : std::format("{:06o}", value);
+}
+
 std::optional<std::string> preview_debugger::ToUtf8(std::wstring_view text)
 {
     const auto bytes = ini_encoding::Encode(text, ini_encoding::Encoding::utf8);
