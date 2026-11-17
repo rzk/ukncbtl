@@ -230,6 +230,61 @@ TEST_F(PreviewDebuggerTest, HistoryCapturesInstructionsAndCanBeDisabledAndCleare
     EXPECT_EQ(history.Length(true), 0);
 }
 
+TEST_F(PreviewDebuggerTest, TraceAndHistoryCanBeEnabledAndDisabledIndependently)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-trace-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    const auto read = [&] {
+        std::ifstream file(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    };
+    preview_debugger::Session debugger(*board);
+    EXPECT_FALSE(debugger.StartTrace(path, 0));
+    EXPECT_FALSE(debugger.StartTrace(path, 0100));
+    EXPECT_FALSE(debugger.StartTrace(path / "missing", preview_debugger::TraceAll));
+    ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+    EXPECT_TRUE(debugger.TraceConflicts(path));
+    EXPECT_FALSE(debugger.StartTrace(path, preview_debugger::TraceAll));
+    debugger.SetHistoryEnabled(true);
+    debugger.Step();
+    EXPECT_EQ(debugger.History().Length(true), 1);
+    EXPECT_NE(read().find("CPU\t001000\tINC"), std::string::npos);
+    debugger.SetHistoryEnabled(false);
+    board->GetCPU()->SetPC(01000);
+    debugger.Step();
+    EXPECT_EQ(debugger.History().Length(true), 1);
+    EXPECT_NE(read().find("CPU\t001000\tINC", read().find("CPU\t001000\tINC") + 1), std::string::npos);
+    ASSERT_TRUE(debugger.ClearTrace());
+    EXPECT_TRUE(read().empty());
+    ASSERT_TRUE(debugger.SetTraceMask(preview_debugger::TraceInstructionsPpu));
+    board->GetCPU()->SetPC(01000); debugger.Step();
+    EXPECT_TRUE(read().empty());
+    debugger.SetHistoryEnabled(true);
+    debugger.StopTrace();
+    board->GetCPU()->SetPC(01000); debugger.Step();
+    EXPECT_EQ(debugger.History().Length(true), 2);
+    EXPECT_FALSE(debugger.TraceConflicts(path));
+    EXPECT_FALSE(debugger.TakeTraceError());
+}
+
+TEST_F(PreviewDebuggerTest, TraceRecordsSelectedInterrupts)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-trace-interrupt-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    preview_debugger::Session debugger(*board);
+    ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInterruptsCpu));
+    auto* cpu = board->GetCPU();
+    auto* memory = cpu->GetMemoryController();
+    memory->SetWord(0100, false, 02000); memory->SetWord(0102, false, 00011);
+    cpu->SetPSW(0); cpu->SetPC(01000); cpu->SetSP(0400); cpu->TickEVNT();
+    ASSERT_TRUE(cpu->InterruptProcessing());
+    std::ifstream file(path, std::ios::binary);
+    const std::string bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    EXPECT_NE(bytes.find("CPU\t001000\tINT\t000100\tEVNT\t002000"), std::string::npos);
+}
+
 TEST_F(PreviewDebuggerTest, HistoryCapturesInterruptsAfterNewStateIsLoaded)
 {
     preview_debugger::Session debugger(*board);

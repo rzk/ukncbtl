@@ -142,6 +142,21 @@ TEST_F(PreviewConsoleTest, ExportCommandsReturnValidatedOneShotRequests)
     EXPECT_FALSE(console.TakeMemoryRange());
 }
 
+TEST_F(PreviewConsoleTest, TraceCommandsValidateMasksAndRequestAFile)
+{
+    using preview_console::Action;
+    EXPECT_EQ(Submit("t"), Action::startTrace);
+    EXPECT_EQ(console.TakeTraceMask(), preview_debugger::TraceAll);
+    EXPECT_FALSE(console.TakeTraceMask());
+    EXPECT_EQ(Submit("t400"), Action::startTrace);
+    EXPECT_EQ(console.TakeTraceMask(), preview_debugger::TraceInstructionsCpu);
+    EXPECT_EQ(Submit("t100"), Action::none);
+    EXPECT_FALSE(console.TakeTraceMask());
+    EXPECT_EQ(Submit("t0"), Action::none);
+    EXPECT_EQ(Submit("tc"), Action::none);
+    EXPECT_NE(console.Log().find("Trace is not active"), std::string::npos);
+}
+
 TEST_F(PreviewConsoleTest, StepAndStepOverFollowDebuggerExecutionRules)
 {
     using preview_console::Action;

@@ -36,6 +36,7 @@ std::optional<std::string> preview_debugger::ToUtf8(std::wstring_view text)
 
 preview_debugger::Session::~Session()
 {
+    StopTrace();
     SetHistoryEnabled(false);
     board_.SetCPUBreakpoints({}); board_.SetPPUBreakpoints({});
 }
@@ -139,9 +140,71 @@ bool preview_debugger::Session::RunTo(Processor which, std::uint16_t address)
 void preview_debugger::Session::SetHistoryEnabled(bool enabled)
 {
     if (historyEnabled_ == enabled) return;
+    historyEnabled_ = enabled;
+    UpdateCallbacks();
+}
+
+void preview_debugger::Session::UpdateCallbacks()
+{
+    const bool enabled = historyEnabled_ || trace_.has_value();
     board_.SetInstructionCallbackWithContext(enabled ? OnInstruction : nullptr, enabled ? this : nullptr);
     board_.SetInterruptCallbackWithContext(enabled ? OnInterrupt : nullptr, enabled ? this : nullptr);
-    historyEnabled_ = enabled;
+}
+
+bool preview_debugger::Session::StartTrace(const std::filesystem::path& path, std::uint16_t mask)
+{
+    if (trace_ || path.empty() || !mask || (mask & ~TraceAll)) return false;
+    auto savedPath = path;
+    trace_.emplace(path);
+    if (!trace_->Open()) { trace_.reset(); return false; }
+    tracePath_ = std::move(savedPath);
+    traceMask_ = mask;
+    traceError_ = false;
+    UpdateCallbacks();
+    return true;
+}
+
+bool preview_debugger::Session::SetTraceMask(std::uint16_t mask)
+{
+    if (!trace_ || !mask || (mask & ~TraceAll)) return false;
+    traceMask_ = mask;
+    return true;
+}
+
+void preview_debugger::Session::StopTrace()
+{
+    traceMask_ = 0;
+    trace_.reset();
+    tracePath_.clear();
+    UpdateCallbacks();
+}
+
+bool preview_debugger::Session::ClearTrace()
+{
+    if (!trace_ || !traceMask_) return false;
+    if (trace_->Clear()) return true;
+    traceError_ = true; traceMask_ = 0;
+    return false;
+}
+
+bool preview_debugger::Session::TraceConflicts(const std::filesystem::path& path) const
+{
+    if (!trace_ || path.empty()) return false;
+    if (tracePath_ == path) return true;
+    std::error_code error;
+    return std::filesystem::equivalent(tracePath_, path, error) && !error;
+}
+
+bool preview_debugger::Session::TakeTraceError()
+{
+    if (!std::exchange(traceError_, false)) return false;
+    StopTrace();
+    return true;
+}
+
+void preview_debugger::Session::TraceWrite(std::string_view text)
+{
+    if (trace_ && !trace_->Append(text)) { traceError_ = true; traceMask_ = 0; }
 }
 
 void preview_debugger::Session::OnInstruction(void* context, const CProcessor* processor, std::uint16_t address, std::uint16_t opcode)
@@ -152,12 +215,22 @@ void preview_debugger::Session::OnInstruction(void* context, const CProcessor* p
     const std::array<std::uint16_t, 3> words{opcode,
         memory->GetWordView(static_cast<std::uint16_t>(address + 2), halt, true).value,
         memory->GetWordView(static_cast<std::uint16_t>(address + 4), halt, true).value};
-    session.history_.RecordInstruction(processor == session.board_.GetCPU(), address, words, processor->GetPSW());
+    const bool cpu = processor == session.board_.GetCPU();
+    if (session.historyEnabled_) session.history_.RecordInstruction(cpu, address, words, processor->GetPSW());
+    if (session.traceMask_ & (cpu ? TraceInstructionsCpu : TraceInstructionsPpu))
+    {
+        const auto decoded = DisassembleInstruction(words, address);
+        if (decoded) session.TraceWrite(std::format("{}\t{:06o}\t{}\t{}\n", cpu ? "CPU" : "PPU", address,
+            ToUtf8(decoded->mnemonic).value_or("?"), ToUtf8(decoded->argument).value_or("?")));
+    }
 }
 
 void preview_debugger::Session::OnInterrupt(void* context, const CProcessor* processor, std::uint16_t oldPc, std::uint16_t vector)
 {
     auto& session = *static_cast<Session*>(context);
-    session.history_.RecordInterrupt(processor == session.board_.GetCPU(), oldPc, vector,
-        processor->GetPC(), processor->GetPSW());
+    const bool cpu = processor == session.board_.GetCPU();
+    if (session.historyEnabled_) session.history_.RecordInterrupt(cpu, oldPc, vector, processor->GetPC(), processor->GetPSW());
+    if (session.traceMask_ & (cpu ? TraceInterruptsCpu : TraceInterruptsPpu))
+        session.TraceWrite(std::format("{}\t{:06o}\tINT\t{:06o}\t{}\t{:06o}\n", cpu ? "CPU" : "PPU", oldPc,
+            vector, ToUtf8(InstructionHistory::InterruptName(vector)).value_or("?"), processor->GetPC()));
 }

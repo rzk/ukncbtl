@@ -28,7 +28,7 @@ std::vector<std::string> Tokens(std::string_view input)
         std::size_t prefix = 0;
         if (first.size() > 2 && (first.starts_with("bc") || first.starts_with("fc")) &&
             first[2] >= '0' && first[2] <= '9') prefix = 2;
-        else if (first.size() > 1 && (first[0] == 'b' || first[0] == 'd' || first[0] == 'D' || first[0] == 'm' || first[0] == 'g' || first[0] == 'u') &&
+        else if (first.size() > 1 && (first[0] == 'b' || first[0] == 'd' || first[0] == 'D' || first[0] == 'm' || first[0] == 'g' || first[0] == 'u' || first[0] == 't') &&
             first[1] >= '0' && first[1] <= '9') prefix = 1;
         if (prefix)
         {
@@ -82,10 +82,16 @@ std::optional<preview_console::MemoryRange> preview_console::Console::TakeMemory
     return std::exchange(memoryRange_, std::nullopt);
 }
 
+std::optional<std::uint16_t> preview_console::Console::TakeTraceMask()
+{
+    return std::exchange(traceMask_, std::nullopt);
+}
+
 preview_console::Action preview_console::Console::Submit(std::string_view command,
     preview_debugger::Session& debugger, preview_debugger::Processor& processor, bool running)
 {
     memoryRange_.reset();
+    traceMask_.reset();
     if (command.size() > 4096) { Append("Command is too long.\n"); return Action::none; }
     const auto tokens = Tokens(command);
     if (tokens.empty()) return Action::none;
@@ -107,9 +113,28 @@ preview_console::Action preview_console::Console::Submit(std::string_view comman
             "b [address]: list/add breakpoint  bc [address]: clear breakpoint(s)\n"
             "s: step  so: step over  g [address]: run/run to  pause: pause  c: clear log\n"
             "u [start end]: save memory  udl: save display list\n"
+            "t [mask]: start/stop trace or set octal mask  tc: clear trace\n"
+            "Trace masks: PPU 200, CPU 400, PPU interrupt 1000, CPU interrupt 2000\n"
             "fc high low: convert two octal FIS floating-point words");
     }
     else if (op == "c" && tokens.size() == 1) log_.clear();
+    else if (op == "tc" && tokens.size() == 1)
+    { say(debugger.ClearTrace() ? "Trace cleared." : "Trace is not active or could not be cleared."); }
+    else if (op == "t" && tokens.size() <= 2)
+    {
+        if (tokens.size() == 1 && debugger.TracePath())
+        { debugger.StopTrace(); say("Trace stopped."); }
+        else
+        {
+            const auto mask = tokens.size() == 1 ? std::optional<std::uint16_t>{preview_debugger::TraceAll} : ParseWord(tokens[1]);
+            if (!mask || (*mask & ~preview_debugger::TraceAll)) return fail();
+            if (*mask == 0) { debugger.StopTrace(); say("Trace stopped."); }
+            else if (debugger.TracePath())
+            { (void)debugger.SetTraceMask(*mask); say("Trace mask updated."); }
+            else
+            { traceMask_ = *mask; say("Choose a trace file."); return Action::startTrace; }
+        }
+    }
     else if (op == "udl" && tokens.size() == 1)
     { say("Choose a file for the display list."); return Action::saveDisplayList; }
     else if (op == "u" && (tokens.size() == 1 || tokens.size() == 3))

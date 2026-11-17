@@ -101,7 +101,10 @@ log that can be saved. It supports legacy-style register, memory, disassembly,
 breakpoint, CPU/PPU selection and execution commands; enter `h` for its command
 list. Register-addressed memory dumps, short disassembly and FIS floating-point
 conversion are also available. The `u` and `udl` export commands open the
-same save dialogs as the debugger controls. Trace commands remain to migrate.
+same save dialogs as the debugger controls. The Debug menu and `t` console
+command can trace CPU/PPU instructions and interrupts to a selected UTF-8 log;
+`t` accepts legacy octal masks and `tc` clears an active log. Floppy trace
+flags are not supported. Tracing can slow emulation, and write failures stop it.
 Permanent CPU and PPU breakpoints, debugger/console visibility and the selected
 processor are saved in the SDL preview preferences. Temporary step-over and
 run-to targets are excluded. The Emulator menu also configures and saves the

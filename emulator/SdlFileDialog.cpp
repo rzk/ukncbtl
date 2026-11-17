@@ -204,3 +204,13 @@ bool sdl_file_dialog::SaveConsoleLog(const std::shared_ptr<State>& state, SDL_Wi
     SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
     return true;
 }
+
+bool sdl_file_dialog::SaveTrace(const std::shared_ptr<State>& state, SDL_Window& window, std::uint16_t mask)
+{
+    if (!state || !mask) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, mask, Purpose::trace);
+    if (!state->Begin()) return false;
+    static constexpr SDL_DialogFileFilter filters[]{{"Trace log", "log;txt"}, {"All files", "*"}};
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr);
+    return true;
+}

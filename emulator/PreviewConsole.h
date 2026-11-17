@@ -9,7 +9,7 @@
 
 namespace preview_console
 {
-enum class Action { none, run, pause, saveMemory, saveDisplayList };
+enum class Action { none, run, pause, saveMemory, saveDisplayList, startTrace };
 struct MemoryRange { std::uint16_t start, end; };
 // Commands and output are UTF-8; addresses and words use octal.
 class Console
@@ -21,11 +21,13 @@ public:
     [[nodiscard]] const std::string& Log() const { return log_; }
     [[nodiscard]] bool Save(const std::filesystem::path& path) const;
     [[nodiscard]] std::optional<MemoryRange> TakeMemoryRange();
+    [[nodiscard]] std::optional<std::uint16_t> TakeTraceMask();
 private:
     void Append(std::string_view text);
     std::string log_;
     std::vector<std::string> commands_;
     int navigation_ = -1;
     std::optional<MemoryRange> memoryRange_;
+    std::optional<std::uint16_t> traceMask_;
 };
 }

@@ -277,6 +277,7 @@ ukncbtl_toolchain(IniDocument)
 add_library(IniEncoding STATIC emulator/util/IniEncoding.cpp)
 ukncbtl_toolchain(IniEncoding)
 target_link_libraries(DebugLogFile PRIVATE IniEncoding)
+target_link_libraries(PreviewDebugger PRIVATE DebugLogFile)
 
 add_library(SubtitleFile STATIC emulator/SubtitleFile.cpp)
 ukncbtl_toolchain(SubtitleFile)

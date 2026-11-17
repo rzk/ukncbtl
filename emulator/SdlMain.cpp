@@ -231,7 +231,7 @@ int Run(const preview_options::Options& options)
         }
     };
     const auto conflicts = [&](const std::filesystem::path& path) {
-        return media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path) || tape.Conflicts(path);
+        return media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path) || tape.Conflicts(path) || debugger.TraceConflicts(path);
     };
     bool running = smokeTest || options.boot != 0 || options.run.value_or(settings.autostart);
     if (options.boot) (void)autoBoot.Start(options.boot);
@@ -349,6 +349,16 @@ int Run(const preview_options::Options& options)
                         done = true;
                     }
                 }
+                else if (result->purpose == sdl_file_dialog::Purpose::trace)
+                {
+                    auto target = std::filesystem::path(path);
+                    if (!target.has_extension()) target += ".log";
+                    std::error_code error;
+                    const bool settingsConflict = settingsPath && (*settingsPath == target ||
+                        (std::filesystem::equivalent(*settingsPath, target, error) && !error));
+                    if (settingsConflict || conflicts(target) || !debugger.StartTrace(target, static_cast<std::uint16_t>(result->slot)))
+                    { actionError = "Could not start the trace. The selected file may be in use or unavailable."; showActionError = true; }
+                }
                 else if (result->purpose == sdl_file_dialog::Purpose::memoryDump ||
                     result->purpose == sdl_file_dialog::Purpose::displayListDump ||
                     result->purpose == sdl_file_dialog::Purpose::consoleLog)
@@ -370,7 +380,7 @@ int Run(const preview_options::Options& options)
                     auto target = std::filesystem::path(path);
                     const bool creating = result->purpose == sdl_file_dialog::Purpose::tapeCreate;
                     if (creating && !target.has_extension()) target += ".wav";
-                    if ((creating && conflicts(target)) || (!creating && (printer.Conflicts(target) || tape.Conflicts(target))))
+                    if ((creating && conflicts(target)) || (!creating && (printer.Conflicts(target) || tape.Conflicts(target) || debugger.TraceConflicts(target))))
                     { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
                     else if (!(creating ? tape.Create(target) : tape.Open(target)))
                     { actionError = creating ? "Could not create the WAV file." : "Could not open the WAV file or its format is unsupported."; showActionError = true; }
@@ -394,8 +404,9 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose != sdl_file_dialog::Purpose::screenshot &&
                     result->purpose != sdl_file_dialog::Purpose::snapshotSave &&
-                    (printer.Conflicts(std::filesystem::path(path)) || tape.Conflicts(std::filesystem::path(path))))
-                { actionError = "The selected file is used for printer or tape output. Choose another file."; showActionError = true; }
+                    (printer.Conflicts(std::filesystem::path(path)) || tape.Conflicts(std::filesystem::path(path)) ||
+                        debugger.TraceConflicts(std::filesystem::path(path))))
+                { actionError = "The selected file is used for emulator output. Choose another file."; showActionError = true; }
                 else if (result->purpose == sdl_file_dialog::Purpose::screenshot)
                 {
                     const auto format = result->filter == 1 ? screenshot_format::Format::bmp : screenshot_format::Format::png;
@@ -663,6 +674,13 @@ int Run(const preview_options::Options& options)
                 ImGui::MenuItem("Debugger", nullptr, &showDebugger);
                 ImGui::MenuItem("Console", nullptr, &showConsole);
                 if (ImGui::MenuItem("Sprite viewer", nullptr, &settings.spriteViewer)) settingsDirty = true;
+                if (debugger.TracePath())
+                {
+                    if (ImGui::MenuItem("Stop trace")) debugger.StopTrace();
+                }
+                else if (ImGui::MenuItem("Start CPU/PPU trace...", nullptr, false, !fileDialog->Pending()) &&
+                    !sdl_file_dialog::SaveTrace(fileDialog, *window, preview_debugger::TraceAll))
+                { actionError = "Could not open the file dialog."; showActionError = true; }
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Screenshot"))
@@ -1170,11 +1188,19 @@ int Run(const preview_options::Options& options)
                     else if (action == preview_console::Action::saveDisplayList &&
                         !sdl_file_dialog::SaveDisplayList(fileDialog, *window))
                     { actionError = "Could not open the file dialog."; showActionError = true; }
+                    else if (action == preview_console::Action::startTrace)
+                    {
+                        const auto mask = console.TakeTraceMask();
+                        if (!mask || !sdl_file_dialog::SaveTrace(fileDialog, *window, *mask))
+                        { actionError = "Could not open the file dialog."; showActionError = true; }
+                    }
                     ImGui::SetKeyboardFocusHere(-1);
                 }
             }
             ImGui::End();
         }
+        if (debugger.TakeTraceError())
+        { actionError = "Trace output failed and tracing was stopped."; showActionError = true; }
         if (showActionError) { ImGui::OpenPopup("Error"); showActionError = false; }
         if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {

@@ -3,6 +3,7 @@
 #include "BreakpointSet.h"
 #include "InstructionHistory.h"
 #include "SubtitleFile.h"
+#include "util/DebugLogFile.h"
 #include "emubase/Disasm.h"
 #include <cstdint>
 #include <optional>
@@ -17,6 +18,10 @@ namespace preview_debugger
 {
 enum class Processor { cpu, ppu };
 enum class DumpError { invalid_range, file_error };
+// These match the legacy CPU/PPU instruction and interrupt trace masks.
+inline constexpr std::uint16_t TraceInstructionsPpu = 0200, TraceInstructionsCpu = 0400;
+inline constexpr std::uint16_t TraceInterruptsPpu = 01000, TraceInterruptsCpu = 02000;
+inline constexpr std::uint16_t TraceAll = 03600;
 struct Line
 {
     std::uint16_t address, word;
@@ -64,13 +69,27 @@ public:
     [[nodiscard]] bool HistoryEnabled() const { return historyEnabled_; }
     void ClearHistory() { history_.Clear(); }
     [[nodiscard]] const InstructionHistory& History() const { return history_; }
+    [[nodiscard]] bool StartTrace(const std::filesystem::path& path, std::uint16_t mask);
+    [[nodiscard]] bool SetTraceMask(std::uint16_t mask);
+    void StopTrace();
+    [[nodiscard]] bool ClearTrace();
+    [[nodiscard]] std::uint16_t TraceMask() const { return traceMask_; }
+    [[nodiscard]] const std::filesystem::path* TracePath() const { return trace_ ? &tracePath_ : nullptr; }
+    [[nodiscard]] bool TraceConflicts(const std::filesystem::path& path) const;
+    [[nodiscard]] bool TakeTraceError();
 private:
+    void UpdateCallbacks();
+    void TraceWrite(std::string_view text);
     static void OnInstruction(void* context, const CProcessor* processor, std::uint16_t address, std::uint16_t opcode);
     static void OnInterrupt(void* context, const CProcessor* processor, std::uint16_t oldPc, std::uint16_t vector);
     CMotherboard& board_;
     BreakpointSet cpu_, ppu_;
     InstructionHistory history_;
     bool historyEnabled_ = false;
+    std::optional<DebugLogFile> trace_;
+    std::filesystem::path tracePath_;
+    std::uint16_t traceMask_ = 0;
+    bool traceError_ = false;
     std::vector<DisasmSubtitleItem> subtitles_;
     std::filesystem::path subtitlePath_;
     bool subtitlesLoaded_ = false;
