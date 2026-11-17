@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <algorithm>
 
 void DebugLog(const wchar_t*) {}
 namespace
@@ -41,6 +42,7 @@ TEST_F(PreviewTapeTest, RecordsFramesRewindsAndReopensForPlayback)
     preview_tape::Session tape(*board);
     ASSERT_TRUE(tape.Create(path));
     EXPECT_TRUE(tape.Recording());
+    EXPECT_FALSE(tape.Seek(0));
     EXPECT_TRUE(tape.Conflicts(directory / "." / path.filename()));
     EXPECT_FALSE(tape.Open(path));
     board->GetPPUMemoryController()->SetWord(0177716, false, 0100002);
@@ -85,9 +87,39 @@ TEST_F(PreviewTapeTest, PlaybackDrivesTapeInputPort)
     ASSERT_TRUE(tape.Play());
     ASSERT_TRUE(board->SystemFrame());
     EXPECT_EQ(memory->GetWord(0177716, false, false) & 1, 1);
+    EXPECT_TRUE(std::ranges::all_of(tape.Waveform(), [](auto sample) { return sample == 0; }));
+    EXPECT_FALSE(tape.Seek(0));
     ASSERT_TRUE(board->SystemFrame());
     EXPECT_EQ(memory->GetWord(0177716, false, false) & 1, 0);
     EXPECT_FALSE(tape.Playing());
+    EXPECT_TRUE(std::ranges::all_of(tape.Waveform(), [](auto sample) { return sample == 255; }));
+}
+
+TEST_F(PreviewTapeTest, SeeksOnlyStoppedPlaybackAndRetainsPositionOnInvalidRequest)
+{
+    {
+        auto file = WavPcmFile::Create(path, 44100);
+        ASSERT_TRUE(file);
+        for (int i = 0; i < 1764; ++i) ASSERT_TRUE(file->WriteOne(i < 882 ? 0 : 0xffffffffu));
+        ASSERT_TRUE(file->Close());
+    }
+    preview_tape::Session tape(*board);
+    EXPECT_FALSE(tape.Seek(0));
+    ASSERT_TRUE(tape.Open(path));
+    ASSERT_TRUE(tape.Seek(882));
+    EXPECT_EQ(tape.Position(), 882u);
+    EXPECT_TRUE(std::ranges::all_of(tape.Waveform(), [](auto sample) { return sample == 128; }));
+    EXPECT_FALSE(tape.Seek(1765));
+    EXPECT_EQ(tape.Position(), 882u);
+    ASSERT_TRUE(tape.Play());
+    EXPECT_FALSE(tape.Seek(0));
+    ASSERT_TRUE(board->SystemFrame());
+    EXPECT_FALSE(tape.Playing());
+    EXPECT_EQ(tape.Position(), 1764u);
+    EXPECT_TRUE(std::ranges::all_of(tape.Waveform(), [](auto sample) { return sample == 255; }));
+    ASSERT_TRUE(tape.Seek(0));
+    EXPECT_EQ(tape.Position(), 0u);
+    EXPECT_TRUE(std::ranges::all_of(tape.Waveform(), [](auto sample) { return sample == 128; }));
 }
 
 TEST_F(PreviewTapeTest, InvalidFilesAndEmptyTapeAreHandled)

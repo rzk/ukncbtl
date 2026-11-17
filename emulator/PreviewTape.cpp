@@ -13,6 +13,7 @@ bool preview_tape::Session::Open(const std::filesystem::path& path)
     if (!file) return false;
     file_.emplace(std::move(*file));
     path_ = std::move(saved);
+    waveform_.fill(128);
     state_.Insert(false);
     return true;
 }
@@ -25,6 +26,7 @@ bool preview_tape::Session::Create(const std::filesystem::path& path)
     if (!file) return false;
     file_.emplace(std::move(*file));
     path_ = std::move(saved);
+    waveform_.fill(128);
     state_.Insert(true);
     return true;
 }
@@ -33,7 +35,7 @@ bool preview_tape::Session::Close()
 {
     Stop();
     const bool closed = !file_ || static_cast<bool>(file_->Close());
-    file_.reset(); path_.clear(); state_.Eject();
+    file_.reset(); path_.clear(); state_.Eject(); waveform_.fill(128);
     const bool failed = std::exchange(error_, false);
     return closed && !failed;
 }
@@ -56,13 +58,21 @@ void preview_tape::Session::Stop()
 bool preview_tape::Session::Rewind()
 {
     if (!file_ || !file_->SetPosition(0)) { Stop(); return false; }
+    waveform_.fill(128);
+    return true;
+}
+
+bool preview_tape::Session::Seek(std::uint32_t position)
+{
+    if (!file_ || Recording() || Playing() || !file_->SetPosition(position)) return false;
+    waveform_.fill(128);
     return true;
 }
 
 bool preview_tape::Session::Read(void* context, unsigned samples)
 {
     auto& self = *static_cast<Session*>(context);
-    const auto result = tape::Read(*self.file_, samples, {});
+    const auto result = tape::Read(*self.file_, samples, self.waveform_);
     if (result.stop) self.Stop();
     self.error_ |= result.error.has_value();
     return result.bit;
@@ -71,7 +81,7 @@ bool preview_tape::Session::Read(void* context, unsigned samples)
 void preview_tape::Session::Write(void* context, int value, unsigned samples)
 {
     auto& self = *static_cast<Session*>(context);
-    const auto result = tape::Write(*self.file_, static_cast<std::uint32_t>(value), samples, {});
+    const auto result = tape::Write(*self.file_, static_cast<std::uint32_t>(value), samples, self.waveform_);
     if (result.stop) self.Stop();
     self.error_ |= result.error.has_value();
 }

@@ -32,6 +32,12 @@ if(NOT result EQUAL 1)
   message(FATAL_ERROR "Hard disk without cartridge was not rejected: ${result}: ${error}")
 endif()
 execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  "${APP}" --smoke-test --tape "${TEST_DIR}/floppy-日本.dsk"
+  RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
+if(NOT result EQUAL 1 OR NOT error MATCHES "requested tape")
+  message(FATAL_ERROR "Invalid tape was not rejected: ${result}: ${error}")
+endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
   "${APP}" --smoke-test --no-sound --boot 1 --floppy-read-only 3 "${TEST_DIR}/floppy-日本.dsk"
   --cartridge 1 "${TEST_DIR}/cart-日本.rom" --hard-disk-read-only 1 "${TEST_DIR}/disk-日本.img"
   RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)

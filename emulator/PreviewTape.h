@@ -3,6 +3,8 @@
 #include "TapeTransport.h"
 #include <filesystem>
 #include <optional>
+#include <array>
+#include <span>
 
 class CMotherboard;
 namespace preview_tape
@@ -21,12 +23,15 @@ public:
     [[nodiscard]] bool Play();
     void Stop();
     [[nodiscard]] bool Rewind();
+    // Seeking is only supported for stopped playback, never for recordings.
+    [[nodiscard]] bool Seek(std::uint32_t position);
     [[nodiscard]] bool Inserted() const { return state_.Inserted(); }
     [[nodiscard]] bool Playing() const { return state_.Playing(); }
     [[nodiscard]] bool Recording() const { return state_.Recording(); }
     [[nodiscard]] std::uint32_t Position() const { return file_ ? file_->Position() : 0; }
     [[nodiscard]] std::uint32_t Length() const { return file_ ? file_->Length() : 0; }
     [[nodiscard]] int Frequency() const { return file_ ? file_->Frequency() : 0; }
+    [[nodiscard]] std::span<const std::uint8_t> Waveform() const { return waveform_; }
     [[nodiscard]] const std::filesystem::path& Path() const { return path_; }
     [[nodiscard]] bool Conflicts(const std::filesystem::path& path) const;
     [[nodiscard]] bool TakeError();
@@ -38,5 +43,6 @@ private:
     std::optional<WavPcmFile> file_;
     std::filesystem::path path_;
     bool error_ = false;
+    std::array<std::uint8_t, 256> waveform_{};
 };
 }

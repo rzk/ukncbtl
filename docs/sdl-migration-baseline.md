@@ -70,7 +70,7 @@ and boot action for ROM boot-menu selections 1 through 7. Boot inputs are timed
 in emulated frames; resetting, pausing or losing focus cancels the sequence.
 The executable accepts `--run`/`--paused`, `--sound`/`--no-sound`,
 `--fullscreen`/`--windowed`, `--rom PATH`, `--floppy 0..3 PATH`,
-`--cartridge 1..2 PATH`, `--hard-disk 1..2 PATH`, and `--boot 1..7`.
+`--cartridge 1..2 PATH`, `--hard-disk 1..2 PATH`, `--tape PATH`, and `--boot 1..7`.
 Use `--floppy-read-only` or `--hard-disk-read-only` in place of the respective
 disk option to prevent guest writes for that mount.
 `--settings PATH` selects a separate settings file; its parent must exist.
@@ -176,9 +176,11 @@ preview preferences. Pointer motion is scaled to the displayed screen, and mouse
 input is released when the window loses focus, emulation pauses, or ImGui
 captures the pointer. Short button presses are queued for emulated frames.
 The Tape menu opens PCM WAV files or creates 44.1 kHz mono recordings, with
-play, record, stop, rewind and eject controls. Playback stops at the end of the
-file, and I/O and finalization failures are reported. Tape paths are not restored
-automatically; mounted tape files are protected from preview output operations.
+play, record, stop, rewind and eject controls. A tape panel shows position and
+signal, and allows seeking in stopped playback. Playback stops at end of file,
+and I/O and finalization failures are reported. With media restoration enabled,
+playback tapes reopen stopped; recording sessions are never restored automatically.
+Mounted tape files are protected from other emulator output operations.
 The preview preserves malformed
 settings files without overwriting them; the smoke test does not read or write
 preferences.

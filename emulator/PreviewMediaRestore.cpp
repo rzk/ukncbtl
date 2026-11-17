@@ -9,7 +9,11 @@ std::vector<std::string> preview_media_restore::Restore(const preview_settings::
 {
     std::vector<std::string> errors;
     if (!settings.restoreMedia || options.smokeTest) return errors;
+    const auto reservedForTape = [&](const std::filesystem::path& path) {
+        return options.tape && preview_settings::SameFile(path, *options.tape);
+    };
     const auto conflictsWithCommandLine = [&](const std::filesystem::path& path, bool readOnly) {
+        if (reservedForTape(path)) return true;
         for (std::size_t index = 0; index < options.floppies.size(); ++index)
             if (options.floppies[index] && preview_settings::SameFile(path, *options.floppies[index]) &&
                 (!readOnly || !options.floppyReadOnly[index])) return true;
@@ -18,11 +22,13 @@ std::vector<std::string> preview_media_restore::Restore(const preview_settings::
                 (!readOnly || !options.hardDiskReadOnly[index])) return true;
         return false;
     };
-    if (!options.rom && !settings.systemRom.empty() && (preview_settings::SameFile(settings.systemRom, protectedSettings) || !roms.LoadSystem(settings.systemRom)))
+    if (!options.rom && !settings.systemRom.empty() && (preview_settings::SameFile(settings.systemRom, protectedSettings) ||
+        reservedForTape(settings.systemRom) || !roms.LoadSystem(settings.systemRom)))
         errors.emplace_back("System ROM");
     for (int slot = 0; slot < 2; ++slot)
         if (!options.cartridges[slot] && !settings.cartridges[slot].empty() &&
-            (preview_settings::SameFile(settings.cartridges[slot], protectedSettings) || !roms.Insert(slot, settings.cartridges[slot])))
+            (preview_settings::SameFile(settings.cartridges[slot], protectedSettings) || reservedForTape(settings.cartridges[slot]) ||
+                !roms.Insert(slot, settings.cartridges[slot])))
             errors.push_back("Cartridge " + std::to_string(slot + 1));
     for (int slot = 0; slot < 4; ++slot)
         if (!options.floppies[slot] && !settings.floppies[slot].empty() &&

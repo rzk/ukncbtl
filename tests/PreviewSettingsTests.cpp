@@ -158,6 +158,8 @@ TEST_F(PreviewSettingsTest, MediaPathsRoundTripAndInvalidEncodedPathsAreIgnored)
     input.floppies[2] = directory / std::filesystem::path(u8"\u0414\u0438\u0441\u043a;1.dsk");
     input.cartridges[0] = directory / "cart.bin";
     input.hardDisks[1] = directory / "disk.img";
+    input.tapePath = directory / std::filesystem::path(u8"\u65e5\u672c.wav");
+    input.tapeVisible = true;
     input.floppyReadOnly[2] = true; input.hardDiskReadOnly[1] = true;
     ASSERT_TRUE(preview_settings::Save(path, input));
     const auto loaded = preview_settings::Load(path);
@@ -167,6 +169,8 @@ TEST_F(PreviewSettingsTest, MediaPathsRoundTripAndInvalidEncodedPathsAreIgnored)
     EXPECT_EQ(loaded->floppies, input.floppies);
     EXPECT_EQ(loaded->cartridges, input.cartridges);
     EXPECT_EQ(loaded->hardDisks, input.hardDisks);
+    EXPECT_EQ(loaded->tapePath, input.tapePath);
+    EXPECT_TRUE(loaded->tapeVisible);
     EXPECT_EQ(loaded->floppyReadOnly, input.floppyReadOnly);
     EXPECT_EQ(loaded->hardDiskReadOnly, input.hardDiskReadOnly);
     Write("[SDLPreview]\nRestoreMedia=1\nFloppyPath0=0061\nFloppyPath1=not-hex\nFloppyPath2=ff\n"

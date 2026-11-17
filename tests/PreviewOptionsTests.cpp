@@ -25,16 +25,17 @@ TEST(PreviewOptions, PreservesUtf8PathsAndRejectsMalformedOptions)
 {
     using namespace std::string_view_literals;
     const std::array pathArgs{"--floppy"sv, "3"sv, "\xe6\x97\xa5\xe6\x9c\xac.dsk"sv,
-        "--settings"sv, "\xe6\x97\xa5\xe6\x9c\xac.ini"sv};
+        "--settings"sv, "\xe6\x97\xa5\xe6\x9c\xac.ini"sv, "--tape"sv, "\xe6\x97\xa5\xe6\x9c\xac.wav"sv};
     const auto options = preview_options::Parse(pathArgs);
     ASSERT_TRUE(options);
     EXPECT_EQ(options->floppies[3]->u8string(), u8"\u65e5\u672c.dsk");
     EXPECT_EQ(options->settingsFile->u8string(), u8"\u65e5\u672c.ini");
+    EXPECT_EQ(options->tape->u8string(), u8"\u65e5\u672c.wav");
     for (const std::vector<std::string_view> args : {
         std::vector{"--boot"sv}, {"--boot"sv,"0"sv}, {"--boot"sv,"8"sv},
         {"--boot"sv,"1"sv,"--paused"sv}, {"--floppy"sv,"4"sv,"disk"sv},
         {"--hard-disk"sv,"0"sv,"disk"sv}, {"--cartridge"sv,"2"sv},
-        {"--rom"sv,"--run"sv}, {"--settings"sv}, {"--settings"sv, "--run"sv}, {"--unknown"sv}})
+        {"--rom"sv,"--run"sv}, {"--settings"sv}, {"--settings"sv, "--run"sv}, {"--tape"sv}, {"--unknown"sv}})
         EXPECT_FALSE(preview_options::Parse(args));
 }
 

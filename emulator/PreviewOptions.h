@@ -16,6 +16,7 @@ struct Options
     int boot = 0;
     std::optional<bool> run, sound, fullscreen;
     std::optional<std::filesystem::path> rom;
+    std::optional<std::filesystem::path> tape;
     std::optional<std::filesystem::path> settingsFile;
     std::array<std::optional<std::filesystem::path>, 4> floppies;
     std::array<std::optional<std::filesystem::path>, 2> cartridges, hardDisks;

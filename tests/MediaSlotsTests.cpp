@@ -185,6 +185,24 @@ TEST_F(MediaSlotsTest, ExplicitHardDiskTakesPriorityOverConflictingRememberedFlo
     EXPECT_FALSE(media.Attached(media_slots::Kind::floppy, 0));
 }
 
+TEST_F(MediaSlotsTest, ExplicitTapeTakesPriorityOverRememberedDiskAndRom)
+{
+    CMotherboard board;
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_settings::Settings settings;
+    settings.restoreMedia = true;
+    settings.systemRom = hard;
+    settings.floppies[0] = hard;
+    preview_options::Options options;
+    options.tape = hard;
+    const auto errors = preview_media_restore::Restore(settings, options, roms, media);
+    ASSERT_EQ(errors.size(), 2u);
+    EXPECT_EQ(errors[0], "System ROM");
+    EXPECT_EQ(errors[1], "Floppy 1");
+    EXPECT_FALSE(media.Attached(media_slots::Kind::floppy, 0));
+}
+
 TEST_F(MediaSlotsTest, RestoreRefusesToMountTheSettingsFile)
 {
     CMotherboard board;

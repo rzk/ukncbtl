@@ -48,6 +48,8 @@ struct Settings
     std::array<std::filesystem::path, 2> cartridges, hardDisks;
     std::array<bool, 4> floppyReadOnly{};
     std::array<bool, 2> hardDiskReadOnly{};
+    std::filesystem::path tapePath;
+    bool tapeVisible = false;
     int memorySource = 0;
     bool memoryBytes = false;
     bool memoryHex = false;

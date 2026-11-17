@@ -119,7 +119,7 @@ int Run(const preview_options::Options& options)
         }
         else startupError = "Could not locate preview settings. Changes will not be saved.";
     }
-    else { settings.keyboard = true; settings.spriteViewer = true; } // Exercise preview windows in the smoke test.
+    else { settings.keyboard = true; settings.spriteViewer = true; settings.tapeVisible = true; } // Exercise preview windows in the smoke test.
     const std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)> window(
         SDL_CreateWindow("UKNCBTL - SDL preview", settings.windowWidth, settings.windowHeight,
             SDL_WINDOW_RESIZABLE | (smokeTest ? SDL_WINDOW_HIDDEN : 0)), SDL_DestroyWindow);
@@ -160,6 +160,7 @@ int Run(const preview_options::Options& options)
         return protectedSettingsPath && preview_settings::SameFile(path, *protectedSettingsPath);
     };
     if ((options.rom && isSettingsFile(*options.rom)) ||
+        (options.tape && isSettingsFile(*options.tape)) ||
         std::ranges::any_of(options.floppies, [&](const auto& path) { return path && isSettingsFile(*path); }) ||
         std::ranges::any_of(options.cartridges, [&](const auto& path) { return path && isSettingsFile(*path); }) ||
         std::ranges::any_of(options.hardDisks, [&](const auto& path) { return path && isSettingsFile(*path); }))
@@ -172,8 +173,20 @@ int Run(const preview_options::Options& options)
     for (int slot = 0; slot < 4; ++slot)
         if (options.floppies[slot] && !media.Attach(media_slots::Kind::floppy, slot, *options.floppies[slot], options.floppyReadOnly[slot]))
         { SDL_Log("Could not attach requested floppy %d.", slot); return 1; }
-    const auto restoreErrors = preview_media_restore::Restore(settings, options, roms, media,
+    auto restoreErrors = preview_media_restore::Restore(settings, options, roms, media,
         protectedSettingsPath.value_or(std::filesystem::path{}));
+    for (int slot = 0; slot < 2; ++slot)
+        if (options.hardDisks[slot] && !media.Attach(media_slots::Kind::hardDisk, slot, *options.hardDisks[slot], options.hardDiskReadOnly[slot]))
+        { SDL_Log("Could not attach requested hard disk %d; check its ROM cartridge and image.", slot + 1); return 1; }
+    preview_printer::Session printer(board);
+    preview_tape::Session tape(board);
+    const auto* startupTape = options.tape ? &*options.tape :
+        (!smokeTest && settings.restoreMedia && !settings.tapePath.empty() ? &settings.tapePath : nullptr);
+    if (startupTape && (isSettingsFile(*startupTape) || media.Conflicts(*startupTape) || roms.Conflicts(*startupTape) || !tape.Open(*startupTape)))
+    {
+        if (options.tape) { SDL_Log("Could not open requested tape; check its format and whether it is already in use."); return 1; }
+        restoreErrors.emplace_back("Tape");
+    }
     if (!restoreErrors.empty())
     {
         if (!startupError.empty()) startupError += "\n";
@@ -181,11 +194,6 @@ int Run(const preview_options::Options& options)
         for (const auto& item : restoreErrors) startupError += "\n" + item;
         startupError += "\nThe saved paths are kept for the next launch.";
     }
-    for (int slot = 0; slot < 2; ++slot)
-        if (options.hardDisks[slot] && !media.Attach(media_slots::Kind::hardDisk, slot, *options.hardDisks[slot], options.hardDiskReadOnly[slot]))
-        { SDL_Log("Could not attach requested hard disk %d; check its ROM cartridge and image.", slot + 1); return 1; }
-    preview_printer::Session printer(board);
-    preview_tape::Session tape(board);
     preview_debugger::Session debugger(board);
     for (const auto address : settings.cpuBreakpoints)
         if (address != BreakpointSet::NoBreakpoint) (void)debugger.Breakpoints(preview_debugger::Processor::cpu).Add(address);
@@ -193,6 +201,7 @@ int Run(const preview_options::Options& options)
         if (address != BreakpointSet::NoBreakpoint) (void)debugger.Breakpoints(preview_debugger::Processor::ppu).Add(address);
     preview_console::Console console;
     bool commandSystem = options.rom.has_value();
+    bool commandTape = options.tape.has_value();
     std::array<bool, 4> commandFloppies{};
     std::array<bool, 2> commandCartridges{}, commandHardDisks{};
     for (std::size_t index = 0; index < commandFloppies.size(); ++index) commandFloppies[index] = options.floppies[index].has_value();
@@ -201,6 +210,12 @@ int Run(const preview_options::Options& options)
     const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
     std::string actionError = startupError;
     bool showActionError = !startupError.empty();
+    const auto closeTape = [&] {
+        const bool closed = tape.Close();
+        commandTape = false;
+        if (settings.restoreMedia) { settings.tapePath.clear(); settingsDirty = true; }
+        if (!closed) { actionError = "Could not finish the WAV file."; showActionError = true; }
+    };
     board.Reset();
     board.SetSoundAY(settings.soundAY);
     board.SetSoundCovox(settings.soundCovox);
@@ -423,10 +438,15 @@ int Run(const preview_options::Options& options)
                     auto target = std::filesystem::path(path);
                     const bool creating = result->purpose == sdl_file_dialog::Purpose::tapeCreate;
                     if (creating && !target.has_extension()) target += ".wav";
-                    if ((creating && conflicts(target)) || (!creating && (isSettingsFile(target) || printer.Conflicts(target) || tape.Conflicts(target) || debugger.TraceConflicts(target))))
+                    if (conflicts(target))
                     { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
                     else if (!(creating ? tape.Create(target) : tape.Open(target)))
                     { actionError = creating ? "Could not create the WAV file." : "Could not open the WAV file or its format is unsupported."; showActionError = true; }
+                    else
+                    {
+                        commandTape = false;
+                        if (settings.restoreMedia) { settings.tapePath = creating ? std::filesystem::path{} : target; settingsDirty = true; }
+                    }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::createDisk)
                 {
@@ -606,10 +626,11 @@ int Run(const preview_options::Options& options)
                 {
                     settingsDirty = true;
                     if (!settings.restoreMedia)
-                    { settings.systemRom.clear(); settings.floppies = {}; settings.cartridges = {}; settings.hardDisks = {}; settings.floppyReadOnly = {}; settings.hardDiskReadOnly = {}; }
+                    { settings.systemRom.clear(); settings.floppies = {}; settings.cartridges = {}; settings.hardDisks = {}; settings.floppyReadOnly = {}; settings.hardDiskReadOnly = {}; settings.tapePath.clear(); }
                     else
                     {
                         if (!commandSystem) if (const auto* path = roms.SystemPath()) settings.systemRom = *path;
+                        if (!commandTape && tape.Inserted() && !tape.Recording()) settings.tapePath = tape.Path();
                         for (int slot = 0; slot < 4; ++slot)
                             if (!commandFloppies[slot]) if (const auto* path = media.Path(media_slots::Kind::floppy, slot))
                             { settings.floppies[slot] = *path; settings.floppyReadOnly[slot] = media.RequestedReadOnly(media_slots::Kind::floppy, slot); }
@@ -950,6 +971,8 @@ int Run(const preview_options::Options& options)
             }
             if (ImGui::BeginMenu("Tape"))
             {
+                if (ImGui::MenuItem("Tape controls", nullptr, &settings.tapeVisible)) settingsDirty = true;
+                ImGui::Separator();
                 if (tape.Inserted())
                 {
                     const auto path = tape.Path().u8string();
@@ -967,8 +990,7 @@ int Run(const preview_options::Options& options)
                     }
                     if (ImGui::MenuItem("Rewind") && !tape.Rewind())
                     { actionError = "Could not rewind the WAV file."; showActionError = true; }
-                    if (ImGui::MenuItem("Eject") && !tape.Close())
-                    { actionError = "Could not finish the WAV file."; showActionError = true; }
+                    if (ImGui::MenuItem("Eject")) closeTape();
                 }
                 else
                 {
@@ -1060,6 +1082,58 @@ int Run(const preview_options::Options& options)
             }
             ImGui::End();
             if (wasOpen != settings.keyboard) { releaseVirtualKeys(); settingsDirty = true; }
+        }
+        if (settings.tapeVisible)
+        {
+            ImGui::SetNextWindowSize(ImVec2(520, 260), ImGuiCond_FirstUseEver);
+            const bool wasOpen = settings.tapeVisible;
+            if (ImGui::Begin("Tape controls", &settings.tapeVisible))
+            {
+                if (tape.Inserted())
+                {
+                    const auto path = tape.Path().u8string();
+                    ImGui::TextWrapped("%s", reinterpret_cast<const char*>(path.c_str()));
+                    ImGui::Text("%s - %s", tape.Recording() ? "Recording file" : "Playback file", tape.Playing() ? "playing" : "stopped");
+                    const auto position = tape::Centiseconds(tape.Position(), tape.Frequency());
+                    const auto length = tape::Centiseconds(tape.Length(), tape.Frequency());
+                    ImGui::Text("%llu:%02llu.%02llu / %llu:%02llu.%02llu  (%d Hz)",
+                        static_cast<unsigned long long>(position / 6000), static_cast<unsigned long long>(position / 100 % 60),
+                        static_cast<unsigned long long>(position % 100), static_cast<unsigned long long>(length / 6000),
+                        static_cast<unsigned long long>(length / 100 % 60), static_cast<unsigned long long>(length % 100), tape.Frequency());
+                    std::uint32_t at = tape.Position(), low = 0, high = tape.Length();
+                    ImGui::BeginDisabled(tape.Playing() || tape.Recording() || high == 0);
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::SliderScalar("##tape-position", ImGuiDataType_U32, &at, &low, &high, ""))
+                        if (!tape.Seek(at)) { actionError = "Could not seek in the WAV file."; showActionError = true; }
+                    ImGui::EndDisabled();
+                    if (tape.Recording()) ImGui::TextDisabled("Seeking is unavailable for recordings.");
+                    else if (tape.Playing()) ImGui::TextDisabled("Stop playback to seek.");
+                    std::array<float, 256> graph{};
+                    const auto waveform = tape.Waveform();
+                    std::ranges::transform(waveform, graph.begin(), [](std::uint8_t sample) { return static_cast<float>(sample); });
+                    ImGui::PlotLines("##tape-signal", graph.data(), static_cast<int>(graph.size()), 0, "Signal", 0.0f, 255.0f, ImVec2(-1, 60));
+                    if (ImGui::Button(tape.Playing() ? "Stop" : tape.Recording() ? "Record" : "Play"))
+                    { if (tape.Playing()) tape.Stop(); else (void)tape.Play(); }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Rewind") && !tape.Rewind())
+                    { actionError = "Could not rewind the WAV file."; showActionError = true; }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Eject")) closeTape();
+                }
+                else
+                {
+                    ImGui::TextUnformatted("No tape inserted.");
+                    ImGui::BeginDisabled(fileDialog->Pending());
+                    if (ImGui::Button("Open WAV...") && !sdl_file_dialog::OpenTape(fileDialog, *window))
+                    { actionError = "Could not open the file dialog."; showActionError = true; }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Create WAV...") && !sdl_file_dialog::SaveTape(fileDialog, *window))
+                    { actionError = "Could not open the file dialog."; showActionError = true; }
+                    ImGui::EndDisabled();
+                }
+            }
+            ImGui::End();
+            if (wasOpen != settings.tapeVisible) settingsDirty = true;
         }
         if (showDebugger)
         {
@@ -1692,7 +1766,7 @@ int main(int argc, char** argv)
         std::printf("Usage: ukncbtl-sdl [--run|--paused] [--sound|--no-sound] [--fullscreen|--windowed]\n"
                     "  [--rom PATH] [--floppy 0..3 PATH] [--cartridge 1..2 PATH]\n"
                     "  [--floppy-read-only 0..3 PATH] [--hard-disk 1..2 PATH]\n"
-                    "  [--hard-disk-read-only 1..2 PATH] [--boot 1..7] [--settings PATH]\n");
+                    "  [--hard-disk-read-only 1..2 PATH] [--tape PATH] [--boot 1..7] [--settings PATH]\n");
         return 0;
     }
     return Run(*options);
