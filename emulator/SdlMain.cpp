@@ -11,6 +11,7 @@
 #include "PreviewDebugger.h"
 #include "PreviewConsole.h"
 #include "PreviewSettings.h"
+#include "PreviewMediaRestore.h"
 #include "PreviewSnapshot.h"
 #include "PreviewSprite.h"
 #include "PreviewTape.h"
@@ -140,6 +141,14 @@ int Run(const preview_options::Options& options)
     for (int slot = 0; slot < 4; ++slot)
         if (options.floppies[slot] && !media.Attach(media_slots::Kind::floppy, slot, *options.floppies[slot]))
         { SDL_Log("Could not attach requested floppy %d.", slot); return 1; }
+    const auto restoreErrors = preview_media_restore::Restore(settings, options, roms, media);
+    if (!restoreErrors.empty())
+    {
+        if (!startupError.empty()) startupError += "\n";
+        startupError += "Could not restore saved media:";
+        for (const auto& item : restoreErrors) startupError += "\n" + item;
+        startupError += "\nThe saved paths are kept for the next launch.";
+    }
     for (int slot = 0; slot < 2; ++slot)
         if (options.hardDisks[slot] && !media.Attach(media_slots::Kind::hardDisk, slot, *options.hardDisks[slot]))
         { SDL_Log("Could not attach requested hard disk %d; check its ROM cartridge and image.", slot + 1); return 1; }
@@ -151,6 +160,12 @@ int Run(const preview_options::Options& options)
     for (const auto address : settings.ppuBreakpoints)
         if (address != BreakpointSet::NoBreakpoint) (void)debugger.Breakpoints(preview_debugger::Processor::ppu).Add(address);
     preview_console::Console console;
+    bool commandSystem = options.rom.has_value();
+    std::array<bool, 4> commandFloppies{};
+    std::array<bool, 2> commandCartridges{}, commandHardDisks{};
+    for (std::size_t index = 0; index < commandFloppies.size(); ++index) commandFloppies[index] = options.floppies[index].has_value();
+    for (std::size_t index = 0; index < commandCartridges.size(); ++index)
+    { commandCartridges[index] = options.cartridges[index].has_value(); commandHardDisks[index] = options.hardDisks[index].has_value(); }
     const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
     std::string actionError = startupError;
     bool showActionError = !startupError.empty();
@@ -233,7 +248,7 @@ int Run(const preview_options::Options& options)
     const auto conflicts = [&](const std::filesystem::path& path) {
         return media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path) || tape.Conflicts(path) || debugger.TraceConflicts(path);
     };
-    bool running = smokeTest || options.boot != 0 || options.run.value_or(settings.autostart);
+    bool running = smokeTest || options.boot != 0 || options.run.value_or(settings.autostart && restoreErrors.empty());
     if (options.boot) (void)autoBoot.Start(options.boot);
     frame_pacing::Scheduler scheduler(frame_pacing::Clock::now());
     const auto pauseMachine = [&] {
@@ -458,7 +473,8 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::systemRom)
                 {
-                    if (roms.LoadSystem(std::filesystem::path(path))) { resetMachine(); scheduler.Restart(started); }
+                    if (roms.LoadSystem(std::filesystem::path(path)))
+                    { commandSystem = false; if (settings.restoreMedia) { settings.systemRom = std::filesystem::path(path); settingsDirty = true; } resetMachine(); scheduler.Restart(started); }
                     else { actionError = "Could not load the system ROM image."; showActionError = true; }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::cartridge)
@@ -468,6 +484,7 @@ int Run(const preview_options::Options& options)
                         actionError = "Could not load the ROM cartridge image.";
                         showActionError = true;
                     }
+                    else { commandCartridges[result->slot] = false; if (settings.restoreMedia) { settings.cartridges[result->slot] = std::filesystem::path(path); settingsDirty = true; } }
                 }
                 else if (result->kind == media_slots::Kind::hardDisk && !roms.Inserted(result->slot))
                 {
@@ -478,6 +495,14 @@ int Run(const preview_options::Options& options)
                 {
                     actionError = "Could not attach the disk image. Check the file and the selected drive.";
                     showActionError = true;
+                }
+                else
+                {
+                    if (result->kind == media_slots::Kind::floppy)
+                    { commandFloppies[result->slot] = false; if (settings.restoreMedia) settings.floppies[result->slot] = std::filesystem::path(path); }
+                    else
+                    { commandHardDisks[result->slot] = false; if (settings.restoreMedia) settings.hardDisks[result->slot] = std::filesystem::path(path); }
+                    if (settings.restoreMedia) settingsDirty = true;
                 }
             }
         }
@@ -516,6 +541,23 @@ int Run(const preview_options::Options& options)
                 }
                 if (ImGui::MenuItem("Reset")) { resetMachine(); scheduler.Restart(started); }
                 if (ImGui::MenuItem("Start automatically", nullptr, &settings.autostart)) settingsDirty = true;
+                if (ImGui::MenuItem("Restore media on startup", nullptr, &settings.restoreMedia))
+                {
+                    settingsDirty = true;
+                    if (!settings.restoreMedia)
+                    { settings.systemRom.clear(); settings.floppies = {}; settings.cartridges = {}; settings.hardDisks = {}; }
+                    else
+                    {
+                        if (!commandSystem) if (const auto* path = roms.SystemPath()) settings.systemRom = *path;
+                        for (int slot = 0; slot < 4; ++slot)
+                            if (!commandFloppies[slot]) if (const auto* path = media.Path(media_slots::Kind::floppy, slot)) settings.floppies[slot] = *path;
+                        for (int slot = 0; slot < 2; ++slot)
+                        {
+                            if (!commandCartridges[slot]) if (const auto* path = roms.CartridgePath(slot)) settings.cartridges[slot] = *path;
+                            if (!commandHardDisks[slot]) if (const auto* path = media.Path(media_slots::Kind::hardDisk, slot)) settings.hardDisks[slot] = *path;
+                        }
+                    }
+                }
                 if (ImGui::BeginMenu("Import legacy settings and exit", settingsPath.has_value() && !fileDialog->Pending()))
                 {
                     constexpr std::array labels{"UTF-8 or UTF-16LE...", "Windows-1251...", "Windows-1252..."};
@@ -576,7 +618,7 @@ int Run(const preview_options::Options& options)
                     { actionError = "Could not open the file dialog."; showActionError = true; }
                     if (ImGui::MenuItem("Use embedded ROM and reset", nullptr, false,
                         roms.Source() != preview_roms::SystemSource::embedded))
-                    { roms.UseEmbedded(); resetMachine(); scheduler.Restart(started); }
+                    { roms.UseEmbedded(); commandSystem = false; if (settings.restoreMedia) { settings.systemRom.clear(); settingsDirty = true; } resetMachine(); scheduler.Restart(started); }
                     ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Load state...", nullptr, false, !fileDialog->Pending()) &&
@@ -712,7 +754,8 @@ int Run(const preview_options::Options& options)
                     {
                         const auto text = roms.CartridgePath(slot)->u8string();
                         ImGui::TextUnformatted(reinterpret_cast<const char*>(text.c_str()));
-                        if (ImGui::MenuItem("Eject")) (void)roms.Eject(slot);
+                        if (ImGui::MenuItem("Eject") && roms.Eject(slot))
+                        { commandCartridges[slot] = false; if (settings.restoreMedia) { settings.cartridges[slot].clear(); settingsDirty = true; } }
                     }
                     else if (ImGui::MenuItem("Insert...", nullptr, false, !fileDialog->Pending()) &&
                         !sdl_file_dialog::OpenRom(fileDialog, *window, sdl_file_dialog::Purpose::cartridge, slot))
@@ -742,10 +785,14 @@ int Run(const preview_options::Options& options)
                         const auto path = media.Path(kind, slot)->u8string();
                         ImGui::TextUnformatted(reinterpret_cast<const char*>(path.c_str()));
                         if (media.ReadOnly(kind, slot)) ImGui::TextDisabled("Read-only");
-                        if (ImGui::MenuItem("Eject") && !media.Eject(kind, slot))
+                        if (ImGui::MenuItem("Eject"))
                         {
-                            actionError = "Could not eject the disk image.";
-                            showActionError = true;
+                            if (!media.Eject(kind, slot))
+                            { actionError = "Could not eject the disk image."; showActionError = true; }
+                            else if (kind == media_slots::Kind::floppy)
+                            { commandFloppies[slot] = false; if (settings.restoreMedia) { settings.floppies[slot].clear(); settingsDirty = true; } }
+                            else
+                            { commandHardDisks[slot] = false; if (settings.restoreMedia) { settings.hardDisks[slot].clear(); settingsDirty = true; } }
                         }
                     }
                     else if (ImGui::MenuItem("Attach...", nullptr, false, !fileDialog->Pending()))

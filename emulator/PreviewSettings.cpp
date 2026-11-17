@@ -12,6 +12,59 @@ namespace
 {
 constexpr std::wstring_view section = L"SDLPreview";
 
+// Hexadecimal UTF-8 keeps INI delimiters, whitespace and newlines in paths
+// unambiguous and independent of the host's native path encoding.
+std::optional<std::wstring> EncodePath(const std::filesystem::path& path)
+{
+    try
+    {
+        const auto utf8 = path.u8string();
+        if (utf8.size() > 32768) return std::nullopt;
+        constexpr wchar_t digits[] = L"0123456789abcdef";
+        std::wstring result;
+        result.reserve(utf8.size() * 2);
+        for (const auto value : utf8)
+        { const auto byte = static_cast<unsigned char>(value); result.push_back(digits[byte >> 4]); result.push_back(digits[byte & 15]); }
+        return result;
+    }
+    catch (const std::filesystem::filesystem_error&) { return std::nullopt; }
+}
+
+std::optional<std::filesystem::path> DecodePath(std::wstring_view text)
+{
+    if (text.size() % 2 || text.size() > 65536) return std::nullopt;
+    const auto digit = [](wchar_t ch) -> int {
+        if (ch >= L'0' && ch <= L'9') return ch - L'0';
+        if (ch >= L'a' && ch <= L'f') return ch - L'a' + 10;
+        if (ch >= L'A' && ch <= L'F') return ch - L'A' + 10;
+        return -1;
+    };
+    std::u8string utf8;
+    utf8.reserve(text.size() / 2);
+    for (std::size_t i = 0; i < text.size(); i += 2)
+    {
+        const int hi = digit(text[i]), lo = digit(text[i + 1]);
+        if (hi < 0 || lo < 0 || (hi == 0 && lo == 0)) return std::nullopt;
+        utf8.push_back(static_cast<char8_t>(hi * 16 + lo));
+    }
+    const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(utf8.data()), utf8.size());
+    if (!ini_encoding::Decode(bytes)) return std::nullopt;
+    try { return std::filesystem::path(utf8); }
+    catch (const std::filesystem::filesystem_error&) { return std::nullopt; }
+}
+
+std::filesystem::path ReadPath(const IniDocument& doc, std::wstring_view key)
+{
+    const auto text = doc.Get(section, key);
+    return text ? DecodePath(*text).value_or(std::filesystem::path{}) : std::filesystem::path{};
+}
+
+bool WritePath(IniDocument& doc, std::wstring_view key, const std::filesystem::path& path)
+{
+    const auto encoded = EncodePath(path);
+    return encoded && doc.Set(section, key, *encoded);
+}
+
 std::expected<std::optional<IniFile>, IniFileError> Read(const std::filesystem::path& path)
 {
     if (path.empty()) return std::unexpected(IniFileError::open_failed);
@@ -176,6 +229,16 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
     if (station && *station <= 0xffff) settings.networkStation = static_cast<std::uint16_t>(*station);
     settings.cpuBreakpoints = ReadBreakpoints(doc, L"CpuBreakpoint");
     settings.ppuBreakpoints = ReadBreakpoints(doc, L"PpuBreakpoint");
+    const auto restore = Number(doc, L"RestoreMedia");
+    if (restore && *restore <= 1) settings.restoreMedia = *restore != 0;
+    settings.systemRom = ReadPath(doc, L"SystemRomPath");
+    for (std::size_t index = 0; index < settings.floppies.size(); ++index)
+        settings.floppies[index] = ReadPath(doc, L"FloppyPath" + std::to_wstring(index));
+    for (std::size_t index = 0; index < settings.cartridges.size(); ++index)
+    {
+        settings.cartridges[index] = ReadPath(doc, L"CartridgePath" + std::to_wstring(index));
+        settings.hardDisks[index] = ReadPath(doc, L"HardDiskPath" + std::to_wstring(index));
+    }
     return settings;
 }
 
@@ -218,6 +281,15 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
     for (std::size_t index = 0; index < settings.cpuBreakpoints.size(); ++index)
         if (!doc.Set(section, BreakpointKey(L"CpuBreakpoint", index), std::to_wstring(settings.cpuBreakpoints[index])) ||
             !doc.Set(section, BreakpointKey(L"PpuBreakpoint", index), std::to_wstring(settings.ppuBreakpoints[index])))
+            return std::unexpected(IniFileError::invalid_entry);
+    if (!doc.Set(section, L"RestoreMedia", settings.restoreMedia ? L"1" : L"0") ||
+        !WritePath(doc, L"SystemRomPath", settings.systemRom)) return std::unexpected(IniFileError::invalid_entry);
+    for (std::size_t index = 0; index < settings.floppies.size(); ++index)
+        if (!WritePath(doc, L"FloppyPath" + std::to_wstring(index), settings.floppies[index]))
+            return std::unexpected(IniFileError::invalid_entry);
+    for (std::size_t index = 0; index < settings.cartridges.size(); ++index)
+        if (!WritePath(doc, L"CartridgePath" + std::to_wstring(index), settings.cartridges[index]) ||
+            !WritePath(doc, L"HardDiskPath" + std::to_wstring(index), settings.hardDisks[index]))
             return std::unexpected(IniFileError::invalid_entry);
     return (*file)->Save(path);
 }

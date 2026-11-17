@@ -1,5 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "MediaSlots.h"
+#include "PreviewMediaRestore.h"
+#include "PreviewRoms.h"
 #include "emubase/Emubase.h"
 #include <gtest/gtest.h>
 #include <chrono>
@@ -72,6 +74,65 @@ TEST_F(MediaSlotsTest, AttachesAndEjectsAllDriveSlots)
         ASSERT_TRUE(media.Eject(media_slots::Kind::hardDisk, slot));
         EXPECT_FALSE(board.IsHardImageAttached(slot + 1));
     }
+}
+
+TEST_F(MediaSlotsTest, RestoresMediaInDependencyOrderAndPreservesFailedPaths)
+{
+    const auto cartridge = directory / "cartridge.rom";
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{cartridge};
+    { std::ofstream file(cartridge, std::ios::binary); const std::vector<char> bytes(24 * 1024); ASSERT_TRUE(file.write(bytes.data(), bytes.size())); }
+    CMotherboard board;
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_settings::Settings settings;
+    settings.restoreMedia = true;
+    settings.cartridges[0] = cartridge;
+    settings.floppies[0] = floppy;
+    settings.floppies[1] = directory / "missing.dsk";
+    settings.hardDisks[0] = hard;
+    const auto errors = preview_media_restore::Restore(settings, {}, roms, media);
+    ASSERT_EQ(errors.size(), 1u);
+    EXPECT_EQ(errors[0], "Floppy 2");
+    EXPECT_TRUE(roms.Inserted(0));
+    EXPECT_TRUE(media.Attached(media_slots::Kind::floppy, 0));
+    EXPECT_TRUE(media.Attached(media_slots::Kind::hardDisk, 0));
+    EXPECT_EQ(settings.floppies[1], directory / "missing.dsk");
+}
+
+TEST_F(MediaSlotsTest, RestoreHonorsDisabledOptionAndCommandLineOverrides)
+{
+    CMotherboard board;
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_settings::Settings settings;
+    settings.floppies[0] = directory / "missing.dsk";
+    EXPECT_TRUE(preview_media_restore::Restore(settings, {}, roms, media).empty());
+    settings.restoreMedia = true;
+    preview_options::Options options;
+    options.floppies[0] = floppy;
+    ASSERT_TRUE(media.Attach(media_slots::Kind::floppy, 0, floppy));
+    EXPECT_TRUE(preview_media_restore::Restore(settings, options, roms, media).empty());
+    EXPECT_EQ(*media.Path(media_slots::Kind::floppy, 0), floppy);
+    EXPECT_EQ(settings.floppies[0], directory / "missing.dsk");
+    options.floppies[0].reset(); options.smokeTest = true;
+    EXPECT_TRUE(preview_media_restore::Restore(settings, options, roms, media).empty());
+}
+
+TEST_F(MediaSlotsTest, MissingCartridgeReportsBothDependentDevices)
+{
+    CMotherboard board;
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_settings::Settings settings;
+    settings.restoreMedia = true;
+    settings.cartridges[1] = directory / "missing.rom";
+    settings.hardDisks[1] = hard;
+    const auto errors = preview_media_restore::Restore(settings, {}, roms, media);
+    ASSERT_EQ(errors.size(), 2u);
+    EXPECT_EQ(errors[0], "Cartridge 2");
+    EXPECT_EQ(errors[1], "Hard disk 2");
+    EXPECT_EQ(settings.hardDisks[1], hard);
+    EXPECT_FALSE(media.Attached(media_slots::Kind::hardDisk, 1));
 }
 
 TEST_F(MediaSlotsTest, RejectsInvalidOrOccupiedSlotsWithoutDetachingExistingDisk)

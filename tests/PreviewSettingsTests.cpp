@@ -97,6 +97,28 @@ TEST_F(PreviewSettingsTest, ImportsCompatibleLegacyValuesAndKeepsUnrelatedSettin
     EXPECT_NE(Read().find("[UKNCBTL]"), std::string::npos);
 }
 
+TEST_F(PreviewSettingsTest, MediaPathsRoundTripAndInvalidEncodedPathsAreIgnored)
+{
+    preview_settings::Settings input;
+    input.restoreMedia = true;
+    input.systemRom = directory / std::filesystem::path(u8"\u65e5\u672c rom.bin");
+    input.floppies[2] = directory / std::filesystem::path(u8"\u0414\u0438\u0441\u043a;1.dsk");
+    input.cartridges[0] = directory / "cart.bin";
+    input.hardDisks[1] = directory / "disk.img";
+    ASSERT_TRUE(preview_settings::Save(path, input));
+    const auto loaded = preview_settings::Load(path);
+    ASSERT_TRUE(loaded);
+    EXPECT_TRUE(loaded->restoreMedia);
+    EXPECT_EQ(loaded->systemRom, input.systemRom);
+    EXPECT_EQ(loaded->floppies, input.floppies);
+    EXPECT_EQ(loaded->cartridges, input.cartridges);
+    EXPECT_EQ(loaded->hardDisks, input.hardDisks);
+    Write("[SDLPreview]\nRestoreMedia=1\nFloppyPath0=0061\nFloppyPath1=not-hex\nFloppyPath2=ff\n");
+    const auto malformed = preview_settings::Load(path);
+    ASSERT_TRUE(malformed);
+    for (const auto& value : malformed->floppies) EXPECT_TRUE(value.empty());
+}
+
 TEST_F(PreviewSettingsTest, ImportRejectsUnrecognizedFilesAndIgnoresInvalidValues)
 {
     Write("[Other]\nSound=1\n");

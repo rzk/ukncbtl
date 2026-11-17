@@ -121,7 +121,12 @@ menu can direct parallel-port output to a selected file; Covox temporarily
 suppresses printer output because it uses the same port. Creation and printer
 output refuse files currently used by the emulator. Two ROM cartridge slots and an external system ROM can be selected; a
 hard disk requires a cartridge in the matching slot. Changing the system ROM
-resets the machine. ROM and disk paths are not restored automatically. The
+resets the machine. The optional Emulator > Restore media on startup setting
+remembers system ROM, cartridge, floppy and hard-disk paths. Failed restores
+are reported and retained for the next launch, and automatic startup is paused
+when a restore fails. Explicit run/boot options still take precedence.
+Command-line media overrides apply only to the current launch. Disabling the
+option clears the saved paths. The
 Display menu offers the legacy RGB, GRB and grayscale palettes and
 screen scaling modes; the preview fits each mode into a 4:3 viewport.
 Fullscreen can be toggled in the Display menu or with F10. Screen text can be

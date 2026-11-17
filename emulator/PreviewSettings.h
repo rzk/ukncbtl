@@ -41,6 +41,10 @@ struct Settings
     std::uint16_t networkStation = 0;
     std::array<std::uint16_t, BreakpointSet::Capacity - 1> cpuBreakpoints = EmptyBreakpoints();
     std::array<std::uint16_t, BreakpointSet::Capacity - 1> ppuBreakpoints = EmptyBreakpoints();
+    bool restoreMedia = false;
+    std::filesystem::path systemRom;
+    std::array<std::filesystem::path, 4> floppies;
+    std::array<std::filesystem::path, 2> cartridges, hardDisks;
 };
 
 enum class ImportEncoding { unicode, windows1251, windows1252 };
