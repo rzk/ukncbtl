@@ -524,6 +524,8 @@ int Run(const preview_options::Options& options)
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
+        if (debugger.TraceMask() && settings.traceMask != debugger.TraceMask())
+        { settings.traceMask = debugger.TraceMask(); settingsDirty = true; }
         for (const auto shortcut : shortcuts)
         {
             if (!sdl_shortcuts::Allowed(shortcut, running, focusLost || ImGui::GetIO().WantCaptureKeyboard,
@@ -746,12 +748,34 @@ int Run(const preview_options::Options& options)
                 ImGui::MenuItem("Debugger", nullptr, &showDebugger);
                 ImGui::MenuItem("Console", nullptr, &showConsole);
                 if (ImGui::MenuItem("Sprite viewer", nullptr, &settings.spriteViewer)) settingsDirty = true;
+                if (ImGui::BeginMenu("Trace events"))
+                {
+                    constexpr std::array traceEvents{
+                        std::pair{"Floppy controller", preview_debugger::TraceFloppy},
+                        std::pair{"CPU instructions", preview_debugger::TraceInstructionsCpu},
+                        std::pair{"PPU instructions", preview_debugger::TraceInstructionsPpu},
+                        std::pair{"CPU interrupts", preview_debugger::TraceInterruptsCpu},
+                        std::pair{"PPU interrupts", preview_debugger::TraceInterruptsPpu}};
+                    for (const auto& [label, flag] : traceEvents)
+                    {
+                        const bool checked = (settings.traceMask & flag) != 0;
+                        if (ImGui::MenuItem(label, nullptr, checked, !checked || settings.traceMask != flag))
+                        {
+                            settings.traceMask ^= flag;
+                            if (debugger.TracePath()) (void)debugger.SetTraceMask(settings.traceMask);
+                            settingsDirty = true;
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
                 if (debugger.TracePath())
                 {
+                    if (ImGui::MenuItem("Clear trace") && !debugger.ClearTrace())
+                    { actionError = "Could not clear the trace."; showActionError = true; }
                     if (ImGui::MenuItem("Stop trace")) debugger.StopTrace();
                 }
-                else if (ImGui::MenuItem("Start CPU/PPU trace...", nullptr, false, !fileDialog->Pending()) &&
-                    !sdl_file_dialog::SaveTrace(fileDialog, *window, preview_debugger::TraceAll))
+                else if (ImGui::MenuItem("Start trace...", nullptr, false, !fileDialog->Pending()) &&
+                    !sdl_file_dialog::SaveTrace(fileDialog, *window, settings.traceMask))
                 { actionError = "Could not open the file dialog."; showActionError = true; }
                 ImGui::EndMenu();
             }

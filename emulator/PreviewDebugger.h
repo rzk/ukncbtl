@@ -20,9 +20,9 @@ enum class Processor { cpu, ppu };
 enum class MemorySource { selected, cpu, ppu, ram0, ram1, ram2, rom };
 enum class DumpError { invalid_range, file_error };
 // These match the legacy CPU/PPU instruction and interrupt trace masks.
-inline constexpr std::uint16_t TraceInstructionsPpu = 0200, TraceInstructionsCpu = 0400;
+inline constexpr std::uint16_t TraceFloppy = 0100, TraceInstructionsPpu = 0200, TraceInstructionsCpu = 0400;
 inline constexpr std::uint16_t TraceInterruptsPpu = 01000, TraceInterruptsCpu = 02000;
-inline constexpr std::uint16_t TraceAll = 03600;
+inline constexpr std::uint16_t TraceAll = 03700;
 struct Line
 {
     std::uint16_t address, word;
@@ -88,6 +88,7 @@ private:
     void TraceWrite(std::string_view text);
     static void OnInstruction(void* context, const CProcessor* processor, std::uint16_t address, std::uint16_t opcode);
     static void OnInterrupt(void* context, const CProcessor* processor, std::uint16_t oldPc, std::uint16_t vector);
+    static void OnFloppyTrace(void* context, std::wstring_view text);
     CMotherboard& board_;
     BreakpointSet cpu_, ppu_;
     InstructionHistory history_;

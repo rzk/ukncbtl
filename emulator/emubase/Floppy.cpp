@@ -80,9 +80,15 @@ CFloppyController::~CFloppyController()
     }
 }
 
+void CFloppyController::Trace(std::wstring text) const
+{
+    if (m_traceCallback) m_traceCallback(m_traceContext, text);
+    else DebugLog(text.c_str());
+}
+
 void CFloppyController::Reset()
 {
-    if (m_okTrace) DebugLog(L"Floppy RESET\r\n");
+    if (Tracing()) Trace(L"Floppy RESET\r\n");
 
     if (!FlushChanges()) return;
 
@@ -189,7 +195,7 @@ uint16_t CFloppyController::GetState()
 
 void CFloppyController::SetCommand(uint16_t cmd)
 {
-    if (m_okTrace) DebugLogFormat(L"Floppy COMMAND {:06o}\r\n", cmd);
+    if (Tracing()) Trace(std::format(L"Floppy COMMAND {:06o}\r\n", cmd));
 
     bool okPrepareTrack = false;  // Is it needed to load the track into the buffer
 
@@ -204,7 +210,8 @@ void CFloppyController::SetCommand(uint16_t cmd)
         return;
     if ((cmd & 02000) != 0 && m_drive != newdrive)
     {
-        DebugLogFormat(L"Floppy DRIVE {}\r\n", newdrive);
+        if (Tracing()) Trace(std::format(L"Floppy DRIVE {}\r\n", newdrive));
+        else DebugLogFormat(L"Floppy DRIVE {}\r\n", newdrive);
 
         m_drive = newdrive;
         m_pDrive = &m_drivedata[m_drive];
@@ -232,7 +239,7 @@ void CFloppyController::SetCommand(uint16_t cmd)
 
     if (cmd & FLOPPY_CMD_STEP)  // Move head for one track to center or from center
     {
-        if (m_okTrace) DebugLog(L"Floppy STEP\r\n");
+        if (Tracing()) Trace(L"Floppy STEP\r\n");
 
         m_side = (m_flags & FLOPPY_CMD_SIDEUP) ? 1 : 0; // DO WE NEED IT HERE?
 
@@ -273,7 +280,7 @@ void CFloppyController::SetCommand(uint16_t cmd)
 
 uint16_t CFloppyController::GetData()
 {
-    if (m_okTrace) DebugLogFormat(L"Floppy READ\t\t{:04x}\r\n", m_datareg);
+    if (Tracing()) Trace(std::format(L"Floppy READ\t\t{:04x}\r\n", m_datareg));
 
     m_status &= ~FLOPPY_STATUS_MOREDATA;
     m_writing = m_searchsync = false;
@@ -400,7 +407,7 @@ void CFloppyController::PrepareTrack()
 {
     if (!FlushChanges()) return;
 
-    if (m_okTrace) DebugLogFormat(L"Floppy PREP  {} TR {} SD {}\r\n", m_drive, m_track, m_side);
+    if (Tracing()) Trace(std::format(L"Floppy PREP  {} TR {} SD {}\r\n", m_drive, m_track, m_side));
 
     //TCHAR buffer[512];
 
@@ -448,7 +455,7 @@ bool CFloppyController::FlushChanges()
 {
     if (!IsAttached(m_drive) || !m_trackchanged) return true;
 
-    if (m_okTrace) DebugLogFormat(L"Floppy FLUSH {} TR {} SD {}\r\n", m_drive, m_pDrive->datatrack, m_pDrive->dataside);
+    if (Tracing()) Trace(std::format(L"Floppy FLUSH {} TR {} SD {}\r\n", m_drive, m_pDrive->datatrack, m_pDrive->dataside));
 
     // Decode track data from m_data
     std::array<uint8_t, 5120> data{};

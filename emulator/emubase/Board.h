@@ -18,10 +18,12 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <cassert>
 #include <filesystem>
 #include <span>
+#include <string_view>
 
 class CProcessor;
 class CMemoryController;
 class CSoundAY;
+using FLOPPYTRACECALLBACK = void(*)(void* context, std::wstring_view text);
 
 inline constexpr auto FRAMERATE = 50;  // Number of frames per second
 
@@ -295,6 +297,8 @@ public:  // System control
     void        SetSoundAYVal(int chip, uint8_t val);
     void        SetFloppyState(uint16_t val);
     void        SetFloppyData(uint16_t val);
+    // Callback is borrowed and must be detached before its context is destroyed.
+    void        SetFloppyTraceCallback(FLOPPYTRACECALLBACK callback, void* context);
 
     /// \brief Check if ROM cartridge image assigned to the cartridge slot.
     bool        IsROMCartridgeLoaded(int cartno) const;

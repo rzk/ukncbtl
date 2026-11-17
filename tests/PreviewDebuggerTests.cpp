@@ -280,7 +280,7 @@ TEST_F(PreviewDebuggerTest, TraceAndHistoryCanBeEnabledAndDisabledIndependently)
     };
     preview_debugger::Session debugger(*board);
     EXPECT_FALSE(debugger.StartTrace(path, 0));
-    EXPECT_FALSE(debugger.StartTrace(path, 0100));
+    EXPECT_FALSE(debugger.StartTrace(path, 0040));
     EXPECT_FALSE(debugger.StartTrace(path / "missing", preview_debugger::TraceAll));
     ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
     EXPECT_TRUE(debugger.TraceConflicts(path));
@@ -305,6 +305,40 @@ TEST_F(PreviewDebuggerTest, TraceAndHistoryCanBeEnabledAndDisabledIndependently)
     EXPECT_EQ(debugger.History().Length(true), 2);
     EXPECT_FALSE(debugger.TraceConflicts(path));
     EXPECT_FALSE(debugger.TakeTraceError());
+}
+
+TEST_F(PreviewDebuggerTest, TraceCapturesFloppyAndRespectsMaskChanges)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-floppy-trace-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    const auto read = [&] {
+        std::ifstream file(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    };
+    {
+        preview_debugger::Session debugger(*board);
+        ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceFloppy | preview_debugger::TraceInstructionsCpu));
+        debugger.SetHistoryEnabled(true);
+        board->SetFloppyState(FLOPPY_CMD_DIR | FLOPPY_CMD_STEP);
+        debugger.Step();
+        const auto first = read();
+        EXPECT_NE(first.find("Floppy COMMAND"), std::string::npos);
+        EXPECT_NE(first.find("Floppy STEP"), std::string::npos);
+        EXPECT_NE(first.find("CPU\t001000\tINC"), std::string::npos);
+        EXPECT_EQ(debugger.History().Length(true), 1);
+        ASSERT_TRUE(debugger.SetTraceMask(preview_debugger::TraceInstructionsCpu));
+        board->SetFloppyState(FLOPPY_CMD_DIR | FLOPPY_CMD_STEP);
+        EXPECT_EQ(read(), first);
+        ASSERT_TRUE(debugger.SetTraceMask(preview_debugger::TraceFloppy));
+        board->SetFloppyState(FLOPPY_CMD_DIR | FLOPPY_CMD_STEP);
+        EXPECT_GT(read().size(), first.size());
+        debugger.StopTrace();
+        const auto stopped = read();
+        board->SetFloppyState(FLOPPY_CMD_DIR | FLOPPY_CMD_STEP);
+        EXPECT_EQ(read(), stopped);
+    }
+    board->SetFloppyState(FLOPPY_CMD_DIR | FLOPPY_CMD_STEP); // no callback to destroyed session
 }
 
 TEST_F(PreviewDebuggerTest, TraceRecordsSelectedInterrupts)

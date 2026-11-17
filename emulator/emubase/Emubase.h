@@ -102,6 +102,8 @@ protected:
     bool m_crccalculus; ///< true = CRC is calculated now
     bool m_trackchanged;  ///< true = m_data was changed - need to save it into the file
     bool m_okTrace;         ///< Trace mode on/off
+    FLOPPYTRACECALLBACK m_traceCallback = nullptr;
+    void* m_traceContext = nullptr;
 
 public:
     CFloppyController();
@@ -125,8 +127,12 @@ public:
     void WriteData(uint16_t data);  ///< Writing to port 177132 -- data
     void Periodic();                ///< Rotate disk; call it each 64 us -- 15625 times per second
     void SetTrace(bool okTrace) { m_okTrace = okTrace; }  // Set trace mode on/off
+    void SetTraceCallback(FLOPPYTRACECALLBACK callback, void* context)
+    { m_traceCallback = callback; m_traceContext = callback ? context : nullptr; }
 
 private:
+    [[nodiscard]] bool Tracing() const { return m_okTrace || m_traceCallback; }
+    void Trace(std::wstring text) const;
     void PrepareTrack();
     bool FlushChanges();  ///< If current track was changed - save it
 };

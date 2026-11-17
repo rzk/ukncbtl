@@ -160,6 +160,7 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     input.networkStation = 01234;
     input.memorySource = 5; input.memoryBytes = true; input.memoryHex = true;
     input.toolbar = false; input.statusBar = false;
+    input.traceMask = 0500;
     input.cpuBreakpoints[0] = 0; input.cpuBreakpoints[1] = 0177776;
     input.ppuBreakpoints[0] = 01000;
     ASSERT_TRUE(preview_settings::Save(path, input));
@@ -191,6 +192,7 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     EXPECT_EQ(output->memoryHex, input.memoryHex);
     EXPECT_EQ(output->toolbar, input.toolbar);
     EXPECT_EQ(output->statusBar, input.statusBar);
+    EXPECT_EQ(output->traceMask, input.traceMask);
     EXPECT_EQ(output->cpuBreakpoints, input.cpuBreakpoints);
     EXPECT_EQ(output->ppuBreakpoints, input.ppuBreakpoints);
     const auto file = IniFile::Open(path);
@@ -288,6 +290,9 @@ TEST_F(PreviewSettingsTest, InvalidInputOrCorruptFileIsNeverOverwritten)
     auto badMemory = preview_settings::Settings{};
     badMemory.memorySource = 7;
     EXPECT_FALSE(preview_settings::Save(path, badMemory));
+    auto badTrace = preview_settings::Settings{};
+    badTrace.traceMask = 0040;
+    EXPECT_FALSE(preview_settings::Save(path, badTrace));
     auto badBreakpoints = preview_settings::Settings{};
     badBreakpoints.cpuBreakpoints[0] = 1;
     EXPECT_FALSE(preview_settings::Save(path, badBreakpoints));

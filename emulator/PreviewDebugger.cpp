@@ -187,6 +187,8 @@ void preview_debugger::Session::UpdateCallbacks()
     const bool enabled = historyEnabled_ || trace_.has_value();
     board_.SetInstructionCallbackWithContext(enabled ? OnInstruction : nullptr, enabled ? this : nullptr);
     board_.SetInterruptCallbackWithContext(enabled ? OnInterrupt : nullptr, enabled ? this : nullptr);
+    const bool floppy = (traceMask_ & TraceFloppy) != 0;
+    board_.SetFloppyTraceCallback(floppy ? OnFloppyTrace : nullptr, floppy ? this : nullptr);
 }
 
 bool preview_debugger::Session::StartTrace(const std::filesystem::path& path, std::uint16_t mask)
@@ -206,6 +208,7 @@ bool preview_debugger::Session::SetTraceMask(std::uint16_t mask)
 {
     if (!trace_ || !mask || (mask & ~TraceAll)) return false;
     traceMask_ = mask;
+    UpdateCallbacks();
     return true;
 }
 
@@ -243,6 +246,15 @@ bool preview_debugger::Session::TakeTraceError()
 void preview_debugger::Session::TraceWrite(std::string_view text)
 {
     if (trace_ && !trace_->Append(text)) { traceError_ = true; traceMask_ = 0; }
+}
+
+void preview_debugger::Session::OnFloppyTrace(void* context, std::wstring_view text)
+{
+    auto& session = *static_cast<Session*>(context);
+    if (!(session.traceMask_ & TraceFloppy)) return;
+    const auto utf8 = ToUtf8(text);
+    if (utf8) session.TraceWrite(*utf8);
+    else { session.traceError_ = true; session.traceMask_ = 0; }
 }
 
 void preview_debugger::Session::OnInstruction(void* context, const CProcessor* processor, std::uint16_t address, std::uint16_t opcode)

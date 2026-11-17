@@ -150,7 +150,11 @@ TEST_F(PreviewConsoleTest, TraceCommandsValidateMasksAndRequestAFile)
     EXPECT_FALSE(console.TakeTraceMask());
     EXPECT_EQ(Submit("t400"), Action::startTrace);
     EXPECT_EQ(console.TakeTraceMask(), preview_debugger::TraceInstructionsCpu);
-    EXPECT_EQ(Submit("t100"), Action::none);
+    EXPECT_EQ(Submit("t100"), Action::startTrace);
+    EXPECT_EQ(console.TakeTraceMask(), preview_debugger::TraceFloppy);
+    EXPECT_EQ(Submit("t177777"), Action::startTrace);
+    EXPECT_EQ(console.TakeTraceMask(), preview_debugger::TraceAll);
+    EXPECT_EQ(Submit("t40"), Action::none);
     EXPECT_FALSE(console.TakeTraceMask());
     EXPECT_EQ(Submit("t0"), Action::none);
     EXPECT_EQ(Submit("tc"), Action::none);

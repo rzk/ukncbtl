@@ -232,6 +232,11 @@ void CMotherboard::SetTrace(uint32_t dwTrace)
         m_pFloppyCtl->SetTrace((dwTrace & TRACE_FLOPPY) != 0);
 }
 
+void CMotherboard::SetFloppyTraceCallback(FLOPPYTRACECALLBACK callback, void* context)
+{
+    if (m_pFloppyCtl) m_pFloppyCtl->SetTraceCallback(callback, context);
+}
+
 void CMotherboard::SetInstructionCallback(INSTRUCTIONCALLBACK callback)
 {
     m_pCPU->SetInstructionCallback(callback);

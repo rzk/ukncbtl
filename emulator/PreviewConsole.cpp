@@ -114,7 +114,7 @@ preview_console::Action preview_console::Console::Submit(std::string_view comman
             "s: step  so: step over  g [address]: run/run to  pause: pause  c: clear log\n"
             "u [start end]: save memory  udl: save display list\n"
             "t [mask]: start/stop trace or set octal mask  tc: clear trace\n"
-            "Trace masks: PPU 200, CPU 400, PPU interrupt 1000, CPU interrupt 2000\n"
+            "Trace masks: floppy 100, PPU 200, CPU 400, PPU interrupt 1000, CPU interrupt 2000\n"
             "fc high low: convert two octal FIS floating-point words");
     }
     else if (op == "c" && tokens.size() == 1) log_.clear();
@@ -126,7 +126,8 @@ preview_console::Action preview_console::Console::Submit(std::string_view comman
         { debugger.StopTrace(); say("Trace stopped."); }
         else
         {
-            const auto mask = tokens.size() == 1 ? std::optional<std::uint16_t>{preview_debugger::TraceAll} : ParseWord(tokens[1]);
+            auto mask = tokens.size() == 1 ? std::optional<std::uint16_t>{preview_debugger::TraceAll} : ParseWord(tokens[1]);
+            if (mask && *mask == 0177777) *mask = preview_debugger::TraceAll;
             if (!mask || (*mask & ~preview_debugger::TraceAll)) return fail();
             if (*mask == 0) { debugger.StopTrace(); say("Trace stopped."); }
             else if (debugger.TracePath())
