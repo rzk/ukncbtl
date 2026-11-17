@@ -51,6 +51,8 @@ struct Settings
     bool toolbar = true;
     bool statusBar = true;
     std::uint16_t traceMask = 03700;
+    int keyboardLegend = 2; // Latin, Cyrillic, both, or follow the UKNC mode.
+    int keyboardScale = 100;
 };
 
 enum class ImportEncoding { unicode, windows1251, windows1252 };

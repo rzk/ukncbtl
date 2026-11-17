@@ -1,6 +1,8 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "VirtualKeyboard.h"
 #include <iterator>
+#include <string_view>
+#include <utility>
 
 namespace
 {
@@ -25,6 +27,27 @@ constexpr Key keys[]{
 }
 
 std::span<const virtual_keyboard::Key> virtual_keyboard::Keys() { return keys; }
+
+std::string virtual_keyboard::Label(const Key& key, Legend legend)
+{
+    constexpr std::pair<std::uint8_t, std::u8string_view> cyrillic[]{
+        {0047, u8"\u0424"}, {0073, u8"\u0418"}, {0111, u8"\u0421"}, {0071, u8"\u0412"},
+        {0051, u8"\u0423"}, {0072, u8"\u0410"}, {0053, u8"\u041f"}, {0074, u8"\u0420"},
+        {0036, u8"\u0428"}, {0075, u8"\u041e"}, {0056, u8"\u041b"}, {0057, u8"\u0414"},
+        {0115, u8"\u042c"}, {0114, u8"\u0422"}, {0037, u8"\u0429"}, {0157, u8"\u0417"},
+        {0027, u8"\u0419"}, {0052, u8"\u041a"}, {0070, u8"\u042b"}, {0033, u8"\u0415"},
+        {0055, u8"\u0413"}, {0112, u8"\u041c"}, {0050, u8"\u0426"}, {0110, u8"\u0427"},
+        {0054, u8"\u041d"}, {0067, u8"\u042f"}, {0156, u8"\u0425"}, {0155, u8"\u042a"},
+        {0137, u8"\u0416"}, {0136, u8"\u042d"}, {0076, u8"\u0411"}, {0077, u8"\u042e"}};
+    if (legend == Legend::latin) return key.label;
+    for (const auto& [scan, text] : cyrillic)
+        if (scan == key.scan)
+        {
+            const std::string translated(reinterpret_cast<const char*>(text.data()), text.size());
+            return legend == Legend::both ? std::string(key.label) + "\n" + translated : translated;
+        }
+    return key.label;
+}
 
 std::optional<virtual_keyboard::Event> virtual_keyboard::State::Press(const Key& key)
 {

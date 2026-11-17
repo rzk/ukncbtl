@@ -211,6 +211,7 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     input.memorySource = 5; input.memoryBytes = true; input.memoryHex = true;
     input.toolbar = false; input.statusBar = false;
     input.traceMask = 0500;
+    input.keyboardLegend = 3; input.keyboardScale = 150;
     input.cpuBreakpoints[0] = 0; input.cpuBreakpoints[1] = 0177776;
     input.ppuBreakpoints[0] = 01000;
     ASSERT_TRUE(preview_settings::Save(path, input));
@@ -243,6 +244,8 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     EXPECT_EQ(output->toolbar, input.toolbar);
     EXPECT_EQ(output->statusBar, input.statusBar);
     EXPECT_EQ(output->traceMask, input.traceMask);
+    EXPECT_EQ(output->keyboardLegend, input.keyboardLegend);
+    EXPECT_EQ(output->keyboardScale, input.keyboardScale);
     EXPECT_EQ(output->cpuBreakpoints, input.cpuBreakpoints);
     EXPECT_EQ(output->ppuBreakpoints, input.ppuBreakpoints);
     const auto file = IniFile::Open(path);
@@ -310,13 +313,15 @@ TEST_F(PreviewSettingsTest, InvalidValuesFallBackIndependently)
     EXPECT_EQ(settings->spriteAddress, 0);
     EXPECT_EQ(settings->spriteWidth, 2);
     EXPECT_EQ(settings->spriteMode, 0);
-    Write("[SDLPreview]\nWindowWidth=640\nWindowHeight=480\nScreenshotMode=7\nSound=garbage\n");
+    Write("[SDLPreview]\nWindowWidth=640\nWindowHeight=480\nScreenshotMode=7\nSound=garbage\nKeyboardLegend=4\nKeyboardScale=10000\n");
     const auto second = preview_settings::Load(path);
     ASSERT_TRUE(second);
     EXPECT_EQ(second->windowWidth, 640);
     EXPECT_EQ(second->windowHeight, 480);
     EXPECT_EQ(second->screenshotMode, 7);
     EXPECT_TRUE(second->sound);
+    EXPECT_EQ(second->keyboardLegend, 2);
+    EXPECT_EQ(second->keyboardScale, 100);
 }
 
 TEST_F(PreviewSettingsTest, InvalidInputOrCorruptFileIsNeverOverwritten)
@@ -343,6 +348,13 @@ TEST_F(PreviewSettingsTest, InvalidInputOrCorruptFileIsNeverOverwritten)
     auto badTrace = preview_settings::Settings{};
     badTrace.traceMask = 0040;
     EXPECT_FALSE(preview_settings::Save(path, badTrace));
+    auto badKeyboard = preview_settings::Settings{};
+    badKeyboard.keyboardLegend = 4;
+    EXPECT_FALSE(preview_settings::Save(path, badKeyboard));
+    badKeyboard.keyboardLegend = 2; badKeyboard.keyboardScale = 74;
+    EXPECT_FALSE(preview_settings::Save(path, badKeyboard));
+    badKeyboard.keyboardScale = 176;
+    EXPECT_FALSE(preview_settings::Save(path, badKeyboard));
     auto badBreakpoints = preview_settings::Settings{};
     badBreakpoints.cpuBreakpoints[0] = 1;
     EXPECT_FALSE(preview_settings::Save(path, badBreakpoints));

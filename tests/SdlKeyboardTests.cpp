@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "SdlKeyboard.h"
+#include "VirtualKeyboard.h"
 #include "Input.h"
 #include "emubase/Emubase.h"
 #include <gtest/gtest.h>
@@ -69,6 +70,41 @@ TEST(SdlKeyboard, TracksLayoutAtKeyDownAndIgnoresRepeatsAndCapture)
     EXPECT_FALSE(keyboard.Transition(SDL_SCANCODE_A, false, false, false, false));
     event = keyboard.Transition(SDL_SCANCODE_A, true, false, false, false);
     ASSERT_TRUE(event); EXPECT_EQ(event->scan, 0047); EXPECT_TRUE(event->pressed);
+}
+
+TEST(SdlKeyboard, RussianLegendsMatchPhysicalKeyboardMapping)
+{
+    constexpr std::array<std::u8string_view, 26> russian{
+        u8"\u0424",u8"\u0418",u8"\u0421",u8"\u0412",u8"\u0423",u8"\u0410",u8"\u041f",u8"\u0420",
+        u8"\u0428",u8"\u041e",u8"\u041b",u8"\u0414",u8"\u042c",u8"\u0422",u8"\u0429",u8"\u0417",
+        u8"\u0419",u8"\u041a",u8"\u042b",u8"\u0415",u8"\u0413",u8"\u041c",u8"\u0426",u8"\u0427",
+        u8"\u041d",u8"\u042f"};
+    for (int index = 0; index < static_cast<int>(russian.size()); ++index)
+    {
+        const auto scan = sdl_keyboard::Map(static_cast<SDL_Scancode>(SDL_SCANCODE_A + index), false);
+        const auto keys = virtual_keyboard::Keys();
+        const auto found = std::ranges::find_if(keys, [scan](const auto& key) { return key.scan == scan; });
+        ASSERT_NE(found, keys.end()) << index;
+        const auto expected = russian[index];
+        EXPECT_EQ(virtual_keyboard::Label(*found, virtual_keyboard::Legend::cyrillic),
+            std::string(reinterpret_cast<const char*>(expected.data()), expected.size())) << index;
+    }
+    constexpr std::array punctuation{
+        std::pair{SDL_SCANCODE_LEFTBRACKET, std::u8string_view{u8"\u0425"}},
+        std::pair{SDL_SCANCODE_RIGHTBRACKET, std::u8string_view{u8"\u042a"}},
+        std::pair{SDL_SCANCODE_SEMICOLON, std::u8string_view{u8"\u0416"}},
+        std::pair{SDL_SCANCODE_APOSTROPHE, std::u8string_view{u8"\u042d"}},
+        std::pair{SDL_SCANCODE_COMMA, std::u8string_view{u8"\u0411"}},
+        std::pair{SDL_SCANCODE_PERIOD, std::u8string_view{u8"\u042e"}}};
+    for (const auto& [key, expected] : punctuation)
+    {
+        const auto scan = sdl_keyboard::Map(key, false);
+        const auto keys = virtual_keyboard::Keys();
+        const auto found = std::ranges::find_if(keys, [scan](const auto& candidate) { return candidate.scan == scan; });
+        ASSERT_NE(found, keys.end());
+        EXPECT_EQ(virtual_keyboard::Label(*found, virtual_keyboard::Legend::cyrillic),
+            std::string(reinterpret_cast<const char*>(expected.data()), expected.size()));
+    }
 }
 
 TEST(SdlKeyboard, CombinesPhysicalKeysMappedToSameEmulatedKey)

@@ -324,6 +324,10 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
     if (statusBar && *statusBar <= 1) settings.statusBar = *statusBar != 0;
     const auto traceMask = Number(doc, L"TraceMask");
     if (traceMask && *traceMask && !(*traceMask & ~03700u)) settings.traceMask = static_cast<std::uint16_t>(*traceMask);
+    const auto keyboardLegend = Number(doc, L"KeyboardLegend");
+    if (keyboardLegend && *keyboardLegend <= 3) settings.keyboardLegend = static_cast<int>(*keyboardLegend);
+    const auto keyboardScale = Number(doc, L"KeyboardScale");
+    if (keyboardScale && *keyboardScale >= 75 && *keyboardScale <= 175) settings.keyboardScale = static_cast<int>(*keyboardScale);
     return settings;
 }
 
@@ -336,6 +340,7 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         settings.volume < 0 || settings.volume > 100 || settings.spriteWidth < 1 || settings.spriteWidth > 32 ||
         settings.spriteMode < 0 || settings.spriteMode > 4 || settings.memorySource < 0 || settings.memorySource > 6 ||
         !settings.traceMask || (settings.traceMask & ~03700u) ||
+        settings.keyboardLegend < 0 || settings.keyboardLegend > 3 || settings.keyboardScale < 75 || settings.keyboardScale > 175 ||
         !ValidBreakpoints(settings.cpuBreakpoints) || !ValidBreakpoints(settings.ppuBreakpoints))
         return std::unexpected(IniFileError::invalid_entry);
     auto file = Read(path);
@@ -368,7 +373,9 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         !doc.Set(section, L"MemoryHex", settings.memoryHex ? L"1" : L"0") ||
         !doc.Set(section, L"Toolbar", settings.toolbar ? L"1" : L"0") ||
         !doc.Set(section, L"StatusBar", settings.statusBar ? L"1" : L"0") ||
-        !doc.Set(section, L"TraceMask", std::to_wstring(settings.traceMask)))
+        !doc.Set(section, L"TraceMask", std::to_wstring(settings.traceMask)) ||
+        !doc.Set(section, L"KeyboardLegend", std::to_wstring(settings.keyboardLegend)) ||
+        !doc.Set(section, L"KeyboardScale", std::to_wstring(settings.keyboardScale)))
         return std::unexpected(IniFileError::invalid_entry);
     for (std::size_t index = 0; index < settings.cpuBreakpoints.size(); ++index)
         if (!doc.Set(section, BreakpointKey(L"CpuBreakpoint", index), std::to_wstring(settings.cpuBreakpoints[index])) ||

@@ -4,12 +4,16 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 
 namespace virtual_keyboard
 {
 struct Key { const char* label; std::uint8_t scan; float width; unsigned row; bool sticky = false; };
 struct Event { std::uint8_t scan; bool pressed; };
 [[nodiscard]] std::span<const Key> Keys();
+enum class Legend { latin, cyrillic, both };
+// Returns UTF-8 labels for the UKNC's physical key positions.
+[[nodiscard]] std::string Label(const Key& key, Legend legend);
 
 // Shift and Ctrl latch until pressed again. Other keys are held by the pointer.
 class State

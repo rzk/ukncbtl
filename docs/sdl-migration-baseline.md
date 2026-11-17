@@ -77,8 +77,9 @@ the machine starts; a hard disk requires the corresponding cartridge. Use
 `--help` for usage. Windows command-line arguments are received as UTF-8 via SDL.
 Physical keyboard positions use the legacy US-position mappings and follow the
 emulated LAT/RUS mode; alternate physical layouts have not yet been validated.
-The Display menu also opens an on-screen UKNC keyboard. Its labels show the
-machine's Latin key positions; Shift and Ctrl latch for multi-key combinations.
+The Display menu also opens an on-screen UKNC keyboard. It supports Latin,
+Cyrillic, bilingual or current-UKNC-mode legends and adjustable key sizes;
+these preferences are saved. Shift and Ctrl latch for multi-key combinations.
 The keyboard visibility is saved, and keys are released on focus loss, pause,
 reset or window closure. Virtual and physical keys share the same input queue.
 The Debug menu opens an initial debugger with CPU/PPU registers, disassembly,

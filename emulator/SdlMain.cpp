@@ -958,11 +958,24 @@ int Run(const preview_options::Options& options)
         }
         if (settings.keyboard)
         {
-            ImGui::SetNextWindowSize(ImVec2(950, 260), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(950, 360), ImGuiCond_FirstUseEver);
             const bool wasOpen = settings.keyboard;
             if (ImGui::Begin("UKNC Keyboard", &settings.keyboard, ImGuiWindowFlags_HorizontalScrollbar))
             {
-                ImGui::TextUnformatted("Shift and Ctrl latch; click again to release. Labels show UKNC Latin positions.");
+                const bool latin = (board.GetKeyboardRegister() & KEYB_LAT) != 0;
+                ImGui::Text("UKNC mode: %s. Shift and Ctrl latch; click again to release.", latin ? "LAT" : "RUS");
+                constexpr std::array legends{"Latin", "Cyrillic", "Both", "Follow UKNC"};
+                ImGui::SetNextItemWidth(150);
+                if (ImGui::Combo("Legend", &settings.keyboardLegend, legends.data(), static_cast<int>(legends.size()))) settingsDirty = true;
+                ImGui::SameLine(); ImGui::SetNextItemWidth(150);
+                if (ImGui::SliderInt("Key size", &settings.keyboardScale, 75, 175, "%d%%")) settingsDirty = true;
+                const auto legend = settings.keyboardLegend == 3 ?
+                    (latin ? virtual_keyboard::Legend::latin : virtual_keyboard::Legend::cyrillic) :
+                    static_cast<virtual_keyboard::Legend>(settings.keyboardLegend);
+                const float keyScale = static_cast<float>(settings.keyboardScale) / 100.0f;
+                const float textHeight = ImGui::GetTextLineHeight() * (legend == virtual_keyboard::Legend::both ? 2.0f : 1.0f) +
+                    2.0f * ImGui::GetStyle().FramePadding.y;
+                const float keyHeight = std::max(30.0f * keyScale, textHeight);
                 ImGui::BeginDisabled(!running || focusLost || !(SDL_GetWindowFlags(window.get()) & SDL_WINDOW_INPUT_FOCUS));
                 unsigned previousRow = 0;
                 int index = 0;
@@ -973,7 +986,8 @@ int Run(const preview_options::Options& options)
                     ImGui::PushID(index++);
                     const bool down = virtualKeys.Down(key.scan);
                     if (down) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-                    ImGui::Button(key.label, ImVec2(38.0f * key.width, 30.0f));
+                    const auto label = virtual_keyboard::Label(key, legend);
+                    ImGui::Button(label.c_str(), ImVec2(38.0f * key.width * keyScale, keyHeight));
                     if (ImGui::IsItemActivated())
                         if (const auto event = virtualKeys.Press(key))
                             queueKey(sdl_keyboard::Source::virtualKey, {event->scan, event->pressed});

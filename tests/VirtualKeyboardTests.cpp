@@ -31,6 +31,21 @@ TEST(VirtualKeyboard, PointerKeysAreHeldUntilRelease)
     EXPECT_FALSE(state.Down(a.scan)); EXPECT_FALSE(state.ReleasePointer());
 }
 
+TEST(VirtualKeyboard, LegendsUsePhysicalUkNcPositionsAndPreserveSpecialKeys)
+{
+    using virtual_keyboard::Legend;
+    const virtual_keyboard::Key letter{"J", 0027, 1, 0};
+    const auto utf8 = [](std::u8string_view text) {
+        return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+    };
+    EXPECT_EQ(virtual_keyboard::Label(letter, Legend::latin), "J");
+    EXPECT_EQ(virtual_keyboard::Label(letter, Legend::cyrillic), utf8(u8"\u0419"));
+    EXPECT_EQ(virtual_keyboard::Label(letter, Legend::both), "J\n" + utf8(u8"\u0419"));
+    const virtual_keyboard::Key special{"Ctrl", 0046, 1, 0, true};
+    EXPECT_EQ(virtual_keyboard::Label(special, Legend::both), "Ctrl");
+    EXPECT_EQ(virtual_keyboard::Label(special, Legend::cyrillic), "Ctrl");
+}
+
 TEST(VirtualKeyboard, ModifiersLatchWhileOtherKeysArePressedAndResetTogether)
 {
     virtual_keyboard::State state;
