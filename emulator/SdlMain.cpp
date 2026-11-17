@@ -30,6 +30,7 @@
 #include "VideoDecoder.h"
 #include "VideoPalette.h"
 #include "UiFont.h"
+#include "UiAppearance.h"
 #include "VirtualKeyboard.h"
 #include "emubase/Board.h"
 #include "emubase/Processor.h"
@@ -134,7 +135,18 @@ int Run(const preview_options::Options& options)
     if (!ImGui::CreateContext()) return 1;
     if (!ui_font::Install()) { SDL_Log("Could not load the UI font."); return 1; }
     ImGui::GetIO().IniFilename = nullptr;
-    ImGui::StyleColorsDark();
+    if (!ui_appearance::Apply(settings.uiTheme, settings.uiScale)) return 1;
+    int appliedTheme = settings.uiTheme, appliedScale = settings.uiScale;
+    if (!settings.uiLayout.empty()) ImGui::LoadIniSettingsFromMemory(settings.uiLayout.data(), settings.uiLayout.size());
+    bool resetUiLayout = false;
+    const auto captureUiLayout = [&](preview_settings::Settings& destination) {
+        if (resetUiLayout) { destination.uiLayout.clear(); return true; }
+        std::size_t size = 0;
+        const char* data = ImGui::SaveIniSettingsToMemory(&size);
+        if (!data || size > preview_settings::MaxUiLayoutBytes) return false;
+        destination.uiLayout.assign(data, size);
+        return true;
+    };
     gui.platform = ImGui_ImplSDL3_InitForSDLRenderer(window.get(), renderer.get());
     if (!gui.platform) { SDL_Log("ImGui SDL initialization failed"); return 1; }
     gui.renderer = ImGui_ImplSDLRenderer3_Init(renderer.get());
@@ -347,6 +359,7 @@ int Run(const preview_options::Options& options)
                     std::error_code error;
                     const bool same = settingsPath && std::filesystem::equivalent(source, *settingsPath, error);
                     auto current = settings;
+                    const bool layoutCaptured = captureUiLayout(current);
                     current.cpuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::cpu).PermanentAddresses();
                     current.ppuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::ppu).PermanentAddresses();
                     current.debuggerVisible = showDebugger;
@@ -359,7 +372,7 @@ int Run(const preview_options::Options& options)
                     { current.windowWidth = width; current.windowHeight = height; }
                     const auto imported = preview_settings::ImportLegacy(source,
                         static_cast<preview_settings::ImportEncoding>(result->slot % 3), current, result->slot >= 3);
-                    if (!settingsPath || same || conflicts(source) || !imported || !preview_settings::Save(*settingsPath, *imported))
+                    if (!layoutCaptured || !settingsPath || same || conflicts(source) || !imported || !preview_settings::Save(*settingsPath, *imported))
                     { actionError = "Could not import settings. Check the source, encoding and settings file."; showActionError = true; }
                     else
                     {
@@ -504,6 +517,11 @@ int Run(const preview_options::Options& options)
                     if (settings.restoreMedia) settingsDirty = true;
                 }
             }
+        }
+        if (appliedTheme != settings.uiTheme || appliedScale != settings.uiScale)
+        {
+            if (ui_appearance::Apply(settings.uiTheme, settings.uiScale))
+            { appliedTheme = settings.uiTheme; appliedScale = settings.uiScale; }
         }
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -729,6 +747,17 @@ int Run(const preview_options::Options& options)
             }
             if (ImGui::BeginMenu("Display"))
             {
+                if (ImGui::BeginMenu("Appearance"))
+                {
+                    constexpr std::array themes{"Dark", "Light", "Classic"};
+                    for (int index = 0; index < static_cast<int>(themes.size()); ++index)
+                        if (ImGui::MenuItem(themes[index], nullptr, settings.uiTheme == index))
+                        { settings.uiTheme = index; settingsDirty = true; }
+                    ImGui::SetNextItemWidth(160);
+                    if (ImGui::SliderInt("UI size", &settings.uiScale, 75, 200, "%d%%")) settingsDirty = true;
+                    if (ImGui::MenuItem("Reset tool layout on next launch", nullptr, &resetUiLayout)) settingsDirty = true;
+                    ImGui::EndMenu();
+                }
                 if (ImGui::MenuItem("Toolbar", nullptr, &settings.toolbar)) settingsDirty = true;
                 if (ImGui::MenuItem("Status bar", nullptr, &settings.statusBar)) settingsDirty = true;
                 if (ImGui::MenuItem("On-screen keyboard", nullptr, &settings.keyboard))
@@ -972,7 +1001,7 @@ int Run(const preview_options::Options& options)
                 const auto legend = settings.keyboardLegend == 3 ?
                     (latin ? virtual_keyboard::Legend::latin : virtual_keyboard::Legend::cyrillic) :
                     static_cast<virtual_keyboard::Legend>(settings.keyboardLegend);
-                const float keyScale = static_cast<float>(settings.keyboardScale) / 100.0f;
+                const float keyScale = static_cast<float>(settings.keyboardScale * settings.uiScale) / 10000.0f;
                 const float textHeight = ImGui::GetTextLineHeight() * (legend == virtual_keyboard::Legend::both ? 2.0f : 1.0f) +
                     2.0f * ImGui::GetStyle().FramePadding.y;
                 const float keyHeight = std::max(30.0f * keyScale, textHeight);
@@ -1545,6 +1574,13 @@ int Run(const preview_options::Options& options)
     }
     if (settingsPath && !importedSettings)
     {
+        auto currentLayout = settings;
+        if (captureUiLayout(currentLayout))
+        {
+            if (settings.uiLayout != currentLayout.uiLayout)
+            { settings.uiLayout = std::move(currentLayout.uiLayout); settingsDirty = true; }
+        }
+        else SDL_Log("Could not save the tool window layout; existing layout retained.");
         const auto cpuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::cpu).PermanentAddresses();
         const auto ppuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::ppu).PermanentAddresses();
         const bool debuggerPpu = debugProcessor == preview_debugger::Processor::ppu;

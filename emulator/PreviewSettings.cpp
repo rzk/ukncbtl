@@ -13,6 +13,41 @@ namespace
 {
 constexpr std::wstring_view section = L"SDLPreview";
 
+std::optional<std::wstring> EncodeLayout(std::string_view layout)
+{
+    if (layout.size() > preview_settings::MaxUiLayoutBytes || layout.find('\0') != layout.npos) return std::nullopt;
+    const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(layout.data()), layout.size());
+    if (!ini_encoding::Decode(bytes)) return std::nullopt;
+    constexpr wchar_t digits[] = L"0123456789abcdef";
+    std::wstring result;
+    result.reserve(layout.size() * 2);
+    for (const auto ch : layout)
+    { const auto byte = static_cast<unsigned char>(ch); result.push_back(digits[byte >> 4]); result.push_back(digits[byte & 15]); }
+    return result;
+}
+
+std::optional<std::string> DecodeLayout(std::wstring_view text)
+{
+    if ((text.size() & 1) || text.size() > preview_settings::MaxUiLayoutBytes * 2) return std::nullopt;
+    const auto digit = [](wchar_t ch) -> int {
+        if (ch >= L'0' && ch <= L'9') return ch - L'0';
+        if (ch >= L'a' && ch <= L'f') return ch - L'a' + 10;
+        if (ch >= L'A' && ch <= L'F') return ch - L'A' + 10;
+        return -1;
+    };
+    std::string result;
+    result.reserve(text.size() / 2);
+    for (std::size_t index = 0; index < text.size(); index += 2)
+    {
+        const int high = digit(text[index]), low = digit(text[index + 1]);
+        if (high < 0 || low < 0 || (high == 0 && low == 0)) return std::nullopt;
+        result.push_back(static_cast<char>(high * 16 + low));
+    }
+    const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(result.data()), result.size());
+    if (!ini_encoding::Decode(bytes)) return std::nullopt;
+    return result;
+}
+
 // Hexadecimal UTF-8 keeps INI delimiters, whitespace and newlines in paths
 // unambiguous and independent of the host's native path encoding.
 std::optional<std::wstring> EncodePath(const std::filesystem::path& path)
@@ -328,6 +363,11 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
     if (keyboardLegend && *keyboardLegend <= 3) settings.keyboardLegend = static_cast<int>(*keyboardLegend);
     const auto keyboardScale = Number(doc, L"KeyboardScale");
     if (keyboardScale && *keyboardScale >= 75 && *keyboardScale <= 175) settings.keyboardScale = static_cast<int>(*keyboardScale);
+    const auto uiTheme = Number(doc, L"UiTheme");
+    if (uiTheme && *uiTheme <= 2) settings.uiTheme = static_cast<int>(*uiTheme);
+    const auto uiScale = Number(doc, L"UiScale");
+    if (uiScale && *uiScale >= 75 && *uiScale <= 200) settings.uiScale = static_cast<int>(*uiScale);
+    if (const auto layout = doc.Get(section, L"UiLayout")) settings.uiLayout = DecodeLayout(*layout).value_or(std::string{});
     return settings;
 }
 
@@ -341,8 +381,11 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         settings.spriteMode < 0 || settings.spriteMode > 4 || settings.memorySource < 0 || settings.memorySource > 6 ||
         !settings.traceMask || (settings.traceMask & ~03700u) ||
         settings.keyboardLegend < 0 || settings.keyboardLegend > 3 || settings.keyboardScale < 75 || settings.keyboardScale > 175 ||
+        settings.uiTheme < 0 || settings.uiTheme > 2 || settings.uiScale < 75 || settings.uiScale > 200 ||
         !ValidBreakpoints(settings.cpuBreakpoints) || !ValidBreakpoints(settings.ppuBreakpoints))
         return std::unexpected(IniFileError::invalid_entry);
+    const auto uiLayout = EncodeLayout(settings.uiLayout);
+    if (!uiLayout) return std::unexpected(IniFileError::invalid_entry);
     auto file = Read(path);
     if (!file) return std::unexpected(file.error());
     if (!*file) file->emplace();
@@ -375,7 +418,10 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         !doc.Set(section, L"StatusBar", settings.statusBar ? L"1" : L"0") ||
         !doc.Set(section, L"TraceMask", std::to_wstring(settings.traceMask)) ||
         !doc.Set(section, L"KeyboardLegend", std::to_wstring(settings.keyboardLegend)) ||
-        !doc.Set(section, L"KeyboardScale", std::to_wstring(settings.keyboardScale)))
+        !doc.Set(section, L"KeyboardScale", std::to_wstring(settings.keyboardScale)) ||
+        !doc.Set(section, L"UiTheme", std::to_wstring(settings.uiTheme)) ||
+        !doc.Set(section, L"UiScale", std::to_wstring(settings.uiScale)) ||
+        !doc.Set(section, L"UiLayout", *uiLayout))
         return std::unexpected(IniFileError::invalid_entry);
     for (std::size_t index = 0; index < settings.cpuBreakpoints.size(); ++index)
         if (!doc.Set(section, BreakpointKey(L"CpuBreakpoint", index), std::to_wstring(settings.cpuBreakpoints[index])) ||

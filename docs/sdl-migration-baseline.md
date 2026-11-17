@@ -139,6 +139,10 @@ Command-line media overrides apply only to the current launch. Disabling the
 option clears the saved paths. The
 Display menu offers the legacy RGB, GRB and grayscale palettes and
 screen scaling modes; the preview fits each mode into a 4:3 viewport.
+Display > Appearance provides dark, light and classic UI themes, a separate UI
+size setting, and an option to reset tool-window placement on the next launch.
+Tool-window positions and sizes are saved with the SDL preferences; ImGui keeps
+windows reachable when the application window is resized.
 Fullscreen can be toggled in the Display menu or with F10. Screen text can be
 copied as UTF-8 using the UKNC character mapping from the Screenshot menu.
 The optional toolbar provides run, reset, debugger and fullscreen controls; the

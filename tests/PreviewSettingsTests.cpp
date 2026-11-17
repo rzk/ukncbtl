@@ -212,6 +212,8 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     input.toolbar = false; input.statusBar = false;
     input.traceMask = 0500;
     input.keyboardLegend = 3; input.keyboardScale = 150;
+    input.uiTheme = 1; input.uiScale = 150;
+    input.uiLayout = "[Window][Debugger]\nPos=20,40\nSize=500,300\n";
     input.cpuBreakpoints[0] = 0; input.cpuBreakpoints[1] = 0177776;
     input.ppuBreakpoints[0] = 01000;
     ASSERT_TRUE(preview_settings::Save(path, input));
@@ -246,6 +248,9 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     EXPECT_EQ(output->traceMask, input.traceMask);
     EXPECT_EQ(output->keyboardLegend, input.keyboardLegend);
     EXPECT_EQ(output->keyboardScale, input.keyboardScale);
+    EXPECT_EQ(output->uiTheme, input.uiTheme);
+    EXPECT_EQ(output->uiScale, input.uiScale);
+    EXPECT_EQ(output->uiLayout, input.uiLayout);
     EXPECT_EQ(output->cpuBreakpoints, input.cpuBreakpoints);
     EXPECT_EQ(output->ppuBreakpoints, input.ppuBreakpoints);
     const auto file = IniFile::Open(path);
@@ -355,6 +360,15 @@ TEST_F(PreviewSettingsTest, InvalidInputOrCorruptFileIsNeverOverwritten)
     EXPECT_FALSE(preview_settings::Save(path, badKeyboard));
     badKeyboard.keyboardScale = 176;
     EXPECT_FALSE(preview_settings::Save(path, badKeyboard));
+    auto badUi = preview_settings::Settings{};
+    badUi.uiTheme = 3;
+    EXPECT_FALSE(preview_settings::Save(path, badUi));
+    badUi.uiTheme = 0; badUi.uiScale = 201;
+    EXPECT_FALSE(preview_settings::Save(path, badUi));
+    badUi.uiScale = 100; badUi.uiLayout = std::string(preview_settings::MaxUiLayoutBytes + 1, 'a');
+    EXPECT_FALSE(preview_settings::Save(path, badUi));
+    badUi.uiLayout = std::string("a\0b", 3);
+    EXPECT_FALSE(preview_settings::Save(path, badUi));
     auto badBreakpoints = preview_settings::Settings{};
     badBreakpoints.cpuBreakpoints[0] = 1;
     EXPECT_FALSE(preview_settings::Save(path, badBreakpoints));
@@ -367,5 +381,16 @@ TEST_F(PreviewSettingsTest, InvalidInputOrCorruptFileIsNeverOverwritten)
     EXPECT_FALSE(preview_settings::Save(path, {}));
     EXPECT_EQ(Read(), bad);
     EXPECT_FALSE(preview_settings::Save(directory / "missing" / "settings.ini", {}));
+}
+
+TEST_F(PreviewSettingsTest, InvalidLayoutAndAppearanceFallBackIndependently)
+{
+    Write("[SDLPreview]\nUiTheme=3\nUiScale=74\nUiLayout=0041\nSound=0\n");
+    const auto settings = preview_settings::Load(path);
+    ASSERT_TRUE(settings);
+    EXPECT_EQ(settings->uiTheme, 0);
+    EXPECT_EQ(settings->uiScale, 100);
+    EXPECT_TRUE(settings->uiLayout.empty());
+    EXPECT_FALSE(settings->sound);
 }
 }

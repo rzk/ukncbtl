@@ -7,6 +7,7 @@
 #include <expected>
 #include <filesystem>
 #include <cstdint>
+#include <string>
 
 namespace preview_settings
 {
@@ -53,7 +54,12 @@ struct Settings
     std::uint16_t traceMask = 03700;
     int keyboardLegend = 2; // Latin, Cyrillic, both, or follow the UKNC mode.
     int keyboardScale = 100;
+    int uiTheme = 0;
+    int uiScale = 100;
+    std::string uiLayout;
 };
+
+inline constexpr std::size_t MaxUiLayoutBytes = 64 * 1024;
 
 enum class ImportEncoding { unicode, windows1251, windows1252 };
 // Imports recognized values into the supplied settings without changing the source.

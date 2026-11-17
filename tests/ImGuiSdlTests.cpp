@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "SdlScreenRenderer.h"
 #include "UiFont.h"
+#include "UiAppearance.h"
 #include <SDL3/SDL.h>
 #include <gtest/gtest.h>
 #include <imgui.h>
@@ -87,5 +88,52 @@ TEST_F(ImGuiSdlTest, BundledFontProvidesCyrillicGlyphs)
     EXPECT_TRUE(ImGui::GetFont()->IsGlyphInFont(0x044f));
     ImGui::TextUnformatted("\xd0\x9f\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82");
     ImGui::Render();
+}
+
+TEST_F(ImGuiSdlTest, AppearanceScalingIsRepeatableAndRejectsInvalidSettings)
+{
+    ASSERT_TRUE(ui_appearance::Apply(0, 100));
+    const auto base = ImGui::GetStyle().WindowPadding;
+    ASSERT_TRUE(ui_appearance::Apply(1, 150));
+    EXPECT_FLOAT_EQ(ImGui::GetStyle().FontScaleMain, 1.5f);
+    EXPECT_GT(ImGui::GetStyle().WindowPadding.x, base.x);
+    ASSERT_TRUE(ui_appearance::Apply(1, 150));
+    const auto scaled = ImGui::GetStyle().WindowPadding;
+    EXPECT_FALSE(ui_appearance::Apply(9, 150));
+    EXPECT_FALSE(ui_appearance::Apply(1, 201));
+    EXPECT_EQ(ImGui::GetStyle().WindowPadding.x, scaled.x);
+    ASSERT_TRUE(ui_appearance::Apply(0, 100));
+    EXPECT_EQ(ImGui::GetStyle().WindowPadding.x, base.x);
+    EXPECT_FLOAT_EQ(ImGui::GetStyle().FontScaleMain, 1.0f);
+}
+
+TEST_F(ImGuiSdlTest, ToolWindowPlacementCanBeSerialized)
+{
+    ImGui_ImplSDLRenderer3_NewFrame(); ImGui_ImplSDL3_NewFrame(); ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(8, 9), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(50, 45), ImGuiCond_Always);
+    ImGui::Begin("Debugger"); ImGui::TextUnformatted("test"); ImGui::End();
+    ImGui::Render();
+    std::size_t size = 0;
+    const char* data = ImGui::SaveIniSettingsToMemory(&size);
+    ASSERT_NE(data, nullptr);
+    const std::string text(data, size);
+    EXPECT_NE(text.find("[Window][Debugger]"), std::string::npos);
+    EXPECT_NE(text.find("Pos=8,9"), std::string::npos);
+}
+
+TEST_F(ImGuiSdlTest, ToolWindowPlacementRestoresBeforeFirstFrame)
+{
+    constexpr char saved[] = "[Window][Restored tool]\nPos=8,9\nSize=50,45\nCollapsed=0\n\n";
+    ImGui::LoadIniSettingsFromMemory(saved, sizeof(saved) - 1);
+    ImGui_ImplSDLRenderer3_NewFrame(); ImGui_ImplSDL3_NewFrame(); ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(32, 32), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Restored tool");
+    EXPECT_FLOAT_EQ(ImGui::GetWindowPos().x, 8);
+    EXPECT_FLOAT_EQ(ImGui::GetWindowPos().y, 9);
+    EXPECT_FLOAT_EQ(ImGui::GetWindowSize().x, 50);
+    EXPECT_FLOAT_EQ(ImGui::GetWindowSize().y, 45);
+    ImGui::End(); ImGui::Render();
 }
 }
