@@ -51,6 +51,44 @@ std::uint16_t preview_debugger::Session::ReadWord(Processor which, std::uint16_t
 }
 std::uint16_t preview_debugger::Session::ReadPort(Processor which, std::uint16_t address) const
 { return GetProcessor(which).GetMemoryControllerConst()->GetPortView(address); }
+
+std::optional<std::uint16_t> preview_debugger::Session::InspectMemory(
+    MemorySource source, Processor selected, std::uint16_t address, bool byteMode) const
+{
+    const auto aligned = static_cast<std::uint16_t>(address & 0xfffe);
+    if (!byteMode && address != aligned) return std::nullopt;
+    std::uint16_t word = 0;
+    if (source == MemorySource::ram0 || source == MemorySource::ram1 || source == MemorySource::ram2)
+        word = board_.GetRAMWord(static_cast<int>(source) - static_cast<int>(MemorySource::ram0), aligned);
+    else if (source == MemorySource::rom)
+    {
+        if (aligned < 0100000) return std::nullopt;
+        word = board_.GetROMWord(static_cast<std::uint16_t>(aligned - 0100000));
+    }
+    else if (source == MemorySource::selected || source == MemorySource::cpu || source == MemorySource::ppu)
+    {
+        const auto which = source == MemorySource::selected ? selected :
+            source == MemorySource::cpu ? Processor::cpu : Processor::ppu;
+        const auto& processor = GetProcessor(which);
+        const auto view = processor.GetMemoryControllerConst()->GetWordView(aligned, processor.IsHaltMode(), false);
+        if (view.addressType >= ADDRTYPE_IO) return std::nullopt;
+        word = view.value;
+    }
+    else return std::nullopt;
+    return byteMode ? static_cast<std::uint16_t>((word >> ((address & 1) * 8)) & 0xff) : word;
+}
+
+DisasmHint preview_debugger::Session::CurrentHint(Processor which) const
+{
+    const auto& processor = GetProcessor(which);
+    const auto* memory = processor.GetMemoryControllerConst();
+    const auto pc = processor.GetPC();
+    const std::array<std::uint16_t, 3> words{
+        ReadWord(which, pc, true), ReadWord(which, static_cast<std::uint16_t>(pc + 2), true),
+        ReadWord(which, static_cast<std::uint16_t>(pc + 4), true)};
+    return Disasm_GetHint(words, processor, *memory);
+}
+
 bool preview_debugger::Session::WriteRegister(Processor which, int index, std::uint16_t value)
 {
     auto& processor = GetProcessor(which);

@@ -44,6 +44,7 @@
 #include <cstdio>
 #include <cwchar>
 #include <filesystem>
+#include <format>
 #include <memory>
 #include <optional>
 #include <string>
@@ -991,6 +992,12 @@ int Run(const preview_options::Options& options)
                     if (ImGui::SmallButton("Unload subtitles")) debugger.UnloadSubtitles();
                 }
                 if (!disasmError.empty()) ImGui::TextWrapped("%s", disasmError.c_str());
+                const auto hint = debugger.CurrentHint(debugProcessor);
+                for (int index = 0; index < hint.count; ++index)
+                {
+                    const auto text = preview_debugger::ToUtf8(hint.lines[index]).value_or("?");
+                    ImGui::TextWrapped("%s", text.c_str());
+                }
                 const auto baseAddress = followPc ? processor.GetPC() : disasmBase;
                 for (const auto& line : debugger.Disassemble(debugProcessor, baseAddress, 12, true))
                 {
@@ -1022,39 +1029,58 @@ int Run(const preview_options::Options& options)
                     }
                 }
                 if (smokeTest) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-                if (ImGui::CollapsingHeader("Memory (octal)"))
+                if (ImGui::CollapsingHeader("Memory"))
                 {
+                    constexpr std::array memorySources{"Selected processor", "CPU", "PPU", "RAM 0", "RAM 1", "RAM 2", "ROM"};
+                    ImGui::SetNextItemWidth(180);
+                    if (ImGui::Combo("Source", &settings.memorySource, memorySources.data(), static_cast<int>(memorySources.size()))) settingsDirty = true;
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("Bytes", &settings.memoryBytes)) settingsDirty = true;
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("Hex values", &settings.memoryHex)) settingsDirty = true;
                     ImGui::SetNextItemWidth(110);
-                    ImGui::InputText("Address", memoryAddress.data(), memoryAddress.size(), ImGuiInputTextFlags_CharsDecimal);
+                    ImGui::InputText("Address (octal)", memoryAddress.data(), memoryAddress.size(), ImGuiInputTextFlags_CharsDecimal);
                     if (ImGui::Button("Use PC"))
                         std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(processor.GetPC()));
                     ImGui::SameLine();
                     if (ImGui::Button("Use SP"))
                         std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(processor.GetSP()));
-                    const auto base = preview_debugger::ParseAddress(memoryAddress.data());
-                    if (!base) ImGui::TextDisabled("Enter an even octal address.");
+                    const auto base = settings.memoryBytes ? preview_debugger::ParseWord(memoryAddress.data()) :
+                        preview_debugger::ParseAddress(memoryAddress.data());
+                    if (!base) ImGui::TextDisabled(settings.memoryBytes ? "Enter an octal address." : "Enter an even octal address.");
                     else for (unsigned row = 0; row < 8; ++row)
                     {
                         const auto address = static_cast<std::uint16_t>(*base + row * 8);
-                        ImGui::Text("%06o  %06o %06o %06o %06o", static_cast<unsigned>(address),
-                            static_cast<unsigned>(debugger.ReadWord(debugProcessor, address, false)),
-                            static_cast<unsigned>(debugger.ReadWord(debugProcessor, static_cast<std::uint16_t>(address + 2), false)),
-                            static_cast<unsigned>(debugger.ReadWord(debugProcessor, static_cast<std::uint16_t>(address + 4), false)),
-                            static_cast<unsigned>(debugger.ReadWord(debugProcessor, static_cast<std::uint16_t>(address + 6), false)));
+                        auto text = std::format("{:06o}  ", address);
+                        const unsigned stride = settings.memoryBytes ? 1 : 2;
+                        for (unsigned offset = 0; offset < 8; offset += stride)
+                        {
+                            const auto cell = debugger.InspectMemory(static_cast<preview_debugger::MemorySource>(settings.memorySource),
+                                debugProcessor, static_cast<std::uint16_t>(address + offset), settings.memoryBytes);
+                            if (!cell) text += settings.memoryBytes ? (settings.memoryHex ? "-- " : "--- ") :
+                                (settings.memoryHex ? "---- " : "------ ");
+                            else if (settings.memoryHex) text += settings.memoryBytes ? std::format("{:02X} ", *cell) : std::format("{:04X} ", *cell);
+                            else text += settings.memoryBytes ? std::format("{:03o} ", *cell) : std::format("{:06o} ", *cell);
+                        }
+                        ImGui::TextUnformatted(text.c_str());
                     }
-                    ImGui::BeginDisabled(running);
+                    const bool processorMemory = settings.memorySource <= static_cast<int>(preview_debugger::MemorySource::ppu);
+                    const auto memoryProcessor = settings.memorySource == static_cast<int>(preview_debugger::MemorySource::cpu) ?
+                        preview_debugger::Processor::cpu : settings.memorySource == static_cast<int>(preview_debugger::MemorySource::ppu) ?
+                        preview_debugger::Processor::ppu : debugProcessor;
+                    ImGui::BeginDisabled(running || !processorMemory || settings.memoryBytes);
                     ImGui::SetNextItemWidth(110);
                     ImGui::InputText("##memory-value", memoryValue.data(), memoryValue.size(), ImGuiInputTextFlags_CharsDecimal);
                     ImGui::SameLine();
                     if (ImGui::Button("Write RAM at address"))
                     {
                         const auto value = preview_debugger::ParseWord(memoryValue.data());
-                        if (!base || !value || !debugger.WriteMemory(debugProcessor, *base, *value))
+                        if (!base || !value || !debugger.WriteMemory(memoryProcessor, *base, *value))
                             memoryError = "Enter an even writable RAM address and an octal word.";
                         else memoryError.clear();
                     }
                     ImGui::EndDisabled();
-                    ImGui::TextDisabled("Dump range is start inclusive, end exclusive; endpoints cover whole words.");
+                    ImGui::TextDisabled("Dump uses the selected debugger processor; range covers whole words.");
                     ImGui::SetNextItemWidth(100);
                     ImGui::InputText("Start", dumpStart.data(), dumpStart.size(), ImGuiInputTextFlags_CharsDecimal);
                     ImGui::SameLine(); ImGui::SetNextItemWidth(100);

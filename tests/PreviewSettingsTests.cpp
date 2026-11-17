@@ -145,6 +145,7 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
         true, 012345, 8, 3};
     input.debuggerVisible = true; input.consoleVisible = true; input.debuggerPpu = true;
     input.networkStation = 01234;
+    input.memorySource = 5; input.memoryBytes = true; input.memoryHex = true;
     input.cpuBreakpoints[0] = 0; input.cpuBreakpoints[1] = 0177776;
     input.ppuBreakpoints[0] = 01000;
     ASSERT_TRUE(preview_settings::Save(path, input));
@@ -171,6 +172,9 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     EXPECT_EQ(output->consoleVisible, input.consoleVisible);
     EXPECT_EQ(output->debuggerPpu, input.debuggerPpu);
     EXPECT_EQ(output->networkStation, input.networkStation);
+    EXPECT_EQ(output->memorySource, input.memorySource);
+    EXPECT_EQ(output->memoryBytes, input.memoryBytes);
+    EXPECT_EQ(output->memoryHex, input.memoryHex);
     EXPECT_EQ(output->cpuBreakpoints, input.cpuBreakpoints);
     EXPECT_EQ(output->ppuBreakpoints, input.ppuBreakpoints);
     const auto file = IniFile::Open(path);
@@ -265,6 +269,9 @@ TEST_F(PreviewSettingsTest, InvalidInputOrCorruptFileIsNeverOverwritten)
     EXPECT_FALSE(preview_settings::Save(path, badSprite));
     badSprite.spriteWidth = 2; badSprite.spriteMode = 5;
     EXPECT_FALSE(preview_settings::Save(path, badSprite));
+    auto badMemory = preview_settings::Settings{};
+    badMemory.memorySource = 7;
+    EXPECT_FALSE(preview_settings::Save(path, badMemory));
     auto badBreakpoints = preview_settings::Settings{};
     badBreakpoints.cpuBreakpoints[0] = 1;
     EXPECT_FALSE(preview_settings::Save(path, badBreakpoints));

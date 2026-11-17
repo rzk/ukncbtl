@@ -239,6 +239,12 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
         settings.cartridges[index] = ReadPath(doc, L"CartridgePath" + std::to_wstring(index));
         settings.hardDisks[index] = ReadPath(doc, L"HardDiskPath" + std::to_wstring(index));
     }
+    const auto memorySource = Number(doc, L"MemorySource");
+    if (memorySource && *memorySource <= 6) settings.memorySource = static_cast<int>(*memorySource);
+    const auto memoryBytes = Number(doc, L"MemoryBytes");
+    if (memoryBytes && *memoryBytes <= 1) settings.memoryBytes = *memoryBytes != 0;
+    const auto memoryHex = Number(doc, L"MemoryHex");
+    if (memoryHex && *memoryHex <= 1) settings.memoryHex = *memoryHex != 0;
     return settings;
 }
 
@@ -249,7 +255,7 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         static_cast<std::size_t>(settings.displayMode) >= screen_scale::Modes().size() ||
         settings.paletteMode < 0 || settings.paletteMode > 2 || !frame_pacing::IsSupportedSpeed(settings.speed) ||
         settings.volume < 0 || settings.volume > 100 || settings.spriteWidth < 1 || settings.spriteWidth > 32 ||
-        settings.spriteMode < 0 || settings.spriteMode > 4 ||
+        settings.spriteMode < 0 || settings.spriteMode > 4 || settings.memorySource < 0 || settings.memorySource > 6 ||
         !ValidBreakpoints(settings.cpuBreakpoints) || !ValidBreakpoints(settings.ppuBreakpoints))
         return std::unexpected(IniFileError::invalid_entry);
     auto file = Read(path);
@@ -276,7 +282,10 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
         !doc.Set(section, L"DebuggerVisible", settings.debuggerVisible ? L"1" : L"0") ||
         !doc.Set(section, L"ConsoleVisible", settings.consoleVisible ? L"1" : L"0") ||
         !doc.Set(section, L"DebuggerPpu", settings.debuggerPpu ? L"1" : L"0") ||
-        !doc.Set(section, L"NetworkStation", std::to_wstring(settings.networkStation)))
+        !doc.Set(section, L"NetworkStation", std::to_wstring(settings.networkStation)) ||
+        !doc.Set(section, L"MemorySource", std::to_wstring(settings.memorySource)) ||
+        !doc.Set(section, L"MemoryBytes", settings.memoryBytes ? L"1" : L"0") ||
+        !doc.Set(section, L"MemoryHex", settings.memoryHex ? L"1" : L"0"))
         return std::unexpected(IniFileError::invalid_entry);
     for (std::size_t index = 0; index < settings.cpuBreakpoints.size(); ++index)
         if (!doc.Set(section, BreakpointKey(L"CpuBreakpoint", index), std::to_wstring(settings.cpuBreakpoints[index])) ||

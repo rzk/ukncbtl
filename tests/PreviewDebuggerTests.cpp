@@ -82,6 +82,45 @@ TEST_F(PreviewDebuggerTest, EditsRegistersAndOnlyWritableAlignedRam)
     EXPECT_EQ(debugger.ReadPort(Processor::ppu, 0177700), before);
 }
 
+TEST_F(PreviewDebuggerTest, InspectsRawPlanesRomAndProcessorMemoryWithoutDeviceReads)
+{
+    preview_debugger::Session debugger(*board);
+    using preview_debugger::MemorySource;
+    using preview_debugger::Processor;
+    board->SetRAMWord(0, 01000, 0x1234);
+    board->SetRAMWord(1, 01000, 0x5678);
+    board->SetRAMWord(2, 01000, 0x9abc);
+    EXPECT_EQ(debugger.InspectMemory(MemorySource::ram0, Processor::cpu, 01000, false), 0x1234);
+    EXPECT_EQ(debugger.InspectMemory(MemorySource::ram1, Processor::cpu, 01000, false), 0x5678);
+    EXPECT_EQ(debugger.InspectMemory(MemorySource::ram2, Processor::cpu, 01000, false), 0x9abc);
+    EXPECT_EQ(debugger.InspectMemory(MemorySource::ram0, Processor::cpu, 01000, true), 0x34);
+    EXPECT_EQ(debugger.InspectMemory(MemorySource::ram0, Processor::cpu, 01001, true), 0x12);
+    EXPECT_FALSE(debugger.InspectMemory(MemorySource::ram0, Processor::cpu, 01001, false));
+    EXPECT_FALSE(debugger.InspectMemory(MemorySource::rom, Processor::cpu, 077777, true));
+    EXPECT_EQ(debugger.InspectMemory(MemorySource::rom, Processor::cpu, 0100000, false), board->GetROMWord(0));
+    EXPECT_EQ(debugger.InspectMemory(MemorySource::rom, Processor::cpu, 0177777, true), board->GetROMByte(32767));
+    EXPECT_EQ(debugger.InspectMemory(MemorySource::selected, Processor::cpu, 01000, false),
+        debugger.InspectMemory(MemorySource::cpu, Processor::ppu, 01000, false));
+    EXPECT_FALSE(debugger.InspectMemory(MemorySource::ppu, Processor::cpu, 0177700, false));
+}
+
+TEST_F(PreviewDebuggerTest, CurrentHintUsesCurrentProcessorAndFlags)
+{
+    preview_debugger::Session debugger(*board);
+    auto* cpu = board->GetCPU();
+    cpu->GetMemoryController()->SetWord(01000, false, 0001002); // BNE
+    cpu->SetPSW(0004); // Z set: branch not taken.
+    auto hint = debugger.CurrentHint(preview_debugger::Processor::cpu);
+    EXPECT_TRUE(hint.isJump);
+    EXPECT_FALSE(hint.jumpPredict);
+    ASSERT_GT(hint.count, 0);
+    EXPECT_EQ(hint.lines[0], L"Z=1");
+    cpu->SetPSW(0);
+    hint = debugger.CurrentHint(preview_debugger::Processor::cpu);
+    EXPECT_TRUE(hint.jumpPredict);
+    EXPECT_EQ(hint.lines[0], L"Z=0");
+}
+
 TEST_F(PreviewDebuggerTest, SavesMemoryViewAsLittleEndianAndRejectsBadRanges)
 {
     const auto path = std::filesystem::temp_directory_path() /

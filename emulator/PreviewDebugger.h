@@ -17,6 +17,7 @@ class CProcessor;
 namespace preview_debugger
 {
 enum class Processor { cpu, ppu };
+enum class MemorySource { selected, cpu, ppu, ram0, ram1, ram2, rom };
 enum class DumpError { invalid_range, file_error };
 // These match the legacy CPU/PPU instruction and interrupt trace masks.
 inline constexpr std::uint16_t TraceInstructionsPpu = 0200, TraceInstructionsCpu = 0400;
@@ -45,6 +46,11 @@ public:
     [[nodiscard]] BreakpointSet& Breakpoints(Processor which);
     [[nodiscard]] std::uint16_t ReadWord(Processor which, std::uint16_t address, bool instruction) const;
     [[nodiscard]] std::uint16_t ReadPort(Processor which, std::uint16_t address) const;
+    // Debugger views do not perform device reads. I/O and inaccessible memory
+    // return no value, as does ROM outside its mapped 32 KiB range.
+    [[nodiscard]] std::optional<std::uint16_t> InspectMemory(MemorySource source, Processor selected,
+        std::uint16_t address, bool byteMode) const;
+    [[nodiscard]] DisasmHint CurrentHint(Processor which) const;
     // Register 0..7 selects R0..PC; index 8 selects PSW.
     [[nodiscard]] bool WriteRegister(Processor which, int index, std::uint16_t value);
     // Only aligned RAM words are writable; ROM and I/O are never touched.

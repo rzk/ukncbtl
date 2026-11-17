@@ -88,6 +88,10 @@ processors. Optional instruction/interrupt recording keeps separate recent
 histories for CPU and PPU and is cleared on reset or state load. A display-list
 inspector shows the decoded video tags. The remaining debugger tools are still
 being migrated.
+Memory inspection includes selected CPU/PPU mappings, raw RAM planes and ROM,
+byte or word values, and octal or hexadecimal formatting. Inaccessible and I/O
+locations are marked without reading devices; these view options are saved.
+The disassembly view displays hints for the selected processor's current instruction.
 The debugger can navigate disassembly by octal address, run to a temporary
 target, inspect the stack and load UTF-16LE `.lst` subtitles. Subtitles mark
 data words and comments; failed loads leave the current listing intact. The

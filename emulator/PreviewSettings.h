@@ -45,6 +45,9 @@ struct Settings
     std::filesystem::path systemRom;
     std::array<std::filesystem::path, 4> floppies;
     std::array<std::filesystem::path, 2> cartridges, hardDisks;
+    int memorySource = 0;
+    bool memoryBytes = false;
+    bool memoryHex = false;
 };
 
 enum class ImportEncoding { unicode, windows1251, windows1252 };
