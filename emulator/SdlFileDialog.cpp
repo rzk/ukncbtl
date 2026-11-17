@@ -41,6 +41,7 @@ struct Request {
     int slot;
     sdl_file_dialog::Purpose purpose;
     std::uint16_t start = 0, end = 0;
+    bool readOnly = false;
 };
 
 void SDLCALL OnDialog(void* userdata, const char* const* files, int filter)
@@ -51,22 +52,22 @@ void SDLCALL OnDialog(void* userdata, const char* const* files, int filter)
         const auto status = !files ? sdl_file_dialog::Status::failed :
             !files[0] ? sdl_file_dialog::Status::canceled : sdl_file_dialog::Status::selected;
         request->state->Complete({request->kind, request->slot, status,
-            status == sdl_file_dialog::Status::selected ? files[0] : "", request->purpose, filter, request->start, request->end});
+            status == sdl_file_dialog::Status::selected ? files[0] : "", request->purpose, filter, request->start, request->end, request->readOnly});
     }
     catch (...)
     {
         // Never let an exception cross SDL's C callback boundary.
-        try { request->state->Complete({request->kind, request->slot, sdl_file_dialog::Status::failed, {}, request->purpose, -1, request->start, request->end}); }
+        try { request->state->Complete({request->kind, request->slot, sdl_file_dialog::Status::failed, {}, request->purpose, -1, request->start, request->end, request->readOnly}); }
         catch (...) {}
     }
 }
 }
 
 bool sdl_file_dialog::Open(const std::shared_ptr<State>& state, SDL_Window& window,
-    media_slots::Kind kind, int slot)
+    media_slots::Kind kind, int slot, bool readOnly)
 {
     if (!state) return false;
-    auto request = std::make_unique<Request>(state, kind, slot, Purpose::disk);
+    auto request = std::make_unique<Request>(state, kind, slot, Purpose::disk, 0, 0, readOnly);
     if (!state->Begin()) return false;
     static constexpr SDL_DialogFileFilter filters[]{{"Disk images", "dsk;rtd;img;hdi"}, {"All files", "*"}};
     SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);

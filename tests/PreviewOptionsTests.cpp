@@ -38,6 +38,21 @@ TEST(PreviewOptions, PreservesUtf8PathsAndRejectsMalformedOptions)
         EXPECT_FALSE(preview_options::Parse(args));
 }
 
+TEST(PreviewOptions, ParsesReadOnlyMediaAndLastMountChoice)
+{
+    using namespace std::string_view_literals;
+    const std::array args{"--floppy-read-only"sv, "3"sv, "disk.dsk"sv, "--hard-disk-read-only"sv, "1"sv, "hard.img"sv,
+        "--floppy"sv, "3"sv, "replacement.dsk"sv};
+    const auto options = preview_options::Parse(args);
+    ASSERT_TRUE(options);
+    EXPECT_FALSE(options->floppyReadOnly[3]);
+    EXPECT_EQ(options->floppies[3]->generic_string(), "replacement.dsk");
+    EXPECT_TRUE(options->hardDiskReadOnly[0]);
+    EXPECT_EQ(options->hardDisks[0]->generic_string(), "hard.img");
+    const std::array bad{"--floppy-read-only"sv, "4"sv, "disk.dsk"sv};
+    EXPECT_FALSE(preview_options::Parse(bad));
+}
+
 TEST(AutoBoot, EmitsLegacyKeySequenceAtCompletedFrameBoundaries)
 {
     constexpr std::array<std::uint8_t, 7> digits{0030,0031,0032,0013,0034,0035,0016};

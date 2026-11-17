@@ -285,7 +285,7 @@ public:  // System control
 
     /// \brief Attach floppy image to the slot -- insert the disk.
     bool        AttachFloppyImage(int slot, const wchar_t* sFileName);
-    bool        AttachFloppyImage(int slot, const std::filesystem::path& path);
+    bool        AttachFloppyImage(int slot, const std::filesystem::path& path, bool readOnly = false);
     /// \brief Empty the floppy slot -- remove the disk.
     void        DetachFloppyImage(int slot);
     // A failed flush keeps the dirty track in memory for a later retry.
@@ -313,7 +313,7 @@ public:  // System control
 
     /// \brief Attach hard drive image to the slot.
     bool        AttachHardImage(int slot, const wchar_t* sFileName);
-    bool        AttachHardImage(int slot, const std::filesystem::path& path);
+    bool        AttachHardImage(int slot, const std::filesystem::path& path, bool readOnly = false);
     /// \brief Empty hard drive slot.
     void        DetachHardImage(int slot);
     /// \brief Check if the hard drive attached.

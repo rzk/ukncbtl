@@ -102,6 +102,18 @@ TEST(SdlFileDialog, PreservesDiskGeometryAndPrinterPurpose)
     EXPECT_EQ(state.Take()->purpose, sdl_file_dialog::Purpose::printer);
 }
 
+TEST(SdlFileDialog, PreservesReadOnlyMountChoiceAcrossCallback)
+{
+    sdl_file_dialog::State state;
+    ASSERT_TRUE(state.Begin());
+    state.Complete({media_slots::Kind::floppy, 2, sdl_file_dialog::Status::selected,
+        "disk.dsk", sdl_file_dialog::Purpose::disk, -1, 0, 0, true});
+    const auto result = state.Take();
+    ASSERT_TRUE(result);
+    EXPECT_TRUE(result->readOnly);
+    EXPECT_EQ(result->slot, 2);
+}
+
 TEST(SdlFileDialog, PreservesTapePurpose)
 {
     sdl_file_dialog::State state;

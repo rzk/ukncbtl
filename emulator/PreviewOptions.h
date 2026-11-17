@@ -19,6 +19,8 @@ struct Options
     std::optional<std::filesystem::path> settingsFile;
     std::array<std::optional<std::filesystem::path>, 4> floppies;
     std::array<std::optional<std::filesystem::path>, 2> cartridges, hardDisks;
+    std::array<bool, 4> floppyReadOnly{};
+    std::array<bool, 2> hardDiskReadOnly{};
 };
 // Arguments are UTF-8 and exclude the executable name.
 [[nodiscard]] std::expected<Options, std::string> Parse(std::span<const std::string_view> arguments);

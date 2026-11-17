@@ -23,6 +23,7 @@ struct Result
     Purpose purpose = Purpose::disk;
     int filter = -1;
     std::uint16_t start = 0, end = 0;
+    bool readOnly = false;
 };
 
 // Results may arrive on an SDL worker thread. The state can outlive its UI.
@@ -41,7 +42,7 @@ private:
 
 // Call on the SDL main thread. At most one dialog may be outstanding.
 [[nodiscard]] bool Open(const std::shared_ptr<State>& state, SDL_Window& window,
-    media_slots::Kind kind, int slot);
+    media_slots::Kind kind, int slot, bool readOnly = false);
 [[nodiscard]] bool SaveScreenshot(const std::shared_ptr<State>& state, SDL_Window& window);
 [[nodiscard]] bool OpenSnapshot(const std::shared_ptr<State>& state, SDL_Window& window);
 [[nodiscard]] bool SaveSnapshot(const std::shared_ptr<State>& state, SDL_Window& window);

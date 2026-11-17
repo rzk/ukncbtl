@@ -119,6 +119,13 @@ std::optional<std::uint32_t> Number(const IniDocument& doc, std::wstring_view ke
     return text && text->size() < 64 ? settings_codec::DecodeDword(*text) : std::nullopt;
 }
 
+bool ReadOnlySetting(const IniDocument& doc, std::wstring_view key)
+{
+    if (!doc.Get(section, key)) return false; // Older settings did not have a mount mode.
+    const auto value = Number(doc, key);
+    return !value || *value != 0; // Malformed values must not enable writes.
+}
+
 using SavedBreakpoints = std::array<std::uint16_t, BreakpointSet::Capacity - 1>;
 std::wstring BreakpointKey(std::wstring_view prefix, std::size_t index)
 { return std::wstring(prefix) + std::to_wstring(index); }
@@ -252,28 +259,30 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Import
     if (importMedia)
     {
         bool foundMedia = false;
-        const auto readPath = [&](std::wstring_view key, std::filesystem::path& target) {
+        const auto readPath = [&](std::wstring_view key, std::filesystem::path& target) -> bool {
             const auto text = doc.Get(L"UKNCBTL", key);
-            if (!text || text->size() > 32768) return;
-            if (text->empty()) { target.clear(); imported = true; return; }
+            if (!text || text->size() > 32768) return false;
+            if (text->empty()) { target.clear(); imported = true; return true; }
             const auto encoded = ini_encoding::Encode(*text, ini_encoding::Encoding::utf8);
-            if (!encoded) return;
+            if (!encoded) return false;
             try
             {
                 const std::u8string bytes(encoded->begin(), encoded->end());
                 auto mediaPath = std::filesystem::path(bytes);
                 if (mediaPath.is_relative()) mediaPath = path.parent_path() / mediaPath;
                 target = std::filesystem::absolute(mediaPath).lexically_normal();
-                foundMedia = true; imported = true;
+                foundMedia = true; imported = true; return true;
             }
             catch (const std::filesystem::filesystem_error&) {}
+            return false;
         };
-        for (int index = 0; index < 4; ++index) readPath(L"Floppy" + std::to_wstring(index), result.floppies[index]);
+        for (int index = 0; index < 4; ++index)
+            if (readPath(L"Floppy" + std::to_wstring(index), result.floppies[index])) result.floppyReadOnly[index] = false;
         for (int index = 0; index < 2; ++index)
         {
-            readPath(L"Cartridge" + std::to_wstring(index + 1), result.cartridges[index]);
+            (void)readPath(L"Cartridge" + std::to_wstring(index + 1), result.cartridges[index]);
             // Legacy callers use one-based slots with a key helper that adds one.
-            readPath(L"Hard" + std::to_wstring(index + 2), result.hardDisks[index]);
+            if (readPath(L"Hard" + std::to_wstring(index + 2), result.hardDisks[index])) result.hardDiskReadOnly[index] = false;
         }
         if (foundMedia) result.restoreMedia = true;
     }
@@ -341,11 +350,15 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
     if (restore && *restore <= 1) settings.restoreMedia = *restore != 0;
     settings.systemRom = ReadPath(doc, L"SystemRomPath");
     for (std::size_t index = 0; index < settings.floppies.size(); ++index)
+    {
         settings.floppies[index] = ReadPath(doc, L"FloppyPath" + std::to_wstring(index));
+        settings.floppyReadOnly[index] = ReadOnlySetting(doc, L"FloppyReadOnly" + std::to_wstring(index));
+    }
     for (std::size_t index = 0; index < settings.cartridges.size(); ++index)
     {
         settings.cartridges[index] = ReadPath(doc, L"CartridgePath" + std::to_wstring(index));
         settings.hardDisks[index] = ReadPath(doc, L"HardDiskPath" + std::to_wstring(index));
+        settings.hardDiskReadOnly[index] = ReadOnlySetting(doc, L"HardDiskReadOnly" + std::to_wstring(index));
     }
     const auto memorySource = Number(doc, L"MemorySource");
     if (memorySource && *memorySource <= 6) settings.memorySource = static_cast<int>(*memorySource);
@@ -430,11 +443,13 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
     if (!doc.Set(section, L"RestoreMedia", settings.restoreMedia ? L"1" : L"0") ||
         !WritePath(doc, L"SystemRomPath", settings.systemRom)) return std::unexpected(IniFileError::invalid_entry);
     for (std::size_t index = 0; index < settings.floppies.size(); ++index)
-        if (!WritePath(doc, L"FloppyPath" + std::to_wstring(index), settings.floppies[index]))
+        if (!WritePath(doc, L"FloppyPath" + std::to_wstring(index), settings.floppies[index]) ||
+            !doc.Set(section, L"FloppyReadOnly" + std::to_wstring(index), settings.floppyReadOnly[index] ? L"1" : L"0"))
             return std::unexpected(IniFileError::invalid_entry);
     for (std::size_t index = 0; index < settings.cartridges.size(); ++index)
         if (!WritePath(doc, L"CartridgePath" + std::to_wstring(index), settings.cartridges[index]) ||
-            !WritePath(doc, L"HardDiskPath" + std::to_wstring(index), settings.hardDisks[index]))
+            !WritePath(doc, L"HardDiskPath" + std::to_wstring(index), settings.hardDisks[index]) ||
+            !doc.Set(section, L"HardDiskReadOnly" + std::to_wstring(index), settings.hardDiskReadOnly[index] ? L"1" : L"0"))
             return std::unexpected(IniFileError::invalid_entry);
     return (*file)->Save(path);
 }

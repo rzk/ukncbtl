@@ -45,4 +45,20 @@ TEST(HardPortable, UnicodeImageSupportsSectorWriteAndRead)
     ASSERT_EQ(disk.ReadPort(0x1f7) & 0x89, 8);
     for (int i = 0; i < 256; ++i) EXPECT_EQ(disk.ReadPort(0x1f0), 0x1234);
     disk.DetachImage();
+    std::ifstream beforeFile(path, std::ios::binary);
+    const std::vector<char> before{std::istreambuf_iterator<char>(beforeFile), std::istreambuf_iterator<char>()};
+    beforeFile.close();
+    ASSERT_TRUE(disk.AttachImage(path, true));
+    EXPECT_TRUE(disk.IsReadOnly());
+    disk.Reset();
+    for (int i = 0; i < 2; ++i) disk.Periodic();
+    selectSecondSector();
+    disk.WritePort(0x1f7, 0x30);
+    for (int i = 0; i < 256; ++i) disk.WritePort(0x1f0, 0x5678);
+    for (int i = 0; i < 256; ++i) disk.Periodic();
+    EXPECT_NE(disk.ReadPort(0x1f7) & 0x01, 0); // IDE status error bit.
+    disk.DetachImage();
+    std::ifstream afterFile(path, std::ios::binary);
+    const std::vector<char> after{std::istreambuf_iterator<char>(afterFile), std::istreambuf_iterator<char>()};
+    EXPECT_EQ(after, before);
 }

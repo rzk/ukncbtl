@@ -113,7 +113,7 @@ public:
 
     /// \brief Attach the image to the drive -- insert disk
     bool AttachImage(int drive, const wchar_t* sFileName);
-    bool AttachImage(int drive, const std::filesystem::path& path);
+    bool AttachImage(int drive, const std::filesystem::path& path, bool readOnly = false);
     /// \brief Detach image from the drive -- remove disk
     void DetachImage(int drive);
     [[nodiscard]] bool Flush() { return FlushChanges(); }
@@ -180,7 +180,7 @@ public:
     void Reset();
     /// \brief Attach HDD image file to the device
     bool AttachImage(const wchar_t* sFileName);
-    bool AttachImage(const std::filesystem::path& path);
+    bool AttachImage(const std::filesystem::path& path, bool readOnly = false);
     /// \brief Detach HDD image file from the device
     void DetachImage();
     /// \brief Check if the attached hard drive image is read-only

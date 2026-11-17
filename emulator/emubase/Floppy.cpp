@@ -109,7 +109,7 @@ bool CFloppyController::AttachImage(int drive, const wchar_t* sFileName)
     return sFileName && AttachImage(drive, std::filesystem::path(sFileName));
 }
 
-bool CFloppyController::AttachImage(int drive, const std::filesystem::path& path)
+bool CFloppyController::AttachImage(int drive, const std::filesystem::path& path, bool readOnly)
 {
     if (path.empty() || drive < 0 || drive >= static_cast<int>(m_drivedata.size()) || !FlushChanges())
         return false;
@@ -129,9 +129,10 @@ bool CFloppyController::AttachImage(int drive, const std::filesystem::path& path
     m_drivedata[drive].okNetRT11Image = extension == u8".rtd";
 
     // Open file
-    m_drivedata[drive].okReadOnly = false;
-    auto file = std::make_unique<std::fstream>(path, std::ios::binary | std::ios::in | std::ios::out);
-    if (!*file)
+    m_drivedata[drive].okReadOnly = readOnly;
+    auto file = std::make_unique<std::fstream>();
+    if (!readOnly) file->open(path, std::ios::binary | std::ios::in | std::ios::out);
+    if (readOnly || !*file)
     {
         m_drivedata[drive].okReadOnly = true;
         file = std::make_unique<std::fstream>(path, std::ios::binary | std::ios::in);

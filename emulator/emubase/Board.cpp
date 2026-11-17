@@ -356,10 +356,10 @@ bool CMotherboard::AttachFloppyImage(int slot, const wchar_t* sFileName)
     return sFileName && AttachFloppyImage(slot, std::filesystem::path(sFileName));
 }
 
-bool CMotherboard::AttachFloppyImage(int slot, const std::filesystem::path& path)
+bool CMotherboard::AttachFloppyImage(int slot, const std::filesystem::path& path, bool readOnly)
 {
     assert(slot >= 0 && slot < 4);
-    return m_pFloppyCtl->AttachImage(slot, path);
+    return m_pFloppyCtl->AttachImage(slot, path, readOnly);
 }
 
 void CMotherboard::DetachFloppyImage(int slot)
@@ -407,12 +407,12 @@ bool CMotherboard::AttachHardImage(int slot, const wchar_t* sFileName)
     return sFileName && AttachHardImage(slot, std::filesystem::path(sFileName));
 }
 
-bool CMotherboard::AttachHardImage(int slot, const std::filesystem::path& path)
+bool CMotherboard::AttachHardImage(int slot, const std::filesystem::path& path, bool readOnly)
 {
     assert(slot >= 1 && slot <= 2);
 
     auto drive = std::make_unique<CHardDrive>();
-    if (!drive->AttachImage(path))
+    if (!drive->AttachImage(path, readOnly))
         return false;
 
     drive->Reset();

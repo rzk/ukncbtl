@@ -71,6 +71,8 @@ in emulated frames; resetting, pausing or losing focus cancels the sequence.
 The executable accepts `--run`/`--paused`, `--sound`/`--no-sound`,
 `--fullscreen`/`--windowed`, `--rom PATH`, `--floppy 0..3 PATH`,
 `--cartridge 1..2 PATH`, `--hard-disk 1..2 PATH`, and `--boot 1..7`.
+Use `--floppy-read-only` or `--hard-disk-read-only` in place of the respective
+disk option to prevent guest writes for that mount.
 `--settings PATH` selects a separate settings file; its parent must exist.
 Command-line overrides apply only to that launch. Media is attached before
 the machine starts; a hard disk requires the corresponding cartridge. Use
@@ -126,7 +128,10 @@ It supports screenshot capture to PNG/BMP files or the SDL clipboard, with
 the existing screenshot size modes. It also supports basic SDL audio output and
 attaching/ejecting floppy and hard-disk images through SDL file dialogs. Disks
 may be modified by the emulated machine; read-only mounts are indicated in the
-menu. The Disks menu can create 40- or 80-track floppy images. The frontend
+menu. The Disks menu can explicitly attach images read-only or read/write;
+the requested mode is retained for restored media. Multiple mounts of the same
+image are allowed only when all are read-only. The Disks menu can create 40-
+or 80-track floppy images. The frontend
 reports floppy read, write and unrepresentable-track failures, pauses
 emulation and keeps dirty track changes in memory. The Disks menu can retry a
 flush; reset, state save/load and exit check for pending writes, and a failed exit

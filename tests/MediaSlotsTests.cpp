@@ -88,14 +88,20 @@ TEST_F(MediaSlotsTest, RestoresMediaInDependencyOrderAndPreservesFailedPaths)
     settings.restoreMedia = true;
     settings.cartridges[0] = cartridge;
     settings.floppies[0] = floppy;
+    settings.floppyReadOnly[0] = true;
     settings.floppies[1] = directory / "missing.dsk";
     settings.hardDisks[0] = hard;
+    settings.hardDiskReadOnly[0] = true;
     const auto errors = preview_media_restore::Restore(settings, {}, roms, media);
     ASSERT_EQ(errors.size(), 1u);
     EXPECT_EQ(errors[0], "Floppy 2");
     EXPECT_TRUE(roms.Inserted(0));
     EXPECT_TRUE(media.Attached(media_slots::Kind::floppy, 0));
     EXPECT_TRUE(media.Attached(media_slots::Kind::hardDisk, 0));
+    EXPECT_TRUE(media.ReadOnly(media_slots::Kind::floppy, 0));
+    EXPECT_TRUE(media.RequestedReadOnly(media_slots::Kind::floppy, 0));
+    EXPECT_TRUE(media.ReadOnly(media_slots::Kind::hardDisk, 0));
+    EXPECT_TRUE(media.RequestedReadOnly(media_slots::Kind::hardDisk, 0));
     EXPECT_EQ(settings.floppies[1], directory / "missing.dsk");
 }
 
@@ -133,6 +139,50 @@ TEST_F(MediaSlotsTest, MissingCartridgeReportsBothDependentDevices)
     EXPECT_EQ(errors[1], "Hard disk 2");
     EXPECT_EQ(settings.hardDisks[1], hard);
     EXPECT_FALSE(media.Attached(media_slots::Kind::hardDisk, 1));
+}
+
+TEST_F(MediaSlotsTest, ExplicitReadOnlyMountsCanShareButWritableAliasesCannot)
+{
+    CMotherboard board;
+    board.Reset();
+    media_slots::Slots media(board);
+    using media_slots::Kind;
+    ASSERT_TRUE(media.Attach(Kind::floppy, 0, floppy, true));
+    EXPECT_TRUE(media.ReadOnly(Kind::floppy, 0));
+    EXPECT_TRUE(media.RequestedReadOnly(Kind::floppy, 0));
+    ASSERT_TRUE(media.Attach(Kind::floppy, 1, directory / "." / floppy.filename(), true));
+    EXPECT_TRUE(media.ReadOnly(Kind::floppy, 1));
+    auto writable = media.Attach(Kind::floppy, 2, floppy);
+    ASSERT_FALSE(writable);
+    EXPECT_EQ(writable.error(), media_slots::Error::already_mounted);
+    ASSERT_TRUE(media.Eject(Kind::floppy, 1));
+    ASSERT_TRUE(media.Eject(Kind::floppy, 0));
+    EXPECT_FALSE(media.RequestedReadOnly(Kind::floppy, 0));
+    ASSERT_TRUE(media.Attach(Kind::floppy, 0, floppy));
+    const auto shared = media.Attach(Kind::floppy, 1, floppy, true);
+    ASSERT_FALSE(shared);
+    EXPECT_EQ(shared.error(), media_slots::Error::already_mounted);
+    const std::array<std::uint8_t, 24 * 1024> cartridge{};
+    board.LoadROMCartridge(1, cartridge);
+    ASSERT_TRUE(media.Attach(Kind::hardDisk, 0, hard, true));
+    EXPECT_TRUE(media.ReadOnly(Kind::hardDisk, 0));
+    EXPECT_TRUE(media.RequestedReadOnly(Kind::hardDisk, 0));
+}
+
+TEST_F(MediaSlotsTest, ExplicitHardDiskTakesPriorityOverConflictingRememberedFloppy)
+{
+    CMotherboard board;
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_settings::Settings settings;
+    settings.restoreMedia = true;
+    settings.floppies[0] = hard;
+    preview_options::Options options;
+    options.hardDisks[0] = hard;
+    const auto errors = preview_media_restore::Restore(settings, options, roms, media);
+    ASSERT_EQ(errors.size(), 1u);
+    EXPECT_EQ(errors[0], "Floppy 1");
+    EXPECT_FALSE(media.Attached(media_slots::Kind::floppy, 0));
 }
 
 TEST_F(MediaSlotsTest, RestoreRefusesToMountTheSettingsFile)
@@ -204,6 +254,9 @@ TEST_F(MediaSlotsTest, DetectsHardLinkToMountedDisk)
     media_slots::Slots media(board);
     ASSERT_TRUE(media.Attach(media_slots::Kind::hardDisk, 0, hard));
     EXPECT_TRUE(media.Conflicts(alias));
+    const auto shared = media.Attach(media_slots::Kind::floppy, 0, alias, true);
+    ASSERT_FALSE(shared);
+    EXPECT_EQ(shared.error(), media_slots::Error::already_mounted);
     ASSERT_TRUE(media.Eject(media_slots::Kind::hardDisk, 0));
     EXPECT_FALSE(media.Conflicts(alias));
 }

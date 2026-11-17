@@ -21,15 +21,18 @@ std::expected<preview_options::Options, std::string> preview_options::Parse(std:
                 return std::unexpected("--boot requires a selection from 1 to 7");
             options.boot = args[i][0] - '0';
         }
-        else if (arg == "--settings" || arg == "--rom" || arg == "--floppy" || arg == "--cartridge" || arg == "--hard-disk")
+        else if (arg == "--settings" || arg == "--rom" || arg == "--floppy" || arg == "--floppy-read-only" ||
+            arg == "--cartridge" || arg == "--hard-disk" || arg == "--hard-disk-read-only")
         {
             int slot = 0;
+            const bool floppy = arg == "--floppy" || arg == "--floppy-read-only";
+            const bool hardDisk = arg == "--hard-disk" || arg == "--hard-disk-read-only";
             if (arg != "--rom" && arg != "--settings")
             {
-                if (++i == args.size() || args[i].size() != 1 || args[i][0] < (arg == "--floppy" ? '0' : '1') ||
-                    args[i][0] > (arg == "--floppy" ? '3' : '2'))
+                if (++i == args.size() || args[i].size() != 1 || args[i][0] < (floppy ? '0' : '1') ||
+                    args[i][0] > (floppy ? '3' : '2'))
                     return std::unexpected(std::string(arg) + " has an invalid slot");
-                slot = args[i][0] - (arg == "--floppy" ? '0' : '1');
+                slot = args[i][0] - (floppy ? '0' : '1');
             }
             if (++i == args.size() || args[i].empty() || args[i].starts_with("--"))
                 return std::unexpected(std::string(arg) + " requires a file path");
@@ -37,9 +40,9 @@ std::expected<preview_options::Options, std::string> preview_options::Parse(std:
             auto path = std::filesystem::path(utf8);
             if (arg == "--settings") options.settingsFile = std::move(path);
             else if (arg == "--rom") options.rom = std::move(path);
-            else if (arg == "--floppy") options.floppies[slot] = std::move(path);
+            else if (floppy) { options.floppies[slot] = std::move(path); options.floppyReadOnly[slot] = arg == "--floppy-read-only"; }
             else if (arg == "--cartridge") options.cartridges[slot] = std::move(path);
-            else options.hardDisks[slot] = std::move(path);
+            else if (hardDisk) { options.hardDisks[slot] = std::move(path); options.hardDiskReadOnly[slot] = arg == "--hard-disk-read-only"; }
         }
         else return std::unexpected("Unknown option: " + std::string(arg));
     }

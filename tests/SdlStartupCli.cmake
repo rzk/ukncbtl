@@ -32,8 +32,8 @@ if(NOT result EQUAL 1)
   message(FATAL_ERROR "Hard disk without cartridge was not rejected: ${result}: ${error}")
 endif()
 execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-  "${APP}" --smoke-test --no-sound --boot 1 --floppy 3 "${TEST_DIR}/floppy-日本.dsk"
-  --cartridge 1 "${TEST_DIR}/cart-日本.rom" --hard-disk 1 "${TEST_DIR}/disk-日本.img"
+  "${APP}" --smoke-test --no-sound --boot 1 --floppy-read-only 3 "${TEST_DIR}/floppy-日本.dsk"
+  --cartridge 1 "${TEST_DIR}/cart-日本.rom" --hard-disk-read-only 1 "${TEST_DIR}/disk-日本.img"
   RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
 if(NOT result EQUAL 0)
   message(FATAL_ERROR "Unicode media startup failed: ${result}: ${error}")

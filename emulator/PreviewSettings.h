@@ -46,6 +46,8 @@ struct Settings
     std::filesystem::path systemRom;
     std::array<std::filesystem::path, 4> floppies;
     std::array<std::filesystem::path, 2> cartridges, hardDisks;
+    std::array<bool, 4> floppyReadOnly{};
+    std::array<bool, 2> hardDiskReadOnly{};
     int memorySource = 0;
     bool memoryBytes = false;
     bool memoryHex = false;

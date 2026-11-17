@@ -111,15 +111,16 @@ bool CHardDrive::AttachImage(const wchar_t* sFileName)
     return sFileName && AttachImage(std::filesystem::path(sFileName));
 }
 
-bool CHardDrive::AttachImage(const std::filesystem::path& path)
+bool CHardDrive::AttachImage(const std::filesystem::path& path, bool readOnly)
 {
     if (path.empty() || m_fpFile != nullptr)
         return false;
 
     // Open file
-    m_okReadOnly = false;
-    auto file = std::make_unique<std::fstream>(path, std::ios::binary | std::ios::in | std::ios::out);
-    if (!*file)
+    m_okReadOnly = readOnly;
+    auto file = std::make_unique<std::fstream>();
+    if (!readOnly) file->open(path, std::ios::binary | std::ios::in | std::ios::out);
+    if (readOnly || !*file)
     {
         m_okReadOnly = true;
         file = std::make_unique<std::fstream>(path, std::ios::binary | std::ios::in);

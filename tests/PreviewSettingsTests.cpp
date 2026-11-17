@@ -124,6 +124,7 @@ TEST_F(PreviewSettingsTest, MediaImportIsOptInAndUsesLegacySlotsAndEncoding)
           "Cartridge2=cart2.rom\nHard2=hard1.img\nHard3=hard2.img\n");
     preview_settings::Settings current;
     current.floppies[1] = directory / "keep.dsk";
+    current.floppyReadOnly[0] = true; current.hardDiskReadOnly[0] = true;
     const auto normal = preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::windows1251, current);
     ASSERT_TRUE(normal);
     EXPECT_FALSE(normal->restoreMedia);
@@ -138,6 +139,8 @@ TEST_F(PreviewSettingsTest, MediaImportIsOptInAndUsesLegacySlotsAndEncoding)
     EXPECT_EQ(withMedia->cartridges[1], directory / "cart2.rom");
     EXPECT_EQ(withMedia->hardDisks[0], directory / "hard1.img");
     EXPECT_EQ(withMedia->hardDisks[1], directory / "hard2.img");
+    EXPECT_FALSE(withMedia->floppyReadOnly[0]);
+    EXPECT_FALSE(withMedia->hardDiskReadOnly[0]);
     const auto destination = directory / "imported.ini";
     struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{destination};
     ASSERT_TRUE(preview_settings::Save(destination, *withMedia));
@@ -155,6 +158,7 @@ TEST_F(PreviewSettingsTest, MediaPathsRoundTripAndInvalidEncodedPathsAreIgnored)
     input.floppies[2] = directory / std::filesystem::path(u8"\u0414\u0438\u0441\u043a;1.dsk");
     input.cartridges[0] = directory / "cart.bin";
     input.hardDisks[1] = directory / "disk.img";
+    input.floppyReadOnly[2] = true; input.hardDiskReadOnly[1] = true;
     ASSERT_TRUE(preview_settings::Save(path, input));
     const auto loaded = preview_settings::Load(path);
     ASSERT_TRUE(loaded);
@@ -163,10 +167,16 @@ TEST_F(PreviewSettingsTest, MediaPathsRoundTripAndInvalidEncodedPathsAreIgnored)
     EXPECT_EQ(loaded->floppies, input.floppies);
     EXPECT_EQ(loaded->cartridges, input.cartridges);
     EXPECT_EQ(loaded->hardDisks, input.hardDisks);
-    Write("[SDLPreview]\nRestoreMedia=1\nFloppyPath0=0061\nFloppyPath1=not-hex\nFloppyPath2=ff\n");
+    EXPECT_EQ(loaded->floppyReadOnly, input.floppyReadOnly);
+    EXPECT_EQ(loaded->hardDiskReadOnly, input.hardDiskReadOnly);
+    Write("[SDLPreview]\nRestoreMedia=1\nFloppyPath0=0061\nFloppyPath1=not-hex\nFloppyPath2=ff\n"
+          "FloppyReadOnly0=invalid\nHardDiskReadOnly0=2\n");
     const auto malformed = preview_settings::Load(path);
     ASSERT_TRUE(malformed);
     for (const auto& value : malformed->floppies) EXPECT_TRUE(value.empty());
+    EXPECT_TRUE(malformed->floppyReadOnly[0]);
+    EXPECT_TRUE(malformed->hardDiskReadOnly[0]);
+    EXPECT_FALSE(malformed->floppyReadOnly[1]);
 }
 
 TEST_F(PreviewSettingsTest, SameFileDetectsExistingAndFuturePathAliases)

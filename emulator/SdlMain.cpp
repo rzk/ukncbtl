@@ -170,7 +170,7 @@ int Run(const preview_options::Options& options)
         if (options.cartridges[slot] && !roms.Insert(slot, *options.cartridges[slot]))
         { SDL_Log("Could not load requested cartridge %d.", slot + 1); return 1; }
     for (int slot = 0; slot < 4; ++slot)
-        if (options.floppies[slot] && !media.Attach(media_slots::Kind::floppy, slot, *options.floppies[slot]))
+        if (options.floppies[slot] && !media.Attach(media_slots::Kind::floppy, slot, *options.floppies[slot], options.floppyReadOnly[slot]))
         { SDL_Log("Could not attach requested floppy %d.", slot); return 1; }
     const auto restoreErrors = preview_media_restore::Restore(settings, options, roms, media,
         protectedSettingsPath.value_or(std::filesystem::path{}));
@@ -182,7 +182,7 @@ int Run(const preview_options::Options& options)
         startupError += "\nThe saved paths are kept for the next launch.";
     }
     for (int slot = 0; slot < 2; ++slot)
-        if (options.hardDisks[slot] && !media.Attach(media_slots::Kind::hardDisk, slot, *options.hardDisks[slot]))
+        if (options.hardDisks[slot] && !media.Attach(media_slots::Kind::hardDisk, slot, *options.hardDisks[slot], options.hardDiskReadOnly[slot]))
         { SDL_Log("Could not attach requested hard disk %d; check its ROM cartridge and image.", slot + 1); return 1; }
     preview_printer::Session printer(board);
     preview_tape::Session tape(board);
@@ -525,18 +525,24 @@ int Run(const preview_options::Options& options)
                     actionError = "Insert the matching hard-disk ROM cartridge first.";
                     showActionError = true;
                 }
-                else if (!media.Attach(result->kind, result->slot, std::filesystem::path(path)))
-                {
-                    actionError = "Could not attach the disk image. Check the file and the selected drive.";
-                    showActionError = true;
-                }
                 else
                 {
-                    if (result->kind == media_slots::Kind::floppy)
-                    { commandFloppies[result->slot] = false; if (settings.restoreMedia) settings.floppies[result->slot] = std::filesystem::path(path); }
+                    const auto attached = media.Attach(result->kind, result->slot, std::filesystem::path(path), result->readOnly);
+                    if (!attached)
+                    {
+                        actionError = attached.error() == media_slots::Error::already_mounted ?
+                            "The image is already mounted; shared mounts must all be read-only." :
+                            "Could not attach the disk image. Check the file and the selected drive.";
+                        showActionError = true;
+                    }
                     else
-                    { commandHardDisks[result->slot] = false; if (settings.restoreMedia) settings.hardDisks[result->slot] = std::filesystem::path(path); }
-                    if (settings.restoreMedia) settingsDirty = true;
+                    {
+                        if (result->kind == media_slots::Kind::floppy)
+                        { commandFloppies[result->slot] = false; if (settings.restoreMedia) { settings.floppies[result->slot] = std::filesystem::path(path); settings.floppyReadOnly[result->slot] = result->readOnly; } }
+                        else
+                        { commandHardDisks[result->slot] = false; if (settings.restoreMedia) { settings.hardDisks[result->slot] = std::filesystem::path(path); settings.hardDiskReadOnly[result->slot] = result->readOnly; } }
+                        if (settings.restoreMedia) settingsDirty = true;
+                    }
                 }
             }
         }
@@ -600,16 +606,18 @@ int Run(const preview_options::Options& options)
                 {
                     settingsDirty = true;
                     if (!settings.restoreMedia)
-                    { settings.systemRom.clear(); settings.floppies = {}; settings.cartridges = {}; settings.hardDisks = {}; }
+                    { settings.systemRom.clear(); settings.floppies = {}; settings.cartridges = {}; settings.hardDisks = {}; settings.floppyReadOnly = {}; settings.hardDiskReadOnly = {}; }
                     else
                     {
                         if (!commandSystem) if (const auto* path = roms.SystemPath()) settings.systemRom = *path;
                         for (int slot = 0; slot < 4; ++slot)
-                            if (!commandFloppies[slot]) if (const auto* path = media.Path(media_slots::Kind::floppy, slot)) settings.floppies[slot] = *path;
+                            if (!commandFloppies[slot]) if (const auto* path = media.Path(media_slots::Kind::floppy, slot))
+                            { settings.floppies[slot] = *path; settings.floppyReadOnly[slot] = media.RequestedReadOnly(media_slots::Kind::floppy, slot); }
                         for (int slot = 0; slot < 2; ++slot)
                         {
                             if (!commandCartridges[slot]) if (const auto* path = roms.CartridgePath(slot)) settings.cartridges[slot] = *path;
-                            if (!commandHardDisks[slot]) if (const auto* path = media.Path(media_slots::Kind::hardDisk, slot)) settings.hardDisks[slot] = *path;
+                            if (!commandHardDisks[slot]) if (const auto* path = media.Path(media_slots::Kind::hardDisk, slot))
+                            { settings.hardDisks[slot] = *path; settings.hardDiskReadOnly[slot] = media.RequestedReadOnly(media_slots::Kind::hardDisk, slot); }
                         }
                     }
                 }
@@ -916,22 +924,19 @@ int Run(const preview_options::Options& options)
                             if (!media.Eject(kind, slot))
                             { actionError = "Could not eject the disk image."; showActionError = true; }
                             else if (kind == media_slots::Kind::floppy)
-                            { commandFloppies[slot] = false; if (settings.restoreMedia) { settings.floppies[slot].clear(); settingsDirty = true; } }
+                            { commandFloppies[slot] = false; if (settings.restoreMedia) { settings.floppies[slot].clear(); settings.floppyReadOnly[slot] = false; settingsDirty = true; } }
                             else
-                            { commandHardDisks[slot] = false; if (settings.restoreMedia) { settings.hardDisks[slot].clear(); settingsDirty = true; } }
+                            { commandHardDisks[slot] = false; if (settings.restoreMedia) { settings.hardDisks[slot].clear(); settings.hardDiskReadOnly[slot] = false; settingsDirty = true; } }
                         }
                     }
-                    else if (ImGui::MenuItem("Attach...", nullptr, false, !fileDialog->Pending()))
+                    else for (const bool readOnly : {false, true})
                     {
-                        if (kind == media_slots::Kind::hardDisk && !roms.Inserted(slot))
+                        if (ImGui::MenuItem(readOnly ? "Attach read-only..." : "Attach read/write...", nullptr, false, !fileDialog->Pending()))
                         {
-                            actionError = "Insert the matching hard-disk ROM cartridge first.";
-                            showActionError = true;
-                        }
-                        else if (!sdl_file_dialog::Open(fileDialog, *window, kind, slot))
-                        {
-                            actionError = "Could not open the file dialog.";
-                            showActionError = true;
+                            if (kind == media_slots::Kind::hardDisk && !roms.Inserted(slot))
+                            { actionError = "Insert the matching hard-disk ROM cartridge first."; showActionError = true; }
+                            else if (!sdl_file_dialog::Open(fileDialog, *window, kind, slot, readOnly))
+                            { actionError = "Could not open the file dialog."; showActionError = true; }
                         }
                     }
                     ImGui::EndMenu();
@@ -1686,7 +1691,8 @@ int main(int argc, char** argv)
     {
         std::printf("Usage: ukncbtl-sdl [--run|--paused] [--sound|--no-sound] [--fullscreen|--windowed]\n"
                     "  [--rom PATH] [--floppy 0..3 PATH] [--cartridge 1..2 PATH]\n"
-                    "  [--hard-disk 1..2 PATH] [--boot 1..7] [--settings PATH]\n");
+                    "  [--floppy-read-only 0..3 PATH] [--hard-disk 1..2 PATH]\n"
+                    "  [--hard-disk-read-only 1..2 PATH] [--boot 1..7] [--settings PATH]\n");
         return 0;
     }
     return Run(*options);

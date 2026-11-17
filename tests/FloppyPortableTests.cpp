@@ -74,6 +74,27 @@ TEST(FloppyPortable, ReadFailureReportsAndProtectsTheDrive)
     EXPECT_TRUE(disk.IsReadOnly(0));
 }
 
+TEST(FloppyPortable, ExplicitReadOnlyMountProtectsAFileThatIsWritable)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-floppy-readonly-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".dsk");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    const std::vector<char> original(5120, 0x35);
+    { std::ofstream file(path, std::ios::binary); ASSERT_TRUE(file.write(original.data(), original.size())); }
+    FloppyProbe disk;
+    ASSERT_TRUE(disk.AttachImage(0, path, true));
+    EXPECT_TRUE(disk.IsReadOnly(0));
+    disk.SetCommand(02003 | FLOPPY_CMD_ENGINESTART);
+    EXPECT_NE(disk.GetState() & FLOPPY_STATUS_WRITEPROTECT, 0);
+    disk.WriteData(0x1234);
+    for (int index = 0; index < 100; ++index) disk.Periodic();
+    EXPECT_FALSE(disk.Changed());
+    disk.DetachImage(0);
+    std::ifstream file(path, std::ios::binary);
+    const std::vector<char> bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    EXPECT_EQ(bytes, original);
+}
+
 TEST(FloppyPortable, UnicodeRtdImagePreservesHeaderAndWritesTrack)
 {
     const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
