@@ -1160,6 +1160,16 @@ int Run(const preview_options::Options& options)
                     consoleInput.fill(0); consoleScroll = true;
                     if (action == preview_console::Action::run) startMachine(started);
                     else if (action == preview_console::Action::pause) pauseMachine();
+                    else if (action == preview_console::Action::saveMemory)
+                    {
+                        const auto range = console.TakeMemoryRange();
+                        if (!range || !sdl_file_dialog::SaveMemoryDump(fileDialog, *window,
+                            debugProcessor == preview_debugger::Processor::cpu, range->start, range->end))
+                        { actionError = "Could not open the file dialog."; showActionError = true; }
+                    }
+                    else if (action == preview_console::Action::saveDisplayList &&
+                        !sdl_file_dialog::SaveDisplayList(fileDialog, *window))
+                    { actionError = "Could not open the file dialog."; showActionError = true; }
                     ImGui::SetKeyboardFocusHere(-1);
                 }
             }

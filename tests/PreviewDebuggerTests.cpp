@@ -95,6 +95,9 @@ TEST_F(PreviewDebuggerTest, SavesMemoryViewAsLittleEndianAndRejectsBadRanges)
     EXPECT_EQ(bytes, std::string("\x80\x0a\xa0\x00", 4));
     EXPECT_EQ(debugger.SaveMemory(path, Processor::cpu, 01000, 01000).error(), preview_debugger::DumpError::invalid_range);
     EXPECT_EQ(debugger.SaveMemory(path / "missing", Processor::cpu, 01000, 01002).error(), preview_debugger::DumpError::file_error);
+    file.close();
+    ASSERT_TRUE(debugger.SaveMemory(path, Processor::cpu, 0, 0177777));
+    EXPECT_EQ(std::filesystem::file_size(path), 65536u);
 }
 
 TEST_F(PreviewDebuggerTest, BreakpointStopsFrameAndPreservesPermanentEntry)

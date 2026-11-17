@@ -116,6 +116,32 @@ TEST_F(PreviewConsoleTest, ConvertsFisWordsAndSupportsShortDisassembly)
     EXPECT_NE(console.Log().find("PC'="), std::string::npos);
 }
 
+TEST_F(PreviewConsoleTest, ExportCommandsReturnValidatedOneShotRequests)
+{
+    using preview_console::Action;
+    EXPECT_EQ(Submit("u"), Action::saveMemory);
+    const auto full = console.TakeMemoryRange();
+    ASSERT_TRUE(full);
+    EXPECT_EQ(full->start, 0);
+    EXPECT_EQ(full->end, 0177777);
+    EXPECT_FALSE(console.TakeMemoryRange());
+    EXPECT_EQ(Submit("u001001 002000"), Action::saveMemory);
+    const auto partial = console.TakeMemoryRange();
+    ASSERT_TRUE(partial);
+    EXPECT_EQ(partial->start, 01001);
+    EXPECT_EQ(partial->end, 02000);
+    EXPECT_EQ(Submit("udl"), Action::saveDisplayList);
+    EXPECT_FALSE(console.TakeMemoryRange());
+    for (auto command : {"u 1000", "u 2000 1000", "u 1000 1000", "u 8 10", "udl extra"})
+    {
+        EXPECT_EQ(Submit(command), Action::none);
+        EXPECT_FALSE(console.TakeMemoryRange());
+    }
+    EXPECT_EQ(Submit("u"), Action::saveMemory);
+    EXPECT_EQ(Submit("r"), Action::none);
+    EXPECT_FALSE(console.TakeMemoryRange());
+}
+
 TEST_F(PreviewConsoleTest, StepAndStepOverFollowDebuggerExecutionRules)
 {
     using preview_console::Action;

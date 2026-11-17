@@ -100,8 +100,8 @@ The Debug menu also provides a console with command history and a bounded UTF-8
 log that can be saved. It supports legacy-style register, memory, disassembly,
 breakpoint, CPU/PPU selection and execution commands; enter `h` for its command
 list. Register-addressed memory dumps, short disassembly and FIS floating-point
-conversion are also available. Trace commands and the full legacy console
-command set remain to migrate.
+conversion are also available. The `u` and `udl` export commands open the
+same save dialogs as the debugger controls. Trace commands remain to migrate.
 Permanent CPU and PPU breakpoints, debugger/console visibility and the selected
 processor are saved in the SDL preview preferences. Temporary step-over and
 run-to targets are excluded. The Emulator menu also configures and saves the
