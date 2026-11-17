@@ -486,6 +486,7 @@ void CHardDrive::ReadSectorDone()
     }
     if (!m_fpFile || !fileOffset || !*m_fpFile)
     {
+        if (m_fpFile && fileOffset && !*m_fpFile && !m_hostFailure) m_hostFailure = HardDiskError::readFailed;
         m_status &= ~IDE_STATUS_BUFFER_READY;
         m_status |= IDE_STATUS_ERROR;
         m_error = IDE_ERROR_BAD_SECTOR;
@@ -493,6 +494,7 @@ void CHardDrive::ReadSectorDone()
     }
     if (!m_fpFile->read(reinterpret_cast<char*>(m_buffer.data()), IDE_DISK_SECTOR_SIZE))
     {
+        if (!m_hostFailure) m_hostFailure = HardDiskError::readFailed;
         m_status &= ~IDE_STATUS_BUFFER_READY;
         m_status |= IDE_STATUS_ERROR;
         m_error = IDE_ERROR_BAD_SECTOR;
@@ -530,6 +532,8 @@ void CHardDrive::WriteSectorDone()
     }
     if (!m_fpFile || m_okReadOnly || !fileOffset || !*m_fpFile)
     {
+        if (m_fpFile && !m_okReadOnly && fileOffset && !*m_fpFile && !m_hostFailure)
+            m_hostFailure = HardDiskError::writeFailed;
         m_status &= ~IDE_STATUS_BUFFER_READY;
         m_status |= IDE_STATUS_ERROR;
         m_error = IDE_ERROR_BAD_SECTOR;
@@ -540,6 +544,7 @@ void CHardDrive::WriteSectorDone()
     m_fpFile->flush();
     if (!*m_fpFile)
     {
+        if (!m_hostFailure) m_hostFailure = HardDiskError::writeFailed;
         m_status &= ~IDE_STATUS_BUFFER_READY;
         m_status |= IDE_STATUS_ERROR;
         m_error = IDE_ERROR_BAD_SECTOR;

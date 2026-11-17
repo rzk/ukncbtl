@@ -172,6 +172,7 @@ protected:
     int     m_timeoutcount;     ///< Timeout counter to wait for the next event
     enum class TimeoutEvent { none, reset_done, read_sector_done, write_sector_done };
     TimeoutEvent m_timeoutevent = TimeoutEvent::none;
+    std::optional<HardDiskError> m_hostFailure;
 
 public:
     CHardDrive();
@@ -185,6 +186,8 @@ public:
     void DetachImage();
     /// \brief Check if the attached hard drive image is read-only
     bool IsReadOnly() const { return m_okReadOnly; }
+    [[nodiscard]] std::optional<HardDiskError> TakeHostFailure()
+    { auto failure = m_hostFailure; m_hostFailure.reset(); return failure; }
 
 public:
     /// \brief Read word from the device port

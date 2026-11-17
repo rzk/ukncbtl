@@ -402,6 +402,22 @@ bool CMotherboard::IsHardImageReadOnly(int slot) const
     return pHardDrive->IsReadOnly();
 }
 
+std::optional<HardDiskFailure> CMotherboard::TakeHardDiskFailure()
+{
+    for (std::size_t index = 0; index < m_pHardDrives.size(); ++index)
+    {
+        if (!m_hardFailures[index] && m_pHardDrives[index])
+            m_hardFailures[index] = m_pHardDrives[index]->TakeHostFailure();
+        if (m_hardFailures[index])
+        {
+            const auto error = *m_hardFailures[index];
+            m_hardFailures[index].reset();
+            return HardDiskFailure{error, static_cast<int>(index)};
+        }
+    }
+    return std::nullopt;
+}
+
 bool CMotherboard::AttachHardImage(int slot, const wchar_t* sFileName)
 {
     return sFileName && AttachHardImage(slot, std::filesystem::path(sFileName));
@@ -416,6 +432,9 @@ bool CMotherboard::AttachHardImage(int slot, const std::filesystem::path& path, 
         return false;
 
     drive->Reset();
+    const auto index = static_cast<std::size_t>(slot - 1);
+    if (m_pHardDrives[index] && !m_hardFailures[index])
+        m_hardFailures[index] = m_pHardDrives[index]->TakeHostFailure();
     m_pHardDrives[slot - 1] = std::move(drive);
     m_pSecondMemCtl->UpdateMemoryMap();
     return true;
@@ -423,7 +442,9 @@ bool CMotherboard::AttachHardImage(int slot, const std::filesystem::path& path, 
 void CMotherboard::DetachHardImage(int slot)
 {
     assert(slot >= 1 && slot <= 2);
-
+    const auto index = static_cast<std::size_t>(slot - 1);
+    if (m_pHardDrives[index] && !m_hardFailures[index])
+        m_hardFailures[index] = m_pHardDrives[index]->TakeHostFailure();
     m_pHardDrives[slot - 1].reset();
 }
 

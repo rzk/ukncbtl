@@ -145,7 +145,9 @@ or 80-track floppy images. The frontend
 reports floppy read, write and unrepresentable-track failures, pauses
 emulation and keeps dirty track changes in memory. The Disks menu can retry a
 flush; reset, state save/load and exit check for pending writes, and a failed exit
-offers retry, cancel, or an explicit exit anyway. The Emulator menu can direct
+offers retry, cancel, or an explicit exit anyway. The frontend also pauses on
+hard-disk host read or write failures and identifies the affected drive. Failed
+hard-disk sectors are not retained for retry. The Emulator menu can direct
 parallel-port output to a selected file; Covox temporarily
 suppresses printer output because it uses the same port. Creation and printer
 output refuse files currently used by the emulator. Two ROM cartridge slots and an external system ROM can be selected; a

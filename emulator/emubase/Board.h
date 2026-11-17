@@ -27,6 +27,8 @@ class CSoundAY;
 using FLOPPYTRACECALLBACK = void(*)(void* context, std::wstring_view text);
 enum class FloppyError { readFailed, writeFailed, invalidTrack };
 struct FloppyFailure { FloppyError error; int slot; };
+enum class HardDiskError { readFailed, writeFailed };
+struct HardDiskFailure { HardDiskError error; int slot; };
 
 inline constexpr auto FRAMERATE = 50;  // Number of frames per second
 
@@ -182,6 +184,7 @@ protected:  // Devices
     std::unique_ptr<CMemoryController> m_pSecondMemCtl;  ///< PPU memory control
     std::unique_ptr<CFloppyController> m_pFloppyCtl;  ///< FDD control
     std::array<std::unique_ptr<CHardDrive>, 2> m_pHardDrives;  ///< HDD control
+    std::array<std::optional<HardDiskError>, 2> m_hardFailures{};
     std::array<std::unique_ptr<CSoundAY>, 3> m_pSoundAY;
 
 public:  // Getting devices
@@ -320,6 +323,8 @@ public:  // System control
     bool        IsHardImageAttached(int slot) const;
     /// \brief Check if the attached hard drive image is read-only.
     bool        IsHardImageReadOnly(int slot) const;
+    // Host I/O failures are reported once; invalid guest requests are excluded.
+    [[nodiscard]] std::optional<HardDiskFailure> TakeHardDiskFailure();
     uint16_t    GetHardPortWord(int slot, uint16_t port);  ///< To use from CSecondMemoryController only
     void        SetHardPortWord(int slot, uint16_t port, uint16_t data);  ///< To use from CSecondMemoryController only
 

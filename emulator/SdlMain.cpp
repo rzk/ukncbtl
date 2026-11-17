@@ -1727,6 +1727,17 @@ int Run(const preview_options::Options& options)
             actionError += " Emulation was paused.";
             showActionError = true;
         }
+        if (const auto failure = board.TakeHardDiskFailure())
+        {
+            pauseMachine();
+            if (showActionError && !actionError.empty()) actionError += "\n";
+            else actionError.clear();
+            actionError += std::format("Hard disk {}: image {} failed. Emulation was paused.",
+                failure->slot + 1, failure->error == HardDiskError::readFailed ? "read" : "write");
+            if (failure->error == HardDiskError::writeFailed)
+                actionError += " The affected sector may not have been saved.";
+            showActionError = true;
+        }
         if (debugger.TakeTraceError())
         {
             if (showActionError && !actionError.empty()) actionError += "\n";
