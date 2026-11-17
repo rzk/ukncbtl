@@ -61,6 +61,7 @@ struct Settings
     int uiTheme = 0;
     int uiScale = 100;
     std::string uiLayout;
+    bool mediaVisible = false;
 };
 
 inline constexpr std::size_t MaxUiLayoutBytes = 64 * 1024;

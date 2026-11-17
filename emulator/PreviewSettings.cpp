@@ -352,6 +352,8 @@ std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(c
     settings.tapePath = ReadPath(doc, L"TapePath");
     const auto tapeVisible = Number(doc, L"TapeVisible");
     if (tapeVisible && *tapeVisible <= 1) settings.tapeVisible = *tapeVisible != 0;
+    const auto mediaVisible = Number(doc, L"MediaVisible");
+    if (mediaVisible && *mediaVisible <= 1) settings.mediaVisible = *mediaVisible != 0;
     for (std::size_t index = 0; index < settings.floppies.size(); ++index)
     {
         settings.floppies[index] = ReadPath(doc, L"FloppyPath" + std::to_wstring(index));
@@ -445,7 +447,8 @@ std::expected<void, IniFileError> preview_settings::Save(const std::filesystem::
             return std::unexpected(IniFileError::invalid_entry);
     if (!doc.Set(section, L"RestoreMedia", settings.restoreMedia ? L"1" : L"0") ||
         !WritePath(doc, L"SystemRomPath", settings.systemRom) || !WritePath(doc, L"TapePath", settings.tapePath) ||
-        !doc.Set(section, L"TapeVisible", settings.tapeVisible ? L"1" : L"0")) return std::unexpected(IniFileError::invalid_entry);
+        !doc.Set(section, L"TapeVisible", settings.tapeVisible ? L"1" : L"0") ||
+        !doc.Set(section, L"MediaVisible", settings.mediaVisible ? L"1" : L"0")) return std::unexpected(IniFileError::invalid_entry);
     for (std::size_t index = 0; index < settings.floppies.size(); ++index)
         if (!WritePath(doc, L"FloppyPath" + std::to_wstring(index), settings.floppies[index]) ||
             !doc.Set(section, L"FloppyReadOnly" + std::to_wstring(index), settings.floppyReadOnly[index] ? L"1" : L"0"))

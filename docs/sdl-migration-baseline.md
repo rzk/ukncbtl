@@ -143,7 +143,9 @@ the existing screenshot size modes. It also supports basic SDL audio output and
 attaching/ejecting floppy and hard-disk images through SDL file dialogs. Disks
 may be modified by the emulated machine; read-only mounts are indicated in the
 menu. The Disks menu can explicitly attach images read-only or read/write;
-the requested mode is retained for restored media. Multiple mounts of the same
+the requested mode is retained for restored media. Its media manager window
+displays all disk and cartridge slots and provides attach/eject controls and
+access to the tape panel. Its visibility is saved. Multiple mounts of the same
 image are allowed only when all are read-only. The Disks menu can create 40-
 or 80-track floppy images. The frontend
 reports floppy read, write and unrepresentable-track failures, pauses

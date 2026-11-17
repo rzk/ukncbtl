@@ -224,6 +224,7 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     input.networkStation = 01234;
     input.memorySource = 5; input.memoryBytes = true; input.memoryHex = true;
     input.toolbar = false; input.statusBar = false;
+    input.mediaVisible = true;
     input.traceMask = 0500;
     input.keyboardLegend = 3; input.keyboardScale = 150;
     input.uiTheme = 1; input.uiScale = 150;
@@ -259,6 +260,7 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
     EXPECT_EQ(output->memoryHex, input.memoryHex);
     EXPECT_EQ(output->toolbar, input.toolbar);
     EXPECT_EQ(output->statusBar, input.statusBar);
+    EXPECT_EQ(output->mediaVisible, input.mediaVisible);
     EXPECT_EQ(output->traceMask, input.traceMask);
     EXPECT_EQ(output->keyboardLegend, input.keyboardLegend);
     EXPECT_EQ(output->keyboardScale, input.keyboardScale);
@@ -276,7 +278,7 @@ TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)
 
 TEST_F(PreviewSettingsTest, InvalidOrDuplicateBreakpointsAreIgnoredIndependently)
 {
-    Write("[SDLPreview]\nDebuggerVisible=2\nConsoleVisible=1\nDebuggerPpu=bad\nNetworkStation=65536\n"
+    Write("[SDLPreview]\nDebuggerVisible=2\nConsoleVisible=1\nDebuggerPpu=bad\nMediaVisible=2\nNetworkStation=65536\n"
           "CpuBreakpoint0=1024\nCpuBreakpoint1=3\nCpuBreakpoint2=0\nCpuBreakpoint3=1024\n"
           "CpuBreakpoint4=65535\nCpuBreakpoint5=65534\nPpuBreakpoint0=2048\nPpuBreakpoint1=invalid\n");
     const auto settings = preview_settings::Load(path);
@@ -284,6 +286,7 @@ TEST_F(PreviewSettingsTest, InvalidOrDuplicateBreakpointsAreIgnoredIndependently
     EXPECT_FALSE(settings->debuggerVisible);
     EXPECT_TRUE(settings->consoleVisible);
     EXPECT_FALSE(settings->debuggerPpu);
+    EXPECT_FALSE(settings->mediaVisible);
     EXPECT_EQ(settings->networkStation, 0);
     EXPECT_EQ(settings->cpuBreakpoints[0], 0);
     EXPECT_EQ(settings->cpuBreakpoints[1], 1024);

@@ -119,7 +119,7 @@ int Run(const preview_options::Options& options)
         }
         else startupError = "Could not locate preview settings. Changes will not be saved.";
     }
-    else { settings.keyboard = true; settings.spriteViewer = true; settings.tapeVisible = true; } // Exercise preview windows in the smoke test.
+    else { settings.keyboard = true; settings.spriteViewer = true; settings.tapeVisible = true; settings.mediaVisible = true; } // Exercise preview windows in the smoke test.
     const std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)> window(
         SDL_CreateWindow("UKNCBTL - SDL preview", settings.windowWidth, settings.windowHeight,
             SDL_WINDOW_RESIZABLE | (smokeTest ? SDL_WINDOW_HIDDEN : 0)), SDL_DestroyWindow);
@@ -332,6 +332,7 @@ int Run(const preview_options::Options& options)
     std::string debuggerError;
     std::string registerError, memoryError;
     bool openMemory = false;
+    std::array<bool, 6> mediaReadOnly{};
     int screenshotMode = settings.screenshotMode;
     int displayMode = settings.displayMode;
     int paletteMode = settings.paletteMode;
@@ -642,6 +643,30 @@ int Run(const preview_options::Options& options)
                 }
             }
         };
+        const auto ejectCartridge = [&](int slot) {
+            if (!roms.Eject(slot))
+            { actionError = "Eject the matching hard disk before removing its cartridge."; showActionError = true; }
+            else
+            { commandCartridges[slot] = false; if (settings.restoreMedia) { settings.cartridges[slot].clear(); settingsDirty = true; } }
+        };
+        const auto openCartridge = [&](int slot) {
+            if (!sdl_file_dialog::OpenRom(fileDialog, *window, sdl_file_dialog::Purpose::cartridge, slot))
+            { actionError = "Could not open the file dialog."; showActionError = true; }
+        };
+        const auto ejectDisk = [&](media_slots::Kind kind, int slot) {
+            if (!media.Eject(kind, slot))
+            { actionError = "Could not eject the disk image."; showActionError = true; }
+            else if (kind == media_slots::Kind::floppy)
+            { commandFloppies[slot] = false; if (settings.restoreMedia) { settings.floppies[slot].clear(); settings.floppyReadOnly[slot] = false; settingsDirty = true; } }
+            else
+            { commandHardDisks[slot] = false; if (settings.restoreMedia) { settings.hardDisks[slot].clear(); settings.hardDiskReadOnly[slot] = false; settingsDirty = true; } }
+        };
+        const auto openDisk = [&](media_slots::Kind kind, int slot, bool readOnly) {
+            if (kind == media_slots::Kind::hardDisk && !roms.Inserted(slot))
+            { actionError = "Insert the matching hard-disk ROM cartridge first."; showActionError = true; }
+            else if (!sdl_file_dialog::Open(fileDialog, *window, kind, slot, readOnly))
+            { actionError = "Could not open the file dialog."; showActionError = true; }
+        };
         float menuHeight = 0;
         if (ImGui::BeginMainMenuBar())
         {
@@ -940,24 +965,17 @@ int Run(const preview_options::Options& options)
                     {
                         const auto text = roms.CartridgePath(slot)->u8string();
                         ImGui::TextUnformatted(reinterpret_cast<const char*>(text.c_str()));
-                        if (ImGui::MenuItem("Eject"))
-                        {
-                            const auto ejected = roms.Eject(slot);
-                            if (!ejected)
-                            { actionError = "Eject the matching hard disk before removing its cartridge."; showActionError = true; }
-                            else
-                            { commandCartridges[slot] = false; if (settings.restoreMedia) { settings.cartridges[slot].clear(); settingsDirty = true; } }
-                        }
+                        if (ImGui::MenuItem("Eject")) ejectCartridge(slot);
                     }
-                    else if (ImGui::MenuItem("Insert...", nullptr, false, !fileDialog->Pending()) &&
-                        !sdl_file_dialog::OpenRom(fileDialog, *window, sdl_file_dialog::Purpose::cartridge, slot))
-                    { actionError = "Could not open the file dialog."; showActionError = true; }
+                    else if (ImGui::MenuItem("Insert...", nullptr, false, !fileDialog->Pending())) openCartridge(slot);
                     ImGui::EndMenu();
                 }
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Disks"))
             {
+                if (ImGui::MenuItem("Media manager", nullptr, &settings.mediaVisible)) settingsDirty = true;
+                ImGui::Separator();
                 if (ImGui::MenuItem("Flush floppy changes") && !media.FlushFloppy())
                 { actionError = "Could not flush floppy changes."; showActionError = true; }
                 if (ImGui::BeginMenu("Create floppy image"))
@@ -979,25 +997,12 @@ int Run(const preview_options::Options& options)
                         const auto path = media.Path(kind, slot)->u8string();
                         ImGui::TextUnformatted(reinterpret_cast<const char*>(path.c_str()));
                         if (media.ReadOnly(kind, slot)) ImGui::TextDisabled("Read-only");
-                        if (ImGui::MenuItem("Eject"))
-                        {
-                            if (!media.Eject(kind, slot))
-                            { actionError = "Could not eject the disk image."; showActionError = true; }
-                            else if (kind == media_slots::Kind::floppy)
-                            { commandFloppies[slot] = false; if (settings.restoreMedia) { settings.floppies[slot].clear(); settings.floppyReadOnly[slot] = false; settingsDirty = true; } }
-                            else
-                            { commandHardDisks[slot] = false; if (settings.restoreMedia) { settings.hardDisks[slot].clear(); settings.hardDiskReadOnly[slot] = false; settingsDirty = true; } }
-                        }
+                        if (ImGui::MenuItem("Eject")) ejectDisk(kind, slot);
                     }
                     else for (const bool readOnly : {false, true})
                     {
                         if (ImGui::MenuItem(readOnly ? "Attach read-only..." : "Attach read/write...", nullptr, false, !fileDialog->Pending()))
-                        {
-                            if (kind == media_slots::Kind::hardDisk && !roms.Inserted(slot))
-                            { actionError = "Insert the matching hard-disk ROM cartridge first."; showActionError = true; }
-                            else if (!sdl_file_dialog::Open(fileDialog, *window, kind, slot, readOnly))
-                            { actionError = "Could not open the file dialog."; showActionError = true; }
-                        }
+                            openDisk(kind, slot, readOnly);
                     }
                     ImGui::EndMenu();
                 };
@@ -1078,6 +1083,78 @@ int Run(const preview_options::Options& options)
                     !audio.IsOpen() ? "Audio unavailable" : soundEnabled ? "Sound on" : "Sound off");
             }
             ImGui::End();
+        }
+        if (settings.mediaVisible)
+        {
+            ImGui::SetNextWindowSize(ImVec2(760, 460), ImGuiCond_FirstUseEver);
+            const bool wasOpen = settings.mediaVisible;
+            if (ImGui::Begin("Media manager", &settings.mediaVisible))
+            {
+                ImGui::TextDisabled(settings.restoreMedia ? "Media restoration is enabled." : "Media restoration is disabled.");
+                if (ImGui::BeginTable("media-slots", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+                {
+                    ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed, 100.0f * ImGui::GetStyle().FontScaleMain);
+                    ImGui::TableSetupColumn("Image", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 190.0f * ImGui::GetStyle().FontScaleMain);
+                    ImGui::TableHeadersRow();
+                    const auto showPath = [](const std::filesystem::path* path) {
+                        if (!path) { ImGui::TextDisabled("Empty"); return; }
+                        const auto text = path->u8string();
+                        ImGui::TextWrapped("%s", reinterpret_cast<const char*>(text.c_str()));
+                    };
+                    for (int slot = 0; slot < 2; ++slot)
+                    {
+                        ImGui::PushID("cartridge"); ImGui::PushID(slot);
+                        ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
+                        ImGui::Text("Cartridge %d", slot + 1);
+                        ImGui::TableSetColumnIndex(1); showPath(roms.CartridgePath(slot));
+                        ImGui::TableSetColumnIndex(2);
+                        if (roms.Inserted(slot))
+                        { if (ImGui::Button("Eject")) ejectCartridge(slot); }
+                        else
+                        {
+                            ImGui::BeginDisabled(fileDialog->Pending());
+                            if (ImGui::Button("Insert...")) openCartridge(slot);
+                            ImGui::EndDisabled();
+                        }
+                        ImGui::PopID(); ImGui::PopID();
+                    }
+                    for (const auto kind : {media_slots::Kind::floppy, media_slots::Kind::hardDisk})
+                    {
+                        ImGui::PushID(static_cast<int>(kind));
+                        const int count = kind == media_slots::Kind::floppy ? 4 : 2;
+                        for (int slot = 0; slot < count; ++slot)
+                        {
+                            ImGui::PushID(slot);
+                            ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
+                            ImGui::Text(kind == media_slots::Kind::floppy ? "Floppy %d" : "Hard disk %d", slot + 1);
+                            ImGui::TableSetColumnIndex(1); showPath(media.Path(kind, slot));
+                            if (media.ReadOnly(kind, slot)) ImGui::TextDisabled("Read-only");
+                            ImGui::TableSetColumnIndex(2);
+                            if (media.Attached(kind, slot))
+                            { if (ImGui::Button("Eject")) ejectDisk(kind, slot); }
+                            else
+                            {
+                                const auto index = static_cast<std::size_t>(slot + (kind == media_slots::Kind::floppy ? 0 : 4));
+                                ImGui::Checkbox("Read-only", &mediaReadOnly[index]);
+                                ImGui::SameLine();
+                                ImGui::BeginDisabled(fileDialog->Pending());
+                                if (ImGui::Button("Attach...")) openDisk(kind, slot, mediaReadOnly[index]);
+                                ImGui::EndDisabled();
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Tape");
+                    ImGui::TableSetColumnIndex(1); showPath(tape.Inserted() ? &tape.Path() : nullptr);
+                    ImGui::TableSetColumnIndex(2);
+                    if (ImGui::Button("Tape controls")) { settings.tapeVisible = true; settingsDirty = true; }
+                    ImGui::EndTable();
+                }
+            }
+            ImGui::End();
+            if (wasOpen != settings.mediaVisible) settingsDirty = true;
         }
         if (settings.keyboard)
         {
