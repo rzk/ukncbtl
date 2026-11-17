@@ -27,6 +27,16 @@ std::optional<std::uint16_t> preview_debugger::ParseAddress(std::string_view tex
     return value && !(*value & 1) ? value : std::nullopt;
 }
 
+std::optional<std::uint16_t> preview_debugger::ParseMemoryValue(std::string_view text, bool hex, bool byteMode)
+{
+    if (text.empty()) return std::nullopt;
+    unsigned value = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, hex ? 16 : 8);
+    if (error != std::errc{} || end != text.data() + text.size() || value > (byteMode ? 0xffu : 0xffffu))
+        return std::nullopt;
+    return static_cast<std::uint16_t>(value);
+}
+
 std::optional<std::string> preview_debugger::ToUtf8(std::wstring_view text)
 {
     const auto bytes = ini_encoding::Encode(text, ini_encoding::Encoding::utf8);
@@ -99,23 +109,44 @@ bool preview_debugger::Session::WriteRegister(Processor which, int index, std::u
 }
 bool preview_debugger::Session::WriteMemory(Processor which, std::uint16_t address, std::uint16_t value)
 {
-    if (address & 1) return false;
+    return WriteMemory(MemorySource::selected, which, address, value, false);
+}
+bool preview_debugger::Session::WriteMemory(MemorySource source, Processor selected,
+    std::uint16_t address, std::uint16_t value, bool byteMode)
+{
+    if ((!byteMode && (address & 1)) || (byteMode && value > 0xff)) return false;
+    if (source == MemorySource::ram0 || source == MemorySource::ram1 || source == MemorySource::ram2)
+    {
+        const int plane = static_cast<int>(source) - static_cast<int>(MemorySource::ram0);
+        if (byteMode) board_.SetRAMByte(plane, address, static_cast<std::uint8_t>(value));
+        else board_.SetRAMWord(plane, address, value);
+        return true;
+    }
+    if (source != MemorySource::selected && source != MemorySource::cpu && source != MemorySource::ppu) return false;
+    const auto which = source == MemorySource::selected ? selected : source == MemorySource::cpu ? Processor::cpu : Processor::ppu;
     auto& processor = GetProcessor(which);
     auto* memory = processor.GetMemoryController();
-    const auto type = memory->GetWordView(address, processor.IsHaltMode(), false).addressType;
+    const auto type = memory->GetWordView(static_cast<std::uint16_t>(address & 0xfffe), processor.IsHaltMode(), false).addressType;
     if (type != ADDRTYPE_RAM0 && type != ADDRTYPE_RAM1 && type != ADDRTYPE_RAM2 && type != ADDRTYPE_RAM12)
         return false;
-    memory->SetWord(address, processor.IsHaltMode(), value);
+    if (byteMode) memory->SetByte(address, processor.IsHaltMode(), static_cast<std::uint8_t>(value));
+    else memory->SetWord(address, processor.IsHaltMode(), value);
     return true;
 }
 std::expected<void, preview_debugger::DumpError> preview_debugger::Session::SaveMemory(
     const std::filesystem::path& path, Processor which, std::uint16_t start, std::uint16_t end) const
 {
+    return SaveMemory(path, MemorySource::selected, which, start, end);
+}
+std::expected<void, preview_debugger::DumpError> preview_debugger::Session::SaveMemory(
+    const std::filesystem::path& path, MemorySource source, Processor selected, std::uint16_t start, std::uint16_t end) const
+{
     const auto range = memory_dump::Range(start, end);
-    if (!range) return std::unexpected(DumpError::invalid_range);
+    if (!range || static_cast<int>(source) < static_cast<int>(MemorySource::selected) ||
+        static_cast<int>(source) > static_cast<int>(MemorySource::rom)) return std::unexpected(DumpError::invalid_range);
     std::vector<std::uint16_t> words(range->Count());
     for (std::size_t index = 0; index < words.size(); ++index)
-        words[index] = ReadWord(which, static_cast<std::uint16_t>((range->first + index) * 2), false);
+        words[index] = InspectMemory(source, selected, static_cast<std::uint16_t>((range->first + index) * 2), false).value_or(0);
     if (!memory_dump::Save(path, words)) return std::unexpected(DumpError::file_error);
     return {};
 }

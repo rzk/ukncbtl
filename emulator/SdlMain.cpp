@@ -399,8 +399,8 @@ int Run(const preview_options::Options& options)
                     if (!target.has_extension()) target += memory ? ".bin" : ".txt";
                     if (conflicts(target))
                     { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
-                    else if (memory ? !debugger.SaveMemory(target, result->slot == 1 ? preview_debugger::Processor::cpu :
-                        preview_debugger::Processor::ppu, result->start, result->end) : log ? !console.Save(target) :
+                    else if (memory ? !debugger.SaveMemory(target, static_cast<preview_debugger::MemorySource>(result->slot),
+                        debugProcessor, result->start, result->end) : log ? !console.Save(target) :
                         !display_list_dump::Save(target, board))
                     { actionError = "Could not save the debugger export. The file may be incomplete."; showActionError = true; }
                 }
@@ -1127,11 +1127,25 @@ int Run(const preview_options::Options& options)
                     if (ImGui::Checkbox("Hex values", &settings.memoryHex)) settingsDirty = true;
                     ImGui::SetNextItemWidth(110);
                     ImGui::InputText("Address (octal)", memoryAddress.data(), memoryAddress.size(), ImGuiInputTextFlags_CharsDecimal);
+                    const auto memorySource = static_cast<preview_debugger::MemorySource>(settings.memorySource);
+                    const auto memoryProcessor = memorySource == preview_debugger::MemorySource::cpu ? preview_debugger::Processor::cpu :
+                        memorySource == preview_debugger::MemorySource::ppu ? preview_debugger::Processor::ppu : debugProcessor;
+                    const auto& addressProcessor = debugger.GetProcessor(memoryProcessor);
                     if (ImGui::Button("Use PC"))
-                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(processor.GetPC()));
+                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(addressProcessor.GetPC()));
                     ImGui::SameLine();
                     if (ImGui::Button("Use SP"))
-                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(processor.GetSP()));
+                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(addressProcessor.GetSP()));
+                    const auto oldBase = settings.memoryBytes ? preview_debugger::ParseWord(memoryAddress.data()) :
+                        preview_debugger::ParseAddress(memoryAddress.data());
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(!oldBase);
+                    if (ImGui::Button("Previous page") && oldBase)
+                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(static_cast<std::uint16_t>(*oldBase - 64)));
+                    ImGui::SameLine();
+                    if (ImGui::Button("Next page") && oldBase)
+                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(static_cast<std::uint16_t>(*oldBase + 64)));
+                    ImGui::EndDisabled();
                     const auto base = settings.memoryBytes ? preview_debugger::ParseWord(memoryAddress.data()) :
                         preview_debugger::ParseAddress(memoryAddress.data());
                     if (!base) ImGui::TextDisabled(settings.memoryBytes ? "Enter an octal address." : "Enter an even octal address.");
@@ -1151,23 +1165,23 @@ int Run(const preview_options::Options& options)
                         }
                         ImGui::TextUnformatted(text.c_str());
                     }
-                    const bool processorMemory = settings.memorySource <= static_cast<int>(preview_debugger::MemorySource::ppu);
-                    const auto memoryProcessor = settings.memorySource == static_cast<int>(preview_debugger::MemorySource::cpu) ?
-                        preview_debugger::Processor::cpu : settings.memorySource == static_cast<int>(preview_debugger::MemorySource::ppu) ?
-                        preview_debugger::Processor::ppu : debugProcessor;
-                    ImGui::BeginDisabled(running || !processorMemory || settings.memoryBytes);
+                    const auto exportSource = memorySource == preview_debugger::MemorySource::selected ?
+                        (debugProcessor == preview_debugger::Processor::cpu ? preview_debugger::MemorySource::cpu : preview_debugger::MemorySource::ppu) : memorySource;
+                    ImGui::BeginDisabled(running || memorySource == preview_debugger::MemorySource::rom);
                     ImGui::SetNextItemWidth(110);
-                    ImGui::InputText("##memory-value", memoryValue.data(), memoryValue.size(), ImGuiInputTextFlags_CharsDecimal);
+                    ImGui::InputText("##memory-value", memoryValue.data(), memoryValue.size(),
+                        settings.memoryHex ? ImGuiInputTextFlags_CharsHexadecimal : ImGuiInputTextFlags_CharsDecimal);
                     ImGui::SameLine();
                     if (ImGui::Button("Write RAM at address"))
                     {
-                        const auto value = preview_debugger::ParseWord(memoryValue.data());
-                        if (!base || !value || !debugger.WriteMemory(memoryProcessor, *base, *value))
-                            memoryError = "Enter an even writable RAM address and an octal word.";
+                        const auto value = preview_debugger::ParseMemoryValue(memoryValue.data(), settings.memoryHex, settings.memoryBytes);
+                        if (!base || !value || !debugger.WriteMemory(memorySource, debugProcessor, *base, *value, settings.memoryBytes))
+                            memoryError = "Enter a valid value and writable RAM address.";
                         else memoryError.clear();
                     }
                     ImGui::EndDisabled();
-                    ImGui::TextDisabled("Dump uses the selected debugger processor; range covers whole words.");
+                    ImGui::TextDisabled("Dump uses the selected memory source; inaccessible words are zero.");
+                    ImGui::TextDisabled("Range is octal, start inclusive, end exclusive, rounded to whole words.");
                     ImGui::SetNextItemWidth(100);
                     ImGui::InputText("Start", dumpStart.data(), dumpStart.size(), ImGuiInputTextFlags_CharsDecimal);
                     ImGui::SameLine(); ImGui::SetNextItemWidth(100);
@@ -1179,8 +1193,7 @@ int Run(const preview_options::Options& options)
                         const auto end = preview_debugger::ParseWord(dumpEnd.data());
                         if (!start || !end || *end <= *start)
                             memoryError = "Enter a valid non-empty octal memory range.";
-                        else if (!sdl_file_dialog::SaveMemoryDump(fileDialog, *window,
-                            debugProcessor == preview_debugger::Processor::cpu, *start, *end))
+                        else if (!sdl_file_dialog::SaveMemoryDump(fileDialog, *window, exportSource, *start, *end))
                         { actionError = "Could not open the file dialog."; showActionError = true; }
                         else memoryError.clear();
                     }
@@ -1342,7 +1355,8 @@ int Run(const preview_options::Options& options)
                     {
                         const auto range = console.TakeMemoryRange();
                         if (!range || !sdl_file_dialog::SaveMemoryDump(fileDialog, *window,
-                            debugProcessor == preview_debugger::Processor::cpu, range->start, range->end))
+                            debugProcessor == preview_debugger::Processor::cpu ? preview_debugger::MemorySource::cpu :
+                                preview_debugger::MemorySource::ppu, range->start, range->end))
                         { actionError = "Could not open the file dialog."; showActionError = true; }
                     }
                     else if (action == preview_console::Action::saveDisplayList &&

@@ -92,6 +92,9 @@ being migrated.
 Memory inspection includes selected CPU/PPU mappings, raw RAM planes and ROM,
 byte or word values, and octal or hexadecimal formatting. Inaccessible and I/O
 locations are marked without reading devices; these view options are saved.
+While paused, byte or word values can be written to raw RAM planes or writable
+processor-mapped RAM using the selected octal or hexadecimal value format.
+Memory exports use the chosen source and write inaccessible words as zero.
 The disassembly view displays hints for the selected processor's current instruction.
 The debugger can navigate disassembly by octal address, run to a temporary
 target, inspect the stack and load UTF-16LE `.lst` subtitles. Subtitles mark

@@ -174,11 +174,11 @@ bool sdl_file_dialog::OpenSubtitles(const std::shared_ptr<State>& state, SDL_Win
     return true;
 }
 
-bool sdl_file_dialog::SaveMemoryDump(const std::shared_ptr<State>& state, SDL_Window& window, bool cpu,
+bool sdl_file_dialog::SaveMemoryDump(const std::shared_ptr<State>& state, SDL_Window& window, preview_debugger::MemorySource source,
     std::uint16_t start, std::uint16_t end)
 {
-    if (!state || end <= start) return false;
-    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, cpu ? 1 : 0, Purpose::memoryDump, start, end);
+    if (!state || end <= start || source < preview_debugger::MemorySource::cpu || source > preview_debugger::MemorySource::rom) return false;
+    auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, static_cast<int>(source), Purpose::memoryDump, start, end);
     if (!state->Begin()) return false;
     static constexpr SDL_DialogFileFilter filters[]{{"Binary memory dump", "bin"}};
     SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);

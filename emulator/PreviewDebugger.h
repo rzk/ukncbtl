@@ -32,6 +32,7 @@ struct Line
 };
 [[nodiscard]] std::optional<std::uint16_t> ParseAddress(std::string_view text);
 [[nodiscard]] std::optional<std::uint16_t> ParseWord(std::string_view text);
+[[nodiscard]] std::optional<std::uint16_t> ParseMemoryValue(std::string_view text, bool hex, bool byteMode);
 [[nodiscard]] std::optional<std::string> ToUtf8(std::wstring_view text);
 
 // Owns breakpoint storage borrowed by the board. The board must outlive it.
@@ -55,9 +56,14 @@ public:
     [[nodiscard]] bool WriteRegister(Processor which, int index, std::uint16_t value);
     // Only aligned RAM words are writable; ROM and I/O are never touched.
     [[nodiscard]] bool WriteMemory(Processor which, std::uint16_t address, std::uint16_t value);
+    [[nodiscard]] bool WriteMemory(MemorySource source, Processor selected, std::uint16_t address,
+        std::uint16_t value, bool byteMode);
     // The end address is exclusive; endpoints are rounded to whole words.
     [[nodiscard]] std::expected<void, DumpError> SaveMemory(const std::filesystem::path& path,
         Processor which, std::uint16_t start, std::uint16_t end) const;
+    // Inaccessible words are written as zero; no device reads are performed.
+    [[nodiscard]] std::expected<void, DumpError> SaveMemory(const std::filesystem::path& path,
+        MemorySource source, Processor selected, std::uint16_t start, std::uint16_t end) const;
     [[nodiscard]] std::vector<Line> Disassemble(Processor which, std::uint16_t address, unsigned count,
         bool useSubtitles = false) const;
     [[nodiscard]] std::expected<void, subtitles::FileError> LoadSubtitles(const std::filesystem::path& path);

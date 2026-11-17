@@ -44,6 +44,18 @@ TEST(PreviewDebugger, ParsesOnlyEvenOctalAddresses)
         EXPECT_FALSE(preview_debugger::ParseAddress(text));
 }
 
+TEST(PreviewDebugger, ParsesMemoryValuesInSelectedRadixAndWidth)
+{
+    using preview_debugger::ParseMemoryValue;
+    EXPECT_EQ(ParseMemoryValue("377", false, true), 255);
+    EXPECT_EQ(ParseMemoryValue("ff", true, true), 255);
+    EXPECT_EQ(ParseMemoryValue("FFFF", true, false), 65535);
+    for (const auto text : {"", "100", "-1", "ffx", "0xff"})
+        EXPECT_FALSE(ParseMemoryValue(text, true, true));
+    EXPECT_FALSE(ParseMemoryValue("400", false, true));
+    EXPECT_FALSE(ParseMemoryValue("200000", false, false));
+}
+
 TEST_F(PreviewDebuggerTest, DisassemblyAndStepUseSelectedProcessorState)
 {
     preview_debugger::Session debugger(*board);
@@ -104,6 +116,30 @@ TEST_F(PreviewDebuggerTest, InspectsRawPlanesRomAndProcessorMemoryWithoutDeviceR
     EXPECT_FALSE(debugger.InspectMemory(MemorySource::ppu, Processor::cpu, 0177700, false));
 }
 
+TEST_F(PreviewDebuggerTest, WritesBytesAndWordsOnlyToSelectedWritableRam)
+{
+    preview_debugger::Session debugger(*board);
+    using preview_debugger::MemorySource;
+    using preview_debugger::Processor;
+    board->SetRAMWord(1, 01000, 0x1234);
+    ASSERT_TRUE(debugger.WriteMemory(MemorySource::ram1, Processor::cpu, 01001, 0xab, true));
+    EXPECT_EQ(board->GetRAMWord(1, 01000), 0xab34);
+    ASSERT_TRUE(debugger.WriteMemory(MemorySource::ram2, Processor::cpu, 01000, 0x5678, false));
+    EXPECT_EQ(board->GetRAMWord(2, 01000), 0x5678);
+    EXPECT_FALSE(debugger.WriteMemory(MemorySource::ram1, Processor::cpu, 01001, 0, false));
+    EXPECT_FALSE(debugger.WriteMemory(MemorySource::ram1, Processor::cpu, 01000, 0x100, true));
+    EXPECT_EQ(board->GetRAMWord(1, 01000), 0xab34);
+    const auto rom = board->GetROMWord(0);
+    EXPECT_FALSE(debugger.WriteMemory(MemorySource::rom, Processor::cpu, 0100000, 0, false));
+    EXPECT_EQ(board->GetROMWord(0), rom);
+    const auto port = debugger.ReadPort(Processor::ppu, 0177700);
+    EXPECT_FALSE(debugger.WriteMemory(MemorySource::ppu, Processor::cpu, 0177701, 1, true));
+    EXPECT_EQ(debugger.ReadPort(Processor::ppu, 0177700), port);
+    ASSERT_TRUE(debugger.WriteMemory(MemorySource::cpu, Processor::ppu, 01000, 0x12, true));
+    ASSERT_TRUE(debugger.WriteMemory(MemorySource::cpu, Processor::ppu, 01001, 0x34, true));
+    EXPECT_EQ(debugger.ReadWord(Processor::cpu, 01000, false), 0x3412);
+}
+
 TEST_F(PreviewDebuggerTest, CurrentHintUsesCurrentProcessorAndFlags)
 {
     preview_debugger::Session debugger(*board);
@@ -137,6 +173,17 @@ TEST_F(PreviewDebuggerTest, SavesMemoryViewAsLittleEndianAndRejectsBadRanges)
     file.close();
     ASSERT_TRUE(debugger.SaveMemory(path, Processor::cpu, 0, 0177777));
     EXPECT_EQ(std::filesystem::file_size(path), 65536u);
+    board->SetRAMWord(1, 01000, 0x1234); board->SetRAMWord(1, 01002, 0xabcd);
+    ASSERT_TRUE(debugger.SaveMemory(path, preview_debugger::MemorySource::ram1, Processor::cpu, 01001, 01004));
+    std::ifstream raw(path, std::ios::binary);
+    const std::string rawBytes{std::istreambuf_iterator<char>(raw), std::istreambuf_iterator<char>()};
+    EXPECT_EQ(rawBytes, std::string("\x34\x12\xcd\xab", 4));
+    raw.close();
+    ASSERT_TRUE(debugger.SaveMemory(path, preview_debugger::MemorySource::rom, Processor::cpu, 077776, 0100002));
+    std::ifstream romDump(path, std::ios::binary);
+    const std::string romBytes{std::istreambuf_iterator<char>(romDump), std::istreambuf_iterator<char>()};
+    ASSERT_EQ(romBytes.size(), 4u);
+    EXPECT_EQ(romBytes.substr(0, 2), std::string("\0\0", 2));
 }
 
 TEST_F(PreviewDebuggerTest, BreakpointStopsFrameAndPreservesPermanentEntry)

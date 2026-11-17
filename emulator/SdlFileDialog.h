@@ -2,6 +2,7 @@
 #pragma once
 
 #include "MediaSlots.h"
+#include "PreviewDebugger.h"
 #include <SDL3/SDL_video.h>
 #include <cstdint>
 #include <memory>
@@ -50,7 +51,8 @@ private:
 [[nodiscard]] bool OpenTape(const std::shared_ptr<State>& state, SDL_Window& window);
 [[nodiscard]] bool SaveTape(const std::shared_ptr<State>& state, SDL_Window& window);
 [[nodiscard]] bool OpenSubtitles(const std::shared_ptr<State>& state, SDL_Window& window);
-[[nodiscard]] bool SaveMemoryDump(const std::shared_ptr<State>& state, SDL_Window& window, bool cpu,
+// Resolve MemorySource::selected to CPU or PPU before opening the async dialog.
+[[nodiscard]] bool SaveMemoryDump(const std::shared_ptr<State>& state, SDL_Window& window, preview_debugger::MemorySource source,
     std::uint16_t start, std::uint16_t end);
 [[nodiscard]] bool SaveDisplayList(const std::shared_ptr<State>& state, SDL_Window& window);
 [[nodiscard]] bool SaveConsoleLog(const std::shared_ptr<State>& state, SDL_Window& window);
