@@ -9,7 +9,7 @@ class CMotherboard;
 
 namespace preview_roms
 {
-enum class Error { invalid_slot, occupied, invalid_path, open_failed, read_failed };
+enum class Error { invalid_slot, occupied, invalid_path, open_failed, read_failed, hard_disk_attached };
 enum class SystemSource { embedded, file, snapshot };
 
 // Manages system ROM and two zero-based cartridge slots on a borrowed board.
@@ -27,6 +27,7 @@ public:
     [[nodiscard]] SystemSource Source() const { return source_; }
     [[nodiscard]] const std::filesystem::path* SystemPath() const;
     [[nodiscard]] std::expected<void, Error> Insert(int slot, const std::filesystem::path& path);
+    // Eject the matching hard disk before removing its controller cartridge.
     [[nodiscard]] std::expected<void, Error> Eject(int slot);
     [[nodiscard]] bool Inserted(int slot) const;
     [[nodiscard]] const std::filesystem::path* CartridgePath(int slot) const;

@@ -141,6 +141,42 @@ TEST_F(MediaSlotsTest, MissingCartridgeReportsBothDependentDevices)
     EXPECT_FALSE(media.Attached(media_slots::Kind::hardDisk, 1));
 }
 
+TEST_F(MediaSlotsTest, MountedHardDiskPreventsEjectingItsCartridge)
+{
+    const auto cartridge = directory / "controller.rom";
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{cartridge};
+    { std::ofstream file(cartridge, std::ios::binary); const std::vector<char> bytes(24 * 1024); ASSERT_TRUE(file.write(bytes.data(), bytes.size())); }
+    for (int slot = 0; slot < 2; ++slot)
+        for (const bool readOnly : {false, true})
+        {
+            CMotherboard board;
+            preview_roms::Roms roms(board);
+            media_slots::Slots media(board);
+            preview_settings::Settings settings;
+            settings.restoreMedia = true;
+            settings.cartridges[slot] = cartridge;
+            settings.hardDisks[slot] = hard;
+            settings.hardDiskReadOnly[slot] = readOnly;
+            ASSERT_TRUE(preview_media_restore::Restore(settings, {}, roms, media).empty());
+            ASSERT_TRUE(roms.Insert(1 - slot, cartridge));
+            const auto blocked = roms.Eject(slot);
+            ASSERT_FALSE(blocked);
+            EXPECT_EQ(blocked.error(), preview_roms::Error::hard_disk_attached);
+            EXPECT_TRUE(roms.Inserted(slot));
+            EXPECT_EQ(*roms.CartridgePath(slot), cartridge);
+            EXPECT_TRUE(media.Attached(media_slots::Kind::hardDisk, slot));
+            EXPECT_EQ(*media.Path(media_slots::Kind::hardDisk, slot), hard);
+            EXPECT_EQ(media.RequestedReadOnly(media_slots::Kind::hardDisk, slot), readOnly);
+            EXPECT_EQ(settings.cartridges[slot], cartridge);
+            EXPECT_EQ(settings.hardDisks[slot], hard);
+            ASSERT_TRUE(roms.Eject(1 - slot));
+            EXPECT_TRUE(roms.Inserted(slot));
+            ASSERT_TRUE(media.Eject(media_slots::Kind::hardDisk, slot));
+            ASSERT_TRUE(roms.Eject(slot));
+            EXPECT_FALSE(roms.Inserted(slot));
+        }
+}
+
 TEST_F(MediaSlotsTest, ExplicitReadOnlyMountsCanShareButWritableAliasesCannot)
 {
     CMotherboard board;

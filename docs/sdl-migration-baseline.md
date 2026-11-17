@@ -150,7 +150,8 @@ parallel-port output to a selected file; Covox temporarily
 suppresses printer output because it uses the same port. Creation and printer
 output refuse files currently used by the emulator. Two ROM cartridge slots and an external system ROM can be selected; a
 hard disk requires a cartridge in the matching slot. Changing the system ROM
-resets the machine. The optional Emulator > Restore media on startup setting
+resets the machine. A cartridge cannot be ejected while its matching hard disk
+is attached; eject the disk first. The optional Emulator > Restore media on startup setting
 remembers system ROM, cartridge, floppy and hard-disk paths. Failed restores
 are reported and retained for the next launch, and automatic startup is paused
 when a restore fails. Explicit run/boot options still take precedence.

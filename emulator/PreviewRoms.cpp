@@ -89,6 +89,7 @@ std::expected<void, preview_roms::Error> preview_roms::Roms::Insert(int slot, co
 std::expected<void, preview_roms::Error> preview_roms::Roms::Eject(int slot)
 {
     if (slot < 0 || slot >= 2) return std::unexpected(Error::invalid_slot);
+    if (board_.IsHardImageAttached(slot + 1)) return std::unexpected(Error::hard_disk_attached);
     board_.UnloadROMCartridge(slot + 1);
     cartridgePaths_[slot].clear();
     return {};

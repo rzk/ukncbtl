@@ -931,8 +931,14 @@ int Run(const preview_options::Options& options)
                     {
                         const auto text = roms.CartridgePath(slot)->u8string();
                         ImGui::TextUnformatted(reinterpret_cast<const char*>(text.c_str()));
-                        if (ImGui::MenuItem("Eject") && roms.Eject(slot))
-                        { commandCartridges[slot] = false; if (settings.restoreMedia) { settings.cartridges[slot].clear(); settingsDirty = true; } }
+                        if (ImGui::MenuItem("Eject"))
+                        {
+                            const auto ejected = roms.Eject(slot);
+                            if (!ejected)
+                            { actionError = "Eject the matching hard disk before removing its cartridge."; showActionError = true; }
+                            else
+                            { commandCartridges[slot] = false; if (settings.restoreMedia) { settings.cartridges[slot].clear(); settingsDirty = true; } }
+                        }
                     }
                     else if (ImGui::MenuItem("Insert...", nullptr, false, !fileDialog->Pending()) &&
                         !sdl_file_dialog::OpenRom(fileDialog, *window, sdl_file_dialog::Purpose::cartridge, slot))
