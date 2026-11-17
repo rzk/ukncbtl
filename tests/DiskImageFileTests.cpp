@@ -71,6 +71,20 @@ TEST_F(PortableDiskImageFile, InvalidDestinationReportsOpenFailure)
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
+TEST_F(PortableDiskImageFile, FailedReplacementPreservesExistingDirectory)
+{
+    const auto occupied = directory / "occupied";
+    ASSERT_TRUE(std::filesystem::create_directory(occupied));
+    { std::ofstream file(occupied / "keep"); file << "safe"; }
+    const auto result = disk_image::CreatePortable(occupied, 40);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), disk_image::FileError::replace_failed);
+    EXPECT_TRUE(std::filesystem::exists(occupied / "keep"));
+    std::error_code error;
+    std::filesystem::remove(occupied / "keep", error);
+    std::filesystem::remove(occupied, error);
+}
+
 class FakeWriter final : public disk_image::FileWriter
 {
 public:

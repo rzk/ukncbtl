@@ -86,4 +86,24 @@ TEST_F(PreviewSnapshotTest, InvalidLoadDoesNotStopOrChangeMachine)
     EXPECT_EQ(board->GetCPU()->GetReg(0), 0777);
     EXPECT_EQ(session.Uptime(), 1u);
 }
+
+TEST_F(PreviewSnapshotTest, ReplacesSavedStateAndPreservesOccupiedDirectoryOnFailure)
+{
+    preview_snapshot::Session session(*board);
+    board->GetCPU()->SetReg(0, 0111);
+    ASSERT_TRUE(session.Save(path));
+    board->GetCPU()->SetReg(0, 0222);
+    ASSERT_TRUE(session.Save(path));
+    board->GetCPU()->SetReg(0, 0333);
+    ASSERT_TRUE(session.Load(path, [] {}));
+    EXPECT_EQ(board->GetCPU()->GetReg(0), 0222);
+    const auto occupied = directory / "occupied";
+    ASSERT_TRUE(std::filesystem::create_directory(occupied));
+    { std::ofstream marker(occupied / "keep"); marker << "safe"; }
+    EXPECT_FALSE(session.Save(occupied));
+    EXPECT_TRUE(std::filesystem::exists(occupied / "keep"));
+    std::error_code error;
+    std::filesystem::remove(occupied / "keep", error);
+    std::filesystem::remove(occupied, error);
+}
 }

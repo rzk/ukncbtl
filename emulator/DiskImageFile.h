@@ -9,7 +9,7 @@
 
 namespace disk_image
 {
-enum class FileError { invalid_argument, open_failed, write_failed, close_failed };
+enum class FileError { invalid_argument, open_failed, write_failed, close_failed, replace_failed };
 
 // A writer passed to CreatePortable must be closed before the call. Open
 // truncates the destination; Write reports how many bytes were written.
@@ -22,8 +22,8 @@ public:
     virtual bool Close() = 0;
 };
 
-// Supports 40 or 80 tracks. Existing files are truncated; an I/O failure may
-// leave a partial image. Invalid arguments do not touch the destination.
+// Supports 40 or 80 tracks. The normal overload replaces the destination only
+// after a complete image is written. The injected-writer overload writes directly.
 [[nodiscard]] std::expected<void, FileError> CreatePortable(const std::filesystem::path& path, int tracks);
 [[nodiscard]] std::expected<void, FileError> CreatePortable(const std::filesystem::path& path, int tracks, FileWriter& writer);
 }

@@ -3,6 +3,7 @@
 #include "InstructionHistory.h"
 #include "emubase/Board.h"
 #include "emubase/ImageSerialization.h"
+#include "util/StagedFile.h"
 #include <fstream>
 #include <vector>
 
@@ -19,11 +20,13 @@ bool Save(const std::filesystem::path& path, CMotherboard& board, uint32_t uptim
     header.dword(uptime);
     board.SaveToImage(std::span<uint8_t, UKNCIMAGE_SIZE>{bytes});
 
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    auto staged = staged_file::File::Create(path);
+    if (!staged) return false;
+    std::ofstream file(staged->Path(), std::ios::binary | std::ios::trunc);
     if (!file) return false;
     file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     file.close();
-    return !file.fail();
+    return !file.fail() && static_cast<bool>(staged->Commit());
 }
 
 bool Save(const wchar_t* path, CMotherboard& board, uint32_t uptime)

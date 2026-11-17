@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "DiskImageFile.h"
 #include "DiskImageData.h"
+#include "util/StagedFile.h"
 #include <cstdint>
 #include <fstream>
 #include <vector>
@@ -33,8 +34,14 @@ private:
 
 std::expected<void, disk_image::FileError> disk_image::CreatePortable(const std::filesystem::path& path, int tracks)
 {
+    if (path.empty() || !Size(tracks)) return std::unexpected(FileError::invalid_argument);
+    auto staged = staged_file::File::Create(path);
+    if (!staged) return std::unexpected(FileError::open_failed);
     StreamFileWriter writer;
-    return CreatePortable(path, tracks, writer);
+    const auto result = CreatePortable(staged->Path(), tracks, writer);
+    if (!result) return result;
+    if (!staged->Commit()) return std::unexpected(FileError::replace_failed);
+    return {};
 }
 
 std::expected<void, disk_image::FileError> disk_image::CreatePortable(

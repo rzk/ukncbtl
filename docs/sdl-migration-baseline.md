@@ -212,6 +212,11 @@ closes after saving; restart to apply the imported settings.
 The SDL preview can save and load legacy-compatible `.uknc` state images. A
 successful load pauses the machine; attached disks and cartridges remain
 attached and are not stored in the state image. Interactive dialogs still need testing.
+State saves, screenshots and new floppy images are staged in the destination
+directory and replace the selected file only after a successful write. Replacement
+does not preserve the old file's filesystem metadata; other hard links continue
+to point to the old contents, and a symbolic link at the destination is replaced
+rather than followed.
 On Windows, dropping one file onto the SDL window opens a chooser for disk,
 cartridge, ROM, tape, state or disassembly subtitles. Disks can be mounted
 read-only, and occupied media slots must be ejected first. The chosen action

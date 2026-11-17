@@ -18,15 +18,18 @@ std::filesystem::path screenshot_file::WithDefaultExtension(std::filesystem::pat
 std::expected<void, screenshot_file::Error> screenshot_file::Save(
     const std::filesystem::path& path, const screenshot_image::Image& image)
 {
+    auto staged = staged_file::File::Create(path);
+    if (!staged) return std::unexpected(Error{staged.error()});
     if (screenshot_format::FromPath(path) == screenshot_format::Format::bmp)
     {
-        const auto result = bmp_file::Save(path, image.pixels, image.width, image.height);
+        const auto result = bmp_file::Save(staged->Path(), image.pixels, image.width, image.height);
         if (!result) return std::unexpected(Error{result.error()});
     }
     else
     {
-        const auto result = png_file::Save(path, image.pixels, image.width, image.height);
+        const auto result = png_file::Save(staged->Path(), image.pixels, image.width, image.height);
         if (!result) return std::unexpected(Error{result.error()});
     }
+    if (const auto result = staged->Commit(); !result) return std::unexpected(Error{result.error()});
     return {};
 }

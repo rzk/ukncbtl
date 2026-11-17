@@ -95,6 +95,21 @@ TEST_F(ScreenshotFileTest, ReportsEncoderErrorsWithoutOverwritingForInvalidPixel
     }
 }
 
+TEST_F(ScreenshotFileTest, FailedReplacementPreservesDestinationDirectory)
+{
+    const auto occupied = directory / "occupied.bmp";
+    ASSERT_TRUE(std::filesystem::create_directory(occupied));
+    { std::ofstream file(occupied / "keep"); file << "safe"; }
+    const auto result = screenshot_file::Save(occupied, image);
+    ASSERT_FALSE(result);
+    ASSERT_TRUE(std::holds_alternative<staged_file::Error>(result.error()));
+    EXPECT_EQ(std::get<staged_file::Error>(result.error()), staged_file::Error::replace_failed);
+    EXPECT_TRUE(std::filesystem::exists(occupied / "keep"));
+    std::error_code error;
+    std::filesystem::remove(occupied / "keep", error);
+    std::filesystem::remove(occupied, error);
+}
+
 TEST_F(ScreenshotFileTest, PreparedFrameProducesMatchingFileAndClipboardImages)
 {
     ASSERT_TRUE(SDL_SetHintWithPriority(SDL_HINT_VIDEO_DRIVER, "dummy", SDL_HINT_OVERRIDE));

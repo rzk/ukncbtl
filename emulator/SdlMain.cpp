@@ -488,7 +488,7 @@ int Run(const preview_options::Options& options)
                     if (conflicts(target))
                     { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
                     else if (!disk_image::CreatePortable(target, result->slot))
-                    { actionError = "Could not create the disk image. The file may be incomplete."; showActionError = true; }
+                    { actionError = "Could not create the disk image."; showActionError = true; }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::printer)
                 {
