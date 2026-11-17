@@ -308,7 +308,7 @@ int Run(const preview_options::Options& options)
     if (smokeTest) (void)console.Submit("h", debugger, debugProcessor, running);
     std::array<char, 16> breakpointAddress{};
     std::array<char, 16> memoryAddress{'0', '0', '0', '0', '0', '0', 0};
-    std::array<char, 16> memoryValue{}, registerValue{};
+    std::array<char, 16> memoryValue{}, memorySearchValue{}, registerValue{};
     std::array<char, 16> dumpStart{'0', '0', '0', '0', '0', '0', 0};
     std::array<char, 16> dumpEnd{'1', '7', '7', '7', '7', '7', 0};
     int registerIndex = 0;
@@ -1331,6 +1331,26 @@ int Run(const preview_options::Options& options)
                         }
                         ImGui::TextUnformatted(text.c_str());
                     }
+                    ImGui::SetNextItemWidth(110);
+                    ImGui::InputText("##memory-search", memorySearchValue.data(), memorySearchValue.size(),
+                        settings.memoryHex ? ImGuiInputTextFlags_CharsHexadecimal : ImGuiInputTextFlags_CharsDecimal);
+                    ImGui::SameLine();
+                    const bool findPrevious = ImGui::Button("Find previous");
+                    ImGui::SameLine();
+                    const bool findNext = ImGui::Button("Find next");
+                    if (findPrevious || findNext)
+                    {
+                        const auto value = preview_debugger::ParseMemoryValue(memorySearchValue.data(), settings.memoryHex, settings.memoryBytes);
+                        if (!base || !value) memoryError = "Enter a valid address and search value.";
+                        else if (const auto found = debugger.FindMemory(memorySource, debugProcessor, *base, *value,
+                            settings.memoryBytes, findNext ? preview_debugger::SearchDirection::forward : preview_debugger::SearchDirection::backward))
+                        {
+                            std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(*found));
+                            memoryError.clear();
+                        }
+                        else memoryError = "Value not found in accessible memory.";
+                    }
+                    ImGui::TextDisabled("Search wraps around; values use the selected byte/word and radix settings.");
                     const auto exportSource = memorySource == preview_debugger::MemorySource::selected ?
                         (debugProcessor == preview_debugger::Processor::cpu ? preview_debugger::MemorySource::cpu : preview_debugger::MemorySource::ppu) : memorySource;
                     ImGui::BeginDisabled(running || memorySource == preview_debugger::MemorySource::rom);

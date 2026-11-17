@@ -140,6 +140,47 @@ TEST_F(PreviewDebuggerTest, WritesBytesAndWordsOnlyToSelectedWritableRam)
     EXPECT_EQ(debugger.ReadWord(Processor::cpu, 01000, false), 0x3412);
 }
 
+TEST_F(PreviewDebuggerTest, SearchesMemoryInBothDirectionsAndWraps)
+{
+    preview_debugger::Session debugger(*board);
+    using enum preview_debugger::SearchDirection;
+    using preview_debugger::MemorySource;
+    using preview_debugger::Processor;
+    board->SetRAMWord(1, 01000, 0xabcd);
+    board->SetRAMWord(1, 02000, 0xabcd);
+    board->SetRAMWord(1, 0177776, 0xabcd);
+    const auto find = [&](std::uint16_t start, auto direction) {
+        return debugger.FindMemory(MemorySource::ram1, Processor::cpu, start, 0xabcd, false, direction);
+    };
+    EXPECT_EQ(find(01000, forward), 02000);
+    EXPECT_EQ(find(01000, backward), 0177776);
+    EXPECT_EQ(find(0177776, forward), 01000);
+    EXPECT_FALSE(find(01001, forward));
+    EXPECT_FALSE(debugger.FindMemory(MemorySource::ram0, Processor::cpu, 0, 0xabcd, false, forward));
+    board->SetRAMWord(2, 01000, 0xabcd);
+    EXPECT_EQ(debugger.FindMemory(MemorySource::ram2, Processor::cpu, 01000, 0xabcd, false, forward), 01000);
+}
+
+TEST_F(PreviewDebuggerTest, SearchesBytesAndSkipsInaccessibleMemory)
+{
+    preview_debugger::Session debugger(*board);
+    using enum preview_debugger::SearchDirection;
+    using preview_debugger::MemorySource;
+    using preview_debugger::Processor;
+    board->SetRAMWord(2, 01000, 0xabcd);
+    EXPECT_EQ(debugger.FindMemory(MemorySource::ram2, Processor::cpu, 01000, 0xab, true, forward), 01001);
+    EXPECT_EQ(debugger.FindMemory(MemorySource::ram2, Processor::cpu, 01001, 0xcd, true, backward), 01000);
+    EXPECT_FALSE(debugger.FindMemory(MemorySource::ram2, Processor::cpu, 0, 0x100, true, forward));
+    // The lower half is outside the ROM view and must not match as zero.
+    const auto firstRomByte = board->GetROMByte(0);
+    EXPECT_EQ(debugger.FindMemory(MemorySource::rom, Processor::cpu, 0, firstRomByte, true, backward),
+        debugger.FindMemory(MemorySource::rom, Processor::cpu, 0100000, firstRomByte, true, backward));
+    EXPECT_EQ(debugger.FindMemory(MemorySource::rom, Processor::cpu, 077777, firstRomByte, true, forward), 0100000);
+    const auto port = debugger.ReadPort(Processor::ppu, 0177700);
+    (void)debugger.FindMemory(MemorySource::ppu, Processor::ppu, 0177676, 0, false, forward);
+    EXPECT_EQ(debugger.ReadPort(Processor::ppu, 0177700), port);
+}
+
 TEST_F(PreviewDebuggerTest, CurrentHintUsesCurrentProcessorAndFlags)
 {
     preview_debugger::Session debugger(*board);

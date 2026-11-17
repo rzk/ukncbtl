@@ -18,6 +18,7 @@ namespace preview_debugger
 {
 enum class Processor { cpu, ppu };
 enum class MemorySource { selected, cpu, ppu, ram0, ram1, ram2, rom };
+enum class SearchDirection { forward, backward };
 enum class DumpError { invalid_range, file_error };
 // These match the legacy CPU/PPU instruction and interrupt trace masks.
 inline constexpr std::uint16_t TraceFloppy = 0100, TraceInstructionsPpu = 0200, TraceInstructionsCpu = 0400;
@@ -51,6 +52,9 @@ public:
     // return no value, as does ROM outside its mapped 32 KiB range.
     [[nodiscard]] std::optional<std::uint16_t> InspectMemory(MemorySource source, Processor selected,
         std::uint16_t address, bool byteMode) const;
+    // Search starts after the given address, wraps once, and skips inaccessible memory.
+    [[nodiscard]] std::optional<std::uint16_t> FindMemory(MemorySource source, Processor selected,
+        std::uint16_t start, std::uint16_t value, bool byteMode, SearchDirection direction) const;
     [[nodiscard]] DisasmHint CurrentHint(Processor which) const;
     // Register 0..7 selects R0..PC; index 8 selects PSW.
     [[nodiscard]] bool WriteRegister(Processor which, int index, std::uint16_t value);

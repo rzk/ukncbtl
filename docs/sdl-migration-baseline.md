@@ -97,6 +97,8 @@ byte or word values, and octal or hexadecimal formatting. Inaccessible and I/O
 locations are marked without reading devices; these view options are saved.
 While paused, byte or word values can be written to raw RAM planes or writable
 processor-mapped RAM using the selected octal or hexadecimal value format.
+Memory search navigates forward or backward through the selected source, wraps
+around the address space, and skips inaccessible locations without reading devices.
 Memory exports use the chosen source and write inaccessible words as zero.
 The disassembly view displays hints for the selected processor's current instruction.
 The debugger can navigate disassembly by octal address, run to a temporary

@@ -88,6 +88,21 @@ std::optional<std::uint16_t> preview_debugger::Session::InspectMemory(
     return byteMode ? static_cast<std::uint16_t>((word >> ((address & 1) * 8)) & 0xff) : word;
 }
 
+std::optional<std::uint16_t> preview_debugger::Session::FindMemory(MemorySource source, Processor selected,
+    std::uint16_t start, std::uint16_t value, bool byteMode, SearchDirection direction) const
+{
+    if ((!byteMode && (start & 1)) || (byteMode && value > 0xff)) return std::nullopt;
+    const unsigned stride = byteMode ? 1 : 2;
+    auto address = start;
+    for (unsigned index = 0; index < 65536u / stride; ++index)
+    {
+        address = static_cast<std::uint16_t>(direction == SearchDirection::forward ? address + stride : address - stride);
+        if (const auto cell = InspectMemory(source, selected, address, byteMode); cell && *cell == value)
+            return address;
+    }
+    return std::nullopt;
+}
+
 DisasmHint preview_debugger::Session::CurrentHint(Processor which) const
 {
     const auto& processor = GetProcessor(which);
