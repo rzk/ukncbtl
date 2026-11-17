@@ -439,6 +439,7 @@ void CFloppyController::PrepareTrack()
         file.clear();
         if (readFailed)
         {
+            ReportFailure(FloppyError::readFailed);
             m_pDrive->okReadOnly = true;
             m_status |= FLOPPY_STATUS_WRITEPROTECT;
             m_status &= ~FLOPPY_STATUS_CHECKSUMOK;
@@ -500,6 +501,7 @@ bool CFloppyController::FlushChanges()
     else
     {
         m_status &= ~FLOPPY_STATUS_CHECKSUMOK;
+        ReportFailure(FloppyError::invalidTrack);
         DebugLog(L"Floppy track cannot be represented in the disk image; changes retained.\r\n");
         return false;
     }
@@ -510,6 +512,7 @@ bool CFloppyController::FlushChanges()
     return true;
 
 WriteError:
+    ReportFailure(FloppyError::writeFailed);
     m_pDrive->fpFile->clear();
     m_status |= FLOPPY_STATUS_WRITEPROTECT;
     m_status &= ~FLOPPY_STATUS_CHECKSUMOK;

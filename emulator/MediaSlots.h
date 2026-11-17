@@ -23,6 +23,7 @@ public:
     Slots& operator=(const Slots&) = delete;
     [[nodiscard]] std::expected<void, Error> Attach(Kind kind, int slot, const std::filesystem::path& path);
     [[nodiscard]] std::expected<void, Error> Eject(Kind kind, int slot);
+    [[nodiscard]] bool FlushFloppy();
     [[nodiscard]] bool Attached(Kind kind, int slot) const;
     [[nodiscard]] bool ReadOnly(Kind kind, int slot) const;
     [[nodiscard]] const std::filesystem::path* Path(Kind kind, int slot) const;

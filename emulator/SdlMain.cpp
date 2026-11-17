@@ -250,6 +250,8 @@ int Run(const preview_options::Options& options)
         for (const auto event : keyDelivery.Reset()) board.KeyboardEvent(event.scan, event.pressed);
     };
     const auto resetMachine = [&] {
+        if (!media.FlushFloppy())
+        { actionError = "Could not flush floppy changes; reset was canceled."; showActionError = true; return false; }
         releaseKeys();
         releaseMouse();
         debugger.Stop();
@@ -263,6 +265,7 @@ int Run(const preview_options::Options& options)
             SDL_Log("Audio reset failed: %s", SDL_GetError());
             audio.Close(); actionError = "Audio failed. Use Audio > Output to retry."; showActionError = true;
         }
+        return true;
     };
     const auto conflicts = [&](const std::filesystem::path& path) {
         return isSettingsFile(path) || media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path) || tape.Conflicts(path) || debugger.TraceConflicts(path);
@@ -279,6 +282,7 @@ int Run(const preview_options::Options& options)
         debugger.PrepareRun(); running = true; scheduler.Restart(now);
     };
     bool done = false;
+    bool forceQuit = false, showFloppyQuit = false;
     bool showDebugger = smokeTest || settings.debuggerVisible;
     bool showConsole = smokeTest || settings.consoleVisible;
     preview_debugger::Processor debugProcessor = settings.debuggerPpu ? preview_debugger::Processor::ppu : preview_debugger::Processor::cpu;
@@ -306,8 +310,16 @@ int Run(const preview_options::Options& options)
     int displayMode = settings.displayMode;
     int paletteMode = settings.paletteMode;
     unsigned frames = 0;
-    while (!done)
+    while (true)
     {
+        if (done)
+        {
+            if (forceQuit || media.FlushFloppy()) break;
+            (void)board.TakeFloppyFailure();
+            done = false;
+            pauseMachine();
+            showFloppyQuit = true;
+        }
         bool copyScreenshot = false;
         bool copyScreenText = false;
         std::vector<sdl_shortcuts::Action> shortcuts;
@@ -342,7 +354,7 @@ int Run(const preview_options::Options& options)
                 (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(window.get())))
                 done = true;
         }
-        if (done) break;
+        if (done) continue;
         if (const auto result = fileDialog->Take())
         {
             if (result->status == sdl_file_dialog::Status::failed)
@@ -372,7 +384,8 @@ int Run(const preview_options::Options& options)
                     { current.windowWidth = width; current.windowHeight = height; }
                     const auto imported = preview_settings::ImportLegacy(source,
                         static_cast<preview_settings::ImportEncoding>(result->slot % 3), current, result->slot >= 3);
-                    if (!layoutCaptured || !settingsPath || same || conflicts(source) || !imported || !preview_settings::Save(*settingsPath, *imported))
+                    if (!layoutCaptured || !settingsPath || same || conflicts(source) || !imported ||
+                        !media.FlushFloppy() || !preview_settings::Save(*settingsPath, *imported))
                     { actionError = "Could not import settings. Check the source, encoding and settings file."; showActionError = true; }
                     else
                     {
@@ -449,7 +462,9 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::snapshotLoad)
                 {
-                    if (!snapshots.Load(std::filesystem::path(path), [&] {
+                    if (!media.FlushFloppy())
+                    { actionError = "Could not flush floppy changes; state load was canceled."; showActionError = true; }
+                    else if (!snapshots.Load(std::filesystem::path(path), [&] {
                         releaseKeys();
                         releaseMouse();
                         debugger.Stop();
@@ -477,6 +492,11 @@ int Run(const preview_options::Options& options)
                         actionError = "The selected file is used by the emulator. Choose another file.";
                         showActionError = true;
                     }
+                    else if (!media.FlushFloppy())
+                    {
+                        actionError = "Could not flush floppy changes; state save was canceled.";
+                        showActionError = true;
+                    }
                     else if (!snapshots.Save(target))
                     {
                         actionError = "Could not save the state image.";
@@ -485,8 +505,10 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::systemRom)
                 {
-                    if (roms.LoadSystem(std::filesystem::path(path)))
-                    { commandSystem = false; if (settings.restoreMedia) { settings.systemRom = std::filesystem::path(path); settingsDirty = true; } resetMachine(); scheduler.Restart(started); }
+                    if (!media.FlushFloppy())
+                    { actionError = "Could not flush floppy changes; ROM change was canceled."; showActionError = true; }
+                    else if (roms.LoadSystem(std::filesystem::path(path)))
+                    { commandSystem = false; if (settings.restoreMedia) { settings.systemRom = std::filesystem::path(path); settingsDirty = true; } if (resetMachine()) scheduler.Restart(started); }
                     else { actionError = "Could not load the system ROM image."; showActionError = true; }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::cartridge)
@@ -518,6 +540,7 @@ int Run(const preview_options::Options& options)
                 }
             }
         }
+        if (done) continue;
         if (appliedTheme != settings.uiTheme || appliedScale != settings.uiScale)
         {
             if (ui_appearance::Apply(settings.uiTheme, settings.uiScale))
@@ -536,7 +559,7 @@ int Run(const preview_options::Options& options)
             {
             case sdl_shortcuts::Action::fullscreen: toggleFullscreen = true; break;
             case sdl_shortcuts::Action::toggleRun: if (running) pauseMachine(); else startMachine(started); break;
-            case sdl_shortcuts::Action::reset: resetMachine(); scheduler.Restart(started); break;
+            case sdl_shortcuts::Action::reset: if (resetMachine()) scheduler.Restart(started); break;
             case sdl_shortcuts::Action::step: debugger.Step(); showDebugger = true; break;
             case sdl_shortcuts::Action::stepOver:
                 showDebugger = true; if (debugger.StepOver(debugProcessor)) startMachine(started); break;
@@ -571,7 +594,7 @@ int Run(const preview_options::Options& options)
                     if (running) pauseMachine();
                     else startMachine(started);
                 }
-                if (ImGui::MenuItem("Reset")) { resetMachine(); scheduler.Restart(started); }
+                if (ImGui::MenuItem("Reset") && resetMachine()) scheduler.Restart(started);
                 if (ImGui::MenuItem("Start automatically", nullptr, &settings.autostart)) settingsDirty = true;
                 if (ImGui::MenuItem("Restore media on startup", nullptr, &settings.restoreMedia))
                 {
@@ -630,9 +653,8 @@ int Run(const preview_options::Options& options)
                         const auto label = "Boot menu " + std::to_string(selection);
                         if (ImGui::MenuItem(label.c_str()))
                         {
-                            resetMachine();
-                            (void)autoBoot.Start(selection);
-                            startMachine(started);
+                            if (resetMachine())
+                            { (void)autoBoot.Start(selection); startMachine(started); }
                         }
                     }
                     ImGui::EndMenu();
@@ -656,7 +678,11 @@ int Run(const preview_options::Options& options)
                     { actionError = "Could not open the file dialog."; showActionError = true; }
                     if (ImGui::MenuItem("Use embedded ROM and reset", nullptr, false,
                         roms.Source() != preview_roms::SystemSource::embedded))
-                    { roms.UseEmbedded(); commandSystem = false; if (settings.restoreMedia) { settings.systemRom.clear(); settingsDirty = true; } resetMachine(); scheduler.Restart(started); }
+                    {
+                        if (!media.FlushFloppy())
+                        { actionError = "Could not flush floppy changes; ROM change was canceled."; showActionError = true; }
+                        else { roms.UseEmbedded(); commandSystem = false; if (settings.restoreMedia) { settings.systemRom.clear(); settingsDirty = true; } if (resetMachine()) scheduler.Restart(started); }
+                    }
                     ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Load state...", nullptr, false, !fileDialog->Pending()) &&
@@ -864,6 +890,8 @@ int Run(const preview_options::Options& options)
             }
             if (ImGui::BeginMenu("Disks"))
             {
+                if (ImGui::MenuItem("Flush floppy changes") && !media.FlushFloppy())
+                { actionError = "Could not flush floppy changes."; showActionError = true; }
                 if (ImGui::BeginMenu("Create floppy image"))
                 {
                     for (const int tracks : {40, 80})
@@ -963,7 +991,7 @@ int Run(const preview_options::Options& options)
             {
                 if (ImGui::Button(running ? "Pause" : "Run")) { if (running) pauseMachine(); else startMachine(started); }
                 ImGui::SameLine();
-                if (ImGui::Button("Reset")) { resetMachine(); scheduler.Restart(started); }
+                if (ImGui::Button("Reset") && resetMachine()) scheduler.Restart(started);
                 ImGui::SameLine();
                 if (ImGui::Button("Debugger")) showDebugger = !showDebugger;
                 ImGui::SameLine();
@@ -1432,8 +1460,42 @@ int Run(const preview_options::Options& options)
             }
             ImGui::End();
         }
+        if (const auto failure = board.TakeFloppyFailure())
+        {
+            pauseMachine();
+            if (showActionError && !actionError.empty()) actionError += "\n";
+            else actionError.clear();
+            actionError += std::format("Floppy {}: ", failure->slot + 1);
+            if (failure->error == FloppyError::readFailed)
+                actionError += "Image read failed; the drive is now write-protected.";
+            else if (failure->error == FloppyError::writeFailed)
+                actionError += "Image write failed; track changes remain in memory.";
+            else actionError += "The changed track cannot be represented in this image; changes remain in memory.";
+            actionError += " Emulation was paused.";
+            showActionError = true;
+        }
         if (debugger.TakeTraceError())
-        { actionError = "Trace output failed and tracing was stopped."; showActionError = true; }
+        {
+            if (showActionError && !actionError.empty()) actionError += "\n";
+            else actionError.clear();
+            actionError += "Trace output failed and tracing was stopped."; showActionError = true;
+        }
+        if (showFloppyQuit) { ImGui::OpenPopup("Unsaved floppy changes"); showFloppyQuit = false; }
+        if (ImGui::BeginPopupModal("Unsaved floppy changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::TextWrapped("The floppy image could not be updated. Track changes are still in memory.\n"
+                "Retry after correcting the problem, cancel exit, or exit anyway and risk losing the changes.");
+            if (ImGui::Button("Retry and exit"))
+            {
+                if (media.FlushFloppy()) { (void)board.TakeFloppyFailure(); done = true; ImGui::CloseCurrentPopup(); }
+                else (void)board.TakeFloppyFailure();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Exit anyway")) { forceQuit = true; done = true; ImGui::CloseCurrentPopup(); }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
         if (showActionError) { ImGui::OpenPopup("Error"); showActionError = false; }
         if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
@@ -1483,7 +1545,7 @@ int Run(const preview_options::Options& options)
                 }
             }
         }
-        if (running && scheduler.Due(started))
+        if (!done && running && scheduler.Due(started))
         {
             scheduler.FrameStarted(started, settings.speed, FRAMERATE);
             if (const auto key = keyDelivery.Next()) board.KeyboardEvent(key->scan, key->pressed);
@@ -1559,7 +1621,7 @@ int Run(const preview_options::Options& options)
         if (destination.w > 0 && destination.h > 0 && !screen.Draw(*image, destination)) { SDL_Log("Screen draw failed: %s", SDL_GetError()); return 1; }
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer.get());
         if (!SDL_RenderPresent(renderer.get())) return 1;
-        if (smokeTest && frames >= 3) break;
+        if (smokeTest && frames >= 3) done = true;
         std::this_thread::sleep_for(scheduler.Delay(frame_pacing::Clock::now(), settings.speed, running));
     }
     if (!tape.Close())

@@ -19,11 +19,14 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <filesystem>
 #include <span>
 #include <string_view>
+#include <optional>
 
 class CProcessor;
 class CMemoryController;
 class CSoundAY;
 using FLOPPYTRACECALLBACK = void(*)(void* context, std::wstring_view text);
+enum class FloppyError { readFailed, writeFailed, invalidTrack };
+struct FloppyFailure { FloppyError error; int slot; };
 
 inline constexpr auto FRAMERATE = 50;  // Number of frames per second
 
@@ -285,6 +288,9 @@ public:  // System control
     bool        AttachFloppyImage(int slot, const std::filesystem::path& path);
     /// \brief Empty the floppy slot -- remove the disk.
     void        DetachFloppyImage(int slot);
+    // A failed flush keeps the dirty track in memory for a later retry.
+    [[nodiscard]] bool FlushFloppyImage();
+    [[nodiscard]] std::optional<FloppyFailure> TakeFloppyFailure();
     /// \brief Check if the floppy attached.
     bool        IsFloppyImageAttached(int slot) const;
     /// \brief Check if the attached floppy image is read-only.

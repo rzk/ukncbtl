@@ -104,6 +104,7 @@ protected:
     bool m_okTrace;         ///< Trace mode on/off
     FLOPPYTRACECALLBACK m_traceCallback = nullptr;
     void* m_traceContext = nullptr;
+    std::optional<FloppyFailure> m_failure;
 
 public:
     CFloppyController();
@@ -115,6 +116,9 @@ public:
     bool AttachImage(int drive, const std::filesystem::path& path);
     /// \brief Detach image from the drive -- remove disk
     void DetachImage(int drive);
+    [[nodiscard]] bool Flush() { return FlushChanges(); }
+    [[nodiscard]] std::optional<FloppyFailure> TakeFailure()
+    { auto failure = m_failure; m_failure.reset(); return failure; }
     /// \brief Check if the drive has an image attached
     bool IsAttached(int drive) const { return (m_drivedata[drive].fpFile != nullptr); }
     /// \brief Check if the drive's attached image is read-only
@@ -133,6 +137,8 @@ public:
 private:
     [[nodiscard]] bool Tracing() const { return m_okTrace || m_traceCallback; }
     void Trace(std::wstring text) const;
+    void ReportFailure(FloppyError error)
+    { if (!m_failure) m_failure = FloppyFailure{error, static_cast<int>(m_drive)}; }
     void PrepareTrack();
     bool FlushChanges();  ///< If current track was changed - save it
 };

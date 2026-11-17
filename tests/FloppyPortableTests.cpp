@@ -15,7 +15,63 @@ public:
     auto& Raw() { return m_pDrive->data; }
     void Dirty() { m_trackchanged = true; }
     bool Changed() const { return m_trackchanged; }
+    void CloseStream() { m_pDrive->fpFile->close(); }
+    bool ReopenStream(const std::filesystem::path& path)
+    {
+        m_pDrive->fpFile->clear();
+        m_pDrive->fpFile->open(path, std::ios::binary | std::ios::in | std::ios::out);
+        return static_cast<bool>(*m_pDrive->fpFile);
+    }
 };
+}
+
+TEST(FloppyPortable, FailedFlushRetainsDirtyTrackAndReportsUntilRetried)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-floppy-error-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".dsk");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    { std::ofstream file(path, std::ios::binary); const std::vector<char> bytes(5120, 0); ASSERT_TRUE(file.write(bytes.data(), bytes.size())); }
+    FloppyProbe disk;
+    ASSERT_TRUE(disk.AttachImage(0, path));
+    const auto goodTrack = disk.Raw();
+    disk.Raw().fill(0);
+    disk.Dirty();
+    EXPECT_FALSE(disk.Flush());
+    EXPECT_TRUE(disk.Changed());
+    EXPECT_TRUE(disk.IsAttached(0));
+    const auto invalid = disk.TakeFailure();
+    ASSERT_TRUE(invalid);
+    EXPECT_EQ(invalid->error, FloppyError::invalidTrack);
+    EXPECT_EQ(invalid->slot, 0);
+    EXPECT_FALSE(disk.TakeFailure());
+    disk.Raw() = goodTrack;
+    disk.CloseStream();
+    EXPECT_FALSE(disk.Flush());
+    EXPECT_TRUE(disk.Changed());
+    const auto write = disk.TakeFailure();
+    ASSERT_TRUE(write);
+    EXPECT_EQ(write->error, FloppyError::writeFailed);
+    ASSERT_TRUE(disk.ReopenStream(path));
+    EXPECT_TRUE(disk.Flush());
+    EXPECT_FALSE(disk.Changed());
+    EXPECT_FALSE(disk.TakeFailure());
+}
+
+TEST(FloppyPortable, ReadFailureReportsAndProtectsTheDrive)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-floppy-read-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".dsk");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    { std::ofstream file(path, std::ios::binary); const std::vector<char> bytes(5120, 0); ASSERT_TRUE(file.write(bytes.data(), bytes.size())); }
+    FloppyProbe disk;
+    ASSERT_TRUE(disk.AttachImage(0, path));
+    disk.CloseStream();
+    disk.Reset();
+    const auto failure = disk.TakeFailure();
+    ASSERT_TRUE(failure);
+    EXPECT_EQ(failure->error, FloppyError::readFailed);
+    EXPECT_EQ(failure->slot, 0);
+    EXPECT_TRUE(disk.IsReadOnly(0));
 }
 
 TEST(FloppyPortable, UnicodeRtdImagePreservesHeaderAndWritesTrack)

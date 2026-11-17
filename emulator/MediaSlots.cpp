@@ -18,6 +18,8 @@ bool media_slots::Slots::Attached(Kind kind, int slot) const
     return kind == Kind::floppy ? board_.IsFloppyImageAttached(slot) : board_.IsHardImageAttached(slot + 1);
 }
 
+bool media_slots::Slots::FlushFloppy() { return board_.FlushFloppyImage(); }
+
 bool media_slots::Slots::ReadOnly(Kind kind, int slot) const
 {
     if (!Attached(kind, slot)) return false;
