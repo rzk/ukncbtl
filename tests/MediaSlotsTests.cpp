@@ -141,6 +141,28 @@ TEST_F(MediaSlotsTest, MissingCartridgeReportsBothDependentDevices)
     EXPECT_FALSE(media.Attached(media_slots::Kind::hardDisk, 1));
 }
 
+TEST_F(MediaSlotsTest, ExplicitStateTakesPriorityOverRememberedRomAndConflictingMedia)
+{
+    CMotherboard board;
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_settings::Settings settings;
+    settings.restoreMedia = true;
+    settings.systemRom = directory / "missing.rom";
+    settings.floppies[0] = floppy;
+    settings.cartridges[1] = floppy;
+    preview_options::Options options;
+    options.state = floppy;
+    const auto errors = preview_media_restore::Restore(settings, options, roms, media);
+    ASSERT_EQ(errors.size(), 2u);
+    EXPECT_EQ(errors[0], "Cartridge 2");
+    EXPECT_EQ(errors[1], "Floppy 1");
+    EXPECT_FALSE(roms.Inserted(1));
+    EXPECT_FALSE(media.Attached(media_slots::Kind::floppy, 0));
+    EXPECT_EQ(settings.systemRom, directory / "missing.rom");
+    EXPECT_EQ(settings.floppies[0], floppy);
+}
+
 TEST_F(MediaSlotsTest, MountedHardDiskPreventsEjectingItsCartridge)
 {
     const auto cartridge = directory / "controller.rom";

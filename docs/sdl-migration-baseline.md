@@ -70,13 +70,17 @@ and boot action for ROM boot-menu selections 1 through 7. Boot inputs are timed
 in emulated frames; resetting, pausing or losing focus cancels the sequence.
 The executable accepts `--run`/`--paused`, `--sound`/`--no-sound`,
 `--fullscreen`/`--windowed`, `--rom PATH`, `--floppy 0..3 PATH`,
-`--cartridge 1..2 PATH`, `--hard-disk 1..2 PATH`, `--tape PATH`, and `--boot 1..7`.
+`--cartridge 1..2 PATH`, `--hard-disk 1..2 PATH`, `--tape PATH`,
+`--state PATH`, and `--boot 1..7`.
 Use `--floppy-read-only` or `--hard-disk-read-only` in place of the respective
 disk option to prevent guest writes for that mount.
 `--settings PATH` selects a separate settings file; its parent must exist.
 Command-line overrides apply only to that launch. Media is attached before
 the machine starts; a hard disk requires the corresponding cartridge. Use
 `--help` for usage. Windows command-line arguments are received as UTF-8 via SDL.
+`--state` starts from a saved state paused by default; use `--run` to start it
+immediately. A state already contains the system ROM, so it cannot be combined
+with `--rom` or `--boot`. Explicit state files do not change saved media paths.
 Physical keyboard positions use the legacy US-position mappings and follow the
 emulated LAT/RUS mode; alternate physical layouts have not yet been validated.
 The Display menu also opens an on-screen UKNC keyboard. It supports Latin,

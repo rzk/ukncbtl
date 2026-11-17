@@ -25,18 +25,51 @@ TEST(PreviewOptions, PreservesUtf8PathsAndRejectsMalformedOptions)
 {
     using namespace std::string_view_literals;
     const std::array pathArgs{"--floppy"sv, "3"sv, "\xe6\x97\xa5\xe6\x9c\xac.dsk"sv,
-        "--settings"sv, "\xe6\x97\xa5\xe6\x9c\xac.ini"sv, "--tape"sv, "\xe6\x97\xa5\xe6\x9c\xac.wav"sv};
+        "--settings"sv, "\xe6\x97\xa5\xe6\x9c\xac.ini"sv, "--tape"sv, "\xe6\x97\xa5\xe6\x9c\xac.wav"sv,
+        "--state"sv, "\xe6\x97\xa5\xe6\x9c\xac.uknc"sv};
     const auto options = preview_options::Parse(pathArgs);
     ASSERT_TRUE(options);
     EXPECT_EQ(options->floppies[3]->u8string(), u8"\u65e5\u672c.dsk");
     EXPECT_EQ(options->settingsFile->u8string(), u8"\u65e5\u672c.ini");
     EXPECT_EQ(options->tape->u8string(), u8"\u65e5\u672c.wav");
+    EXPECT_EQ(options->state->u8string(), u8"\u65e5\u672c.uknc");
     for (const std::vector<std::string_view> args : {
         std::vector{"--boot"sv}, {"--boot"sv,"0"sv}, {"--boot"sv,"8"sv},
         {"--boot"sv,"1"sv,"--paused"sv}, {"--floppy"sv,"4"sv,"disk"sv},
         {"--hard-disk"sv,"0"sv,"disk"sv}, {"--cartridge"sv,"2"sv},
-        {"--rom"sv,"--run"sv}, {"--settings"sv}, {"--settings"sv, "--run"sv}, {"--tape"sv}, {"--unknown"sv}})
+        {"--rom"sv,"--run"sv}, {"--settings"sv}, {"--settings"sv, "--run"sv}, {"--tape"sv}, {"--state"sv},
+        {"--state"sv,"state.uknc"sv,"--rom"sv,"rom.bin"sv}, {"--state"sv,"state.uknc"sv,"--boot"sv,"1"sv}, {"--unknown"sv}})
         EXPECT_FALSE(preview_options::Parse(args));
+}
+
+TEST(PreviewOptions, StateAcceptsExplicitRunAndPause)
+{
+    using namespace std::string_view_literals;
+    for (const auto [flag, running] : {std::pair{"--run"sv, true}, std::pair{"--paused"sv, false}})
+    {
+        const std::array args{"--state"sv, "state.uknc"sv, flag};
+        const auto options = preview_options::Parse(args);
+        ASSERT_TRUE(options);
+        EXPECT_EQ(options->run, running);
+    }
+}
+
+TEST(PreviewOptions, StartupRunPolicyRespectsStateRestoreAndOverrides)
+{
+    preview_options::Options options;
+    EXPECT_TRUE(preview_options::StartRunning(options, true, false));
+    EXPECT_FALSE(preview_options::StartRunning(options, true, true));
+    options.state = "state.uknc";
+    EXPECT_FALSE(preview_options::StartRunning(options, true, false));
+    options.run = true;
+    EXPECT_TRUE(preview_options::StartRunning(options, false, true));
+    options.run = false;
+    EXPECT_FALSE(preview_options::StartRunning(options, true, false));
+    options.smokeTest = true;
+    EXPECT_TRUE(preview_options::StartRunning(options, false, true));
+    options.smokeTest = false;
+    options.state.reset(); options.run.reset(); options.boot = 1;
+    EXPECT_TRUE(preview_options::StartRunning(options, false, true));
 }
 
 TEST(PreviewOptions, ParsesReadOnlyMediaAndLastMountChoice)

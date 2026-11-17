@@ -160,7 +160,7 @@ int Run(const preview_options::Options& options)
         return protectedSettingsPath && preview_settings::SameFile(path, *protectedSettingsPath);
     };
     if ((options.rom && isSettingsFile(*options.rom)) ||
-        (options.tape && isSettingsFile(*options.tape)) ||
+        (options.tape && isSettingsFile(*options.tape)) || (options.state && isSettingsFile(*options.state)) ||
         std::ranges::any_of(options.floppies, [&](const auto& path) { return path && isSettingsFile(*path); }) ||
         std::ranges::any_of(options.cartridges, [&](const auto& path) { return path && isSettingsFile(*path); }) ||
         std::ranges::any_of(options.hardDisks, [&](const auto& path) { return path && isSettingsFile(*path); }))
@@ -182,7 +182,8 @@ int Run(const preview_options::Options& options)
     preview_tape::Session tape(board);
     const auto* startupTape = options.tape ? &*options.tape :
         (!smokeTest && settings.restoreMedia && !settings.tapePath.empty() ? &settings.tapePath : nullptr);
-    if (startupTape && (isSettingsFile(*startupTape) || media.Conflicts(*startupTape) || roms.Conflicts(*startupTape) || !tape.Open(*startupTape)))
+    if (startupTape && (isSettingsFile(*startupTape) || (options.state && preview_settings::SameFile(*startupTape, *options.state)) ||
+        media.Conflicts(*startupTape) || roms.Conflicts(*startupTape) || !tape.Open(*startupTape)))
     {
         if (options.tape) { SDL_Log("Could not open requested tape; check its format and whether it is already in use."); return 1; }
         restoreErrors.emplace_back("Tape");
@@ -286,7 +287,15 @@ int Run(const preview_options::Options& options)
     const auto conflicts = [&](const std::filesystem::path& path) {
         return isSettingsFile(path) || media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path) || tape.Conflicts(path) || debugger.TraceConflicts(path);
     };
-    bool running = smokeTest || options.boot != 0 || options.run.value_or(settings.autostart && restoreErrors.empty());
+    if (options.state)
+    {
+        if (conflicts(*options.state) || !snapshots.Load(*options.state, [] {}))
+        { SDL_Log("Could not load the requested state; check the file and whether it is already in use."); return 1; }
+        roms.MarkRestoredFromSnapshot();
+        printer.Synchronize();
+        debugger.ClearHistory();
+    }
+    bool running = preview_options::StartRunning(options, settings.autostart, !restoreErrors.empty());
     if (options.boot) (void)autoBoot.Start(options.boot);
     frame_pacing::Scheduler scheduler(frame_pacing::Clock::now());
     const auto pauseMachine = [&] {
@@ -2009,7 +2018,8 @@ int main(int argc, char** argv)
         std::printf("Usage: ukncbtl-sdl [--run|--paused] [--sound|--no-sound] [--fullscreen|--windowed]\n"
                     "  [--rom PATH] [--floppy 0..3 PATH] [--cartridge 1..2 PATH]\n"
                     "  [--floppy-read-only 0..3 PATH] [--hard-disk 1..2 PATH]\n"
-                    "  [--hard-disk-read-only 1..2 PATH] [--tape PATH] [--boot 1..7] [--settings PATH]\n");
+                    "  [--hard-disk-read-only 1..2 PATH] [--tape PATH] [--state PATH]\n"
+                    "  [--boot 1..7] [--settings PATH]\n");
         return 0;
     }
     return Run(*options);

@@ -417,13 +417,18 @@ if(BUILD_TESTING)
     target_link_libraries(SdlFileDialogTests PRIVATE SdlFileDialog)
   endif()
   if(UKNCBTL_ENABLE_IMGUI)
+    add_executable(SdlStateFixture tests/SdlStateFixture.cpp)
+    ukncbtl_toolchain(SdlStateFixture)
+    target_include_directories(SdlStateFixture PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+    target_link_libraries(SdlStateFixture PRIVATE PreviewRoms EmulatorSnapshot EmulatorCore SDL3::SDL3)
     ukncbtl_portable_test(ImGuiSdlTests tests/ImGuiSdlTests.cpp)
     target_link_libraries(ImGuiSdlTests PRIVATE DearImGui UiFont UiAppearance SdlScreenRenderer)
     add_test(NAME SdlFrontendSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
       $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
     set_tests_properties(SdlFrontendSmoke PROPERTIES TIMEOUT 30)
     add_test(NAME SdlStartupCli COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-startup-test"
+      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DSTATE_FIXTURE=$<TARGET_FILE:SdlStateFixture>"
+      "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-startup-test"
       -P "${PROJECT_SOURCE_DIR}/tests/SdlStartupCli.cmake")
     set_tests_properties(SdlStartupCli PROPERTIES TIMEOUT 30)
     add_test(NAME SdlInstallSmoke COMMAND ${CMAKE_COMMAND}

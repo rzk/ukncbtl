@@ -17,6 +17,7 @@ struct Options
     std::optional<bool> run, sound, fullscreen;
     std::optional<std::filesystem::path> rom;
     std::optional<std::filesystem::path> tape;
+    std::optional<std::filesystem::path> state;
     std::optional<std::filesystem::path> settingsFile;
     std::array<std::optional<std::filesystem::path>, 4> floppies;
     std::array<std::optional<std::filesystem::path>, 2> cartridges, hardDisks;
@@ -25,4 +26,6 @@ struct Options
 };
 // Arguments are UTF-8 and exclude the executable name.
 [[nodiscard]] std::expected<Options, std::string> Parse(std::span<const std::string_view> arguments);
+// Explicit run/boot choices override preferences; state loading defaults to paused.
+[[nodiscard]] bool StartRunning(const Options& options, bool autostart, bool restoreFailed);
 }

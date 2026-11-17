@@ -21,13 +21,13 @@ std::expected<preview_options::Options, std::string> preview_options::Parse(std:
                 return std::unexpected("--boot requires a selection from 1 to 7");
             options.boot = args[i][0] - '0';
         }
-        else if (arg == "--settings" || arg == "--rom" || arg == "--tape" || arg == "--floppy" || arg == "--floppy-read-only" ||
+        else if (arg == "--settings" || arg == "--rom" || arg == "--tape" || arg == "--state" || arg == "--floppy" || arg == "--floppy-read-only" ||
             arg == "--cartridge" || arg == "--hard-disk" || arg == "--hard-disk-read-only")
         {
             int slot = 0;
             const bool floppy = arg == "--floppy" || arg == "--floppy-read-only";
             const bool hardDisk = arg == "--hard-disk" || arg == "--hard-disk-read-only";
-            if (arg != "--rom" && arg != "--settings" && arg != "--tape")
+            if (arg != "--rom" && arg != "--settings" && arg != "--tape" && arg != "--state")
             {
                 if (++i == args.size() || args[i].size() != 1 || args[i][0] < (floppy ? '0' : '1') ||
                     args[i][0] > (floppy ? '3' : '2'))
@@ -41,6 +41,7 @@ std::expected<preview_options::Options, std::string> preview_options::Parse(std:
             if (arg == "--settings") options.settingsFile = std::move(path);
             else if (arg == "--rom") options.rom = std::move(path);
             else if (arg == "--tape") options.tape = std::move(path);
+            else if (arg == "--state") options.state = std::move(path);
             else if (floppy) { options.floppies[slot] = std::move(path); options.floppyReadOnly[slot] = arg == "--floppy-read-only"; }
             else if (arg == "--cartridge") options.cartridges[slot] = std::move(path);
             else if (hardDisk) { options.hardDisks[slot] = std::move(path); options.hardDiskReadOnly[slot] = arg == "--hard-disk-read-only"; }
@@ -48,5 +49,11 @@ std::expected<preview_options::Options, std::string> preview_options::Parse(std:
         else return std::unexpected("Unknown option: " + std::string(arg));
     }
     if (options.boot && options.run == false) return std::unexpected("--boot cannot be combined with --paused");
+    if (options.state && (options.boot || options.rom)) return std::unexpected("--state cannot be combined with --boot or --rom");
     return options;
+}
+
+bool preview_options::StartRunning(const Options& options, bool autostart, bool restoreFailed)
+{
+    return options.smokeTest || options.boot != 0 || options.run.value_or(!options.state && autostart && !restoreFailed);
 }
