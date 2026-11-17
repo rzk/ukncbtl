@@ -8,13 +8,13 @@ platform. The existing Windows frontend remains the reference during migration.
 
 ## Baseline build
 
-The historical reference build is Windows x64, MSVC and CMake. It now uses the
-shared built-in scaler without a renderer DLL. From a Visual Studio developer shell:
+The historical reference build is Windows x64. It now uses the shared built-in
+scaler without a renderer DLL. From a Windows developer shell with Clang and Ninja:
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure
+cmake -S . -B build/legacy -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
+cmake --build build/legacy
+ctest --test-dir build/legacy --output-on-failure
 ```
 
 See [performance.md](performance.md) for offline dependencies, tests and
@@ -284,8 +284,8 @@ permitted; never commit user disk images, ROMs or recordings without checking.
   application-owned scaler in both frontends.
 - The historical checked-in Visual Studio 2015 solution and project files have
   been removed, and the CPU overflow routines now use Clang-assembled source
-  instead of MASM. Application-owned WinAPI and Visual Studio generator support
-  are removed by the end of the migration. SDL's own native platform
+  instead of MASM. Documented build and CI entry points use CMake and Ninja;
+  application-owned WinAPI is removed by the end of the migration. SDL's own native platform
   implementations are not application-owned WinAPI code.
 
 ## Reference material

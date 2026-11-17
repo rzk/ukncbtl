@@ -2,7 +2,8 @@
 
 Use GoogleTest for correctness, Google Benchmark for speed measurements, and
 Tracy to locate bottlenecks. All three are integrated with CMake on Windows x64
-and MSVC. Commands below run from the repository root in Developer PowerShell.
+and MSVC. Commands below run from the repository root in a Windows developer
+shell with Ninja, the MSVC compiler and Clang available on `PATH`.
 
 ## Build options and dependencies
 
@@ -28,13 +29,13 @@ Existing populated build directories can use `-DFETCHCONTENT_UPDATES_DISCONNECTE
 ## Correctness
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
-cmake --build build --config Release --parallel
-ctest --test-dir build -C Release --output-on-failure
+cmake -S . -B build/legacy -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
+cmake --build build/legacy --parallel
+ctest --test-dir build/legacy --output-on-failure
 ```
 
-Use `ctest --test-dir build -C Release -N` to list cases and `-R ProcessorTests`
-to select a suite. `build/Release/LegacyCoreTests.exe` also accepts native
+Use `ctest --test-dir build/legacy -N` to list cases and `-R ProcessorTests`
+to select a suite. `build/legacy/LegacyCoreTests.exe` also accepts native
 GoogleTest options such as `--gtest_filter=ProcessorTests.*` and
 `--gtest_output=xml:build/core-results.xml`.
 
@@ -52,9 +53,9 @@ For memory-safety checks, install the MSVC AddressSanitizer component and run
 from Developer PowerShell so the sanitizer runtime DLL is on `PATH`:
 
 ```powershell
-cmake -S . -B build-asan -G "Visual Studio 18 2026" -A x64 -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF -DUKNCBTL_ENABLE_ASAN=ON
-cmake --build build-asan --config RelWithDebInfo
-ctest --test-dir build-asan -C RelWithDebInfo --output-on-failure
+cmake -S . -B build/legacy-asan -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF -DUKNCBTL_ENABLE_ASAN=ON
+cmake --build build/legacy-asan
+ctest --test-dir build/legacy-asan --output-on-failure
 ```
 
 The sanitizer option disables incompatible MSVC runtime-check and incremental
@@ -64,9 +65,9 @@ measurements.
 ## Speed measurements
 
 ```powershell
-cmake -S . -B build -DUKNCBTL_BUILD_BENCHMARKS=ON -DUKNCBTL_ENABLE_TRACY=OFF
-cmake --build build --config Release --target EmulatorBenchmarks --parallel
-./build/Release/EmulatorBenchmarks.exe --benchmark_min_time=0.5s --benchmark_repetitions=5 --benchmark_out=build/benchmark.json --benchmark_out_format=json
+cmake -S . -B build/legacy -DUKNCBTL_BUILD_BENCHMARKS=ON -DUKNCBTL_ENABLE_TRACY=OFF
+cmake --build build/legacy --target EmulatorBenchmarks --parallel
+./build/legacy/EmulatorBenchmarks.exe --benchmark_min_time=0.5s --benchmark_repetitions=5 --benchmark_out=build/legacy/benchmark.json --benchmark_out_format=json
 ```
 
 The benchmark executable has no GUI, ROM, disk image or GoogleTest dependency:
@@ -92,9 +93,9 @@ build configuration, and measure with Tracy disabled. A quick smoke run uses
 Use a separate directory to keep instrumented timings out of benchmark baselines:
 
 ```powershell
-cmake -S . -B build/profile -G "Visual Studio 18 2026" -A x64 -DBUILD_TESTING=OFF -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF -DUKNCBTL_ENABLE_TRACY=ON
-cmake --build build/profile --config RelWithDebInfo --target UKNCBTL --parallel
-./build/profile/RelWithDebInfo/UKNCBTL.exe
+cmake -S . -B build/profile -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF -DUKNCBTL_ENABLE_TRACY=ON
+cmake --build build/profile --target UKNCBTL --parallel
+./build/profile/UKNCBTL.exe
 ```
 
 Open the Tracy **0.12.2** profiler from the [upstream release](https://github.com/wolfpld/tracy/releases/tag/v0.12.2)

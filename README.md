@@ -63,27 +63,22 @@ verification even though their objects have been cross-assembled.
 
 ### Building the legacy Windows reference
 
-Install Visual Studio 2026 with the Desktop development with C++ workload and a
-Windows SDK, and install LLVM/Clang with `clang` on `PATH` for the CPU assembly.
-Use its bundled CMake (4.1 or newer for the Visual Studio 2026
-generator), for example from a Visual Studio Developer PowerShell:
+From a Windows developer command prompt with the SDK, C++ runtime, Clang and
+Ninja available, configure the optional reference in a separate directory:
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
-cmake --build build --config Release
+cmake -S . -B build/legacy -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
+cmake --build build/legacy
 ```
 
-The executable is `build/Release/UKNCBTL.exe`. Use `--config Debug` for a
-debug build, or open the CMake project in Visual Studio.
+The executable is `build/legacy/UKNCBTL.exe`. Use a separate build directory
+with `-DCMAKE_BUILD_TYPE=Debug` for a debug build.
 All C++ targets require C++23, including the renderer, tests and benchmarks.
 CMake selects the compiler's corresponding standard mode (MSVC may spell this
 `/std:c++latest`). Use a current MSVC toolset with `std::expected`, `std::print`
-and C++23 ranges support. Configure and build through CMake; the historical
-VS2015 project files have been removed.
-The emulator requires the x64 target. CMake also supports older
-installed Visual Studio generators; select the matching generator explicitly.
+and C++23 ranges support. The reference requires an x64 target.
 The reference frontend uses the shared built-in screen scaler and does not load
-renderer plugins. `cmake --install build --config Release --prefix <destination>`
+renderer plugins. `cmake --install build/legacy --prefix <destination>`
 installs the executable.
 The ROM and other resources are embedded in the executable. This modern build
 uses the current Microsoft toolchain and Windows SDK and does not target Windows
@@ -92,7 +87,7 @@ XP.
 Run the CMake test suite after building the corresponding configuration:
 
 ```powershell
-ctest --test-dir build -C Release --output-on-failure
+ctest --test-dir build/legacy --output-on-failure
 ```
 
 The suite uses GoogleTest and CTest, including the existing core tests, exhaustive
