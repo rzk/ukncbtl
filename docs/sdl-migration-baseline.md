@@ -56,10 +56,9 @@ The SDL screenshot clipboard adapter offers BMP and PNG data and requires an
 initialized SDL video subsystem with event processing. It is not yet connected
 to the legacy clipboard command. Its automated tests use SDL's dummy video
 driver; system clipboard interoperability still needs platform testing.
-The SDL screen renderer can draw prepared frames into an SDL renderer and is
-tested with SDL's software renderer. It is not yet connected to a frontend or
-the emulator's event loop; hardware rendering and platform display behavior
-still need testing.
+The SDL screen renderer draws emulator frames in the SDL frontend and is also
+tested with SDL's software renderer; hardware rendering and platform display
+behavior still need interactive testing.
 Dear ImGui and its SDL3 platform and SDL renderer backends can be built with
 `-DUKNCBTL_ENABLE_SDL3=ON -DUKNCBTL_ENABLE_IMGUI=ON`. CMake pins Dear ImGui
 v1.92.9b to a release commit; `FETCHCONTENT_SOURCE_DIR_IMGUI` supports an
@@ -145,7 +144,9 @@ attached and are not stored in the state image. Interactive dialogs still need t
 Audio output, file dialogs and disk interaction need interactive testing on each
 platform. Linux dialogs may require an available desktop portal.
 The `SdlFrontendSmoke` test runs three frames using SDL's dummy video driver;
-interactive behavior and platform display compatibility still need testing.
+`SdlInstallSmoke` installs the frontend and licenses into a test directory and
+checks that the installed executable starts with the dummy drivers. Interactive
+behavior and platform display compatibility still need testing.
 Build the preview with `cmake --build <build-directory> --target ukncbtl-sdl`
 after enabling both options above; the legacy frontend remains the supported
 application during migration.

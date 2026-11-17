@@ -38,3 +38,19 @@ jobs:
         run: cmake --build build
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  windows-sdl-frontend:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Windows SDK and linker environment
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure SDL frontend
+        run: cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF -DUKNCBTL_ENABLE_SDL3=ON -DUKNCBTL_ENABLE_IMGUI=ON
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy

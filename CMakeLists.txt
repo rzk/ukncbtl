@@ -329,6 +329,10 @@ if(UKNCBTL_ENABLE_IMGUI)
   target_include_directories(ukncbtl-sdl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
   target_link_libraries(ukncbtl-sdl PRIVATE DearImGui UiFont SdlScreenRenderer SdlKeyboard SdlDisplay SdlSprite MouseInput VirtualKeyboard PreviewOptions AutoBoot PreviewDebugger PreviewConsole PreviewSprite DisplayListDump SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard ScreenTextCapture VideoPalette FramePacing
     EmbeddedRom EmulatorCore VideoDecoder)
+  install(TARGETS ukncbtl-sdl RUNTIME DESTINATION bin)
+  install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME UKNCBTL-LICENSE)
+  install(FILES "${sdl3_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME SDL3-LICENSE)
+  install(FILES "${imgui_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME IMGUI-LICENSE)
 endif()
 
 if(BUILD_TESTING)
@@ -409,6 +413,11 @@ if(BUILD_TESTING)
       "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-startup-test"
       -P "${PROJECT_SOURCE_DIR}/tests/SdlStartupCli.cmake")
     set_tests_properties(SdlStartupCli PROPERTIES TIMEOUT 30)
+    add_test(NAME SdlInstallSmoke COMMAND ${CMAKE_COMMAND}
+      "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-install-test"
+      "-DEXE_NAME=$<TARGET_FILE_NAME:ukncbtl-sdl>" "-DCONFIG=$<CONFIG>"
+      -P "${PROJECT_SOURCE_DIR}/tests/SdlInstallSmoke.cmake")
+    set_tests_properties(SdlInstallSmoke PROPERTIES TIMEOUT 60)
   endif()
   ukncbtl_portable_test(TraceTests tests/TraceTests.cpp)
   ukncbtl_portable_test(SettingsCodecTests tests/SettingsCodecTests.cpp)

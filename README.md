@@ -3,15 +3,33 @@ UKNCBTL — UKNC Back to Life! emulator, Windows x86-64 version.
 
 ### Portable build during the SDL migration
 
-The portable CMake build currently contains the headless emulator core, video
-decoder, screen scaler, snapshots, WAV service and a subset of the tests; it does **not**
-build a cross-platform frontend yet. The legacy application still requires
-the Windows toolchain documented below. The intended portable toolchain is
-CMake, Ninja and a Clang toolchain with a C++23 standard library. On Windows,
-Clang also needs a Windows SDK, compatible C++ standard library and linker
-environment. The project does not yet claim a verified cross-platform release.
+The experimental SDL3 and Dear ImGui frontend builds on Windows with CMake,
+Ninja and Clang. It includes the emulator's ROM and UI font in the executable.
+The frontend is still being tested and is not yet a verified release. Linux
+and macOS frontend builds and validation remain future work.
 
-With the toolchain available on `PATH`, configure and run the portable tests:
+From a Windows developer command prompt with Clang and Ninja on `PATH`, a
+Windows SDK, and a compatible C++ standard library and linker, build it with:
+
+```powershell
+cmake -S . -B build/sdl -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF -DUKNCBTL_ENABLE_SDL3=ON -DUKNCBTL_ENABLE_IMGUI=ON
+cmake --build build/sdl
+ctest --test-dir build/sdl --output-on-failure
+cmake --install build/sdl --prefix <destination>
+```
+
+Run `build/sdl/ukncbtl-sdl.exe` or the installed `bin/ukncbtl-sdl.exe`.
+The installation includes the application and its license notices. SDL3,
+Dear ImGui and GoogleTest are fetched at pinned versions on first configure;
+`FETCHCONTENT_SOURCE_DIR_SDL3`, `FETCHCONTENT_SOURCE_DIR_IMGUI` and
+`FETCHCONTENT_SOURCE_DIR_GOOGLETEST` can point to offline source checkouts.
+The smoke tests use dummy video and audio drivers and do not replace interactive
+testing of the actual Windows display, audio and file dialogs.
+
+The headless core and tests can also be built without the frontend. The legacy
+application still requires the Windows toolchain documented below.
+
+With a Clang toolchain available on `PATH`, configure and run the headless tests:
 
 ```sh
 cmake -S . -B build/portable -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF
