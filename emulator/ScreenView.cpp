@@ -45,13 +45,8 @@ int m_yScreenOffset = 0;
 ScreenViewMode m_ScreenMode = RGBScreen;
 int m_ScreenHeightMode = 0;  // Render mode
 
-HMODULE g_hModuleRender = nullptr;
 static bool g_renderInitialized = false;
-RENDER_INIT_CALLBACK RenderInitProc = nullptr;
-RENDER_DONE_CALLBACK RenderDoneProc = nullptr;
-RENDER_DRAW_CALLBACK RenderDrawProc = nullptr;
-RENDER_ENUM_MODES_CALLBACK RenderEnumModesProc = nullptr;
-RENDER_SELECT_MODE_CALLBACK RenderSelectModeProc = nullptr;
+static std::vector<uint32_t> g_renderPixels;
 HMENU g_hScreenModeMenu = nullptr;
 int g_nScreenModeIndex = 0;
 
@@ -139,109 +134,33 @@ void ScreenView_SetMode(ScreenViewMode newMode)
     m_ScreenMode = newMode;
 }
 
-void CALLBACK ScreenView_EnumModesProc(int modeNum, LPCTSTR modeDesc, int modeWidth, int modeHeight)
+BOOL ScreenView_InitRender()
 {
-    if (g_nScreenModeIndex >= 32 || modeDesc == nullptr)
-        return;
-
-    ScreenModeStruct* pmode = ScreenModeReference + g_nScreenModeIndex;
-    pmode->modeNum = modeNum;
-    pmode->width = modeWidth;
-    pmode->height = modeHeight;
-    _tcsncpy_s(pmode->description, _countof(pmode->description), modeDesc, _TRUNCATE);
-
-    g_nScreenModeIndex++;
-}
-
-BOOL ScreenView_InitRender(LPCTSTR szRenderLibraryName)
-{
-    g_hModuleRender = ::LoadLibrary(szRenderLibraryName);
-    if (g_hModuleRender == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to load render library \"{}\" (0x{:08x})."),
-                szRenderLibraryName, ::GetLastError());
-        return FALSE;
-    }
-
-    RenderInitProc = (RENDER_INIT_CALLBACK) ::GetProcAddress(g_hModuleRender, "RenderInit");
-    if (RenderInitProc == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to retrieve RenderInit address (0x{:08x})."), ::GetLastError());
-        ScreenView_DoneRender();
-        return FALSE;
-    }
-    RenderDoneProc = (RENDER_DONE_CALLBACK) ::GetProcAddress(g_hModuleRender, "RenderDone");
-    if (RenderDoneProc == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to retrieve RenderDone address (0x{:08x})."), ::GetLastError());
-        ScreenView_DoneRender();
-        return FALSE;
-    }
-    RenderDrawProc = (RENDER_DRAW_CALLBACK) ::GetProcAddress(g_hModuleRender, "RenderDraw");
-    if (RenderDrawProc == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to retrieve RenderDraw address (0x{:08x})."), ::GetLastError());
-        ScreenView_DoneRender();
-        return FALSE;
-    }
-    RenderEnumModesProc = (RENDER_ENUM_MODES_CALLBACK) ::GetProcAddress(g_hModuleRender, "RenderEnumModes");
-    if (RenderEnumModesProc == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to retrieve RenderEnumModes address (0x{:08x})."), ::GetLastError());
-        ScreenView_DoneRender();
-        return FALSE;
-    }
-    RenderSelectModeProc = (RENDER_SELECT_MODE_CALLBACK) ::GetProcAddress(g_hModuleRender, "RenderSelectMode");
-    if (RenderSelectModeProc == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to retrieve RenderSelectMode address (0x{:08x})."), ::GetLastError());
-        ScreenView_DoneRender();
-        return FALSE;
-    }
-
-    // Enumerate render modes
     std::ranges::fill(ScreenModeReference, ScreenModeStruct{});
     g_nScreenModeIndex = 0;
-    RenderEnumModesProc(ScreenView_EnumModesProc);
-    g_hScreenModeMenu = nullptr;
-
-    // Fill Render Mode menu
-    MainWindow_UpdateRenderModeMenu();
-
-    //ScreenView_CreateScreen();
-
-    if (!RenderInitProc(UKNC_SCREEN_WIDTH, UKNC_SCREEN_HEIGHT, g_hwndScreen))
+    for (const auto& mode : screen_scale::Modes())
     {
-        AlertWarning(_T("Failed to initialize the render."));
-        ScreenView_DoneRender();
-        return FALSE;
+        auto& entry = ScreenModeReference[g_nScreenModeIndex];
+        entry.modeNum = g_nScreenModeIndex;
+        entry.width = mode.width;
+        entry.height = mode.height;
+        _tcsncpy_s(entry.description, _countof(entry.description), mode.description, _TRUNCATE);
+        ++g_nScreenModeIndex;
     }
-
+    g_hScreenModeMenu = nullptr;
+    MainWindow_UpdateRenderModeMenu();
     g_renderInitialized = true;
+    const auto& mode = screen_scale::GetMode(m_ScreenHeightMode);
+    m_cxScreenWidth = mode.width;
+    m_cyScreenHeight = mode.height;
+    g_renderPixels.resize(static_cast<size_t>(mode.width) * mode.height);
     return TRUE;
 }
 
 void ScreenView_DoneRender()
 {
-    if (g_hModuleRender != nullptr)
-    {
-        if (g_renderInitialized && RenderDoneProc != nullptr)
-            RenderDoneProc();
-        g_renderInitialized = false;
-
-        RenderInitProc = nullptr;
-        RenderDoneProc = nullptr;
-        RenderDrawProc = nullptr;
-        RenderEnumModesProc = nullptr;
-        RenderSelectModeProc = nullptr;
-
-        ::FreeLibrary(g_hModuleRender);
-        g_hModuleRender = nullptr;
-
-        //DestroyScreen();
-    }
-
-    //TODO: Clear Render Mode menu
+    g_renderInitialized = false;
+    g_renderPixels.clear();
 }
 
 // Create Screen View as child of Main Window
@@ -355,13 +274,13 @@ void ScreenView_SetRenderMode(int newRenderMode)
 {
     if (m_ScreenHeightMode == newRenderMode) return;
 
-    if (RenderSelectModeProc == nullptr)
+    if (!g_renderInitialized || newRenderMode < 0 || newRenderMode >= g_nScreenModeIndex)
         return;
 
     ScreenModeStruct* pmode = ScreenModeReference + newRenderMode;
-    RenderSelectModeProc(pmode->modeNum);
     m_cxScreenWidth = pmode->width;
     m_cyScreenHeight = pmode->height;
+    g_renderPixels.resize(static_cast<size_t>(pmode->width) * pmode->height);
     m_ScreenHeightMode = newRenderMode;
 
     ScreenView_RedrawScreen();
@@ -379,9 +298,23 @@ void ScreenView_SetRenderMode(int newRenderMode)
 void ScreenView_OnDraw(HDC hdc)
 {
     UKNC_PROFILE_SCOPE("Screen draw");
-    if (RenderDrawProc != nullptr)
+    if (g_renderInitialized && m_bits && screen_scale::Apply(m_ScreenHeightMode,
+        std::span<const uint32_t>(m_bits, UKNC_SCREEN_WIDTH * UKNC_SCREEN_HEIGHT), g_renderPixels))
     {
-        RenderDrawProc(m_bits, hdc);
+        RECT client{};
+        ::GetClientRect(g_hwndScreen, &client);
+        ::FillRect(hdc, &client, static_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH)));
+        const int x = std::max(0L, (client.right - m_cxScreenWidth) / 2);
+        const int y = std::max(0L, (client.bottom - m_cyScreenHeight) / 2);
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = m_cxScreenWidth;
+        info.bmiHeader.biHeight = m_cyScreenHeight;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        ::SetDIBitsToDevice(hdc, x, y, m_cxScreenWidth, m_cyScreenHeight, 0, 0,
+            0, m_cyScreenHeight, g_renderPixels.data(), &info, DIB_RGB_COLORS);
     }
 
     // Calculate m_xScreenOffset and m_yScreenOffset for mouse calculations

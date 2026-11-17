@@ -232,21 +232,6 @@ static CachedDwordSetting<BOOL> settingWindowFullscreen{_T("WindowFullscreen"), 
 void Settings_SetWindowFullscreen(BOOL value) { settingWindowFullscreen.Set(value); }
 BOOL Settings_GetWindowFullscreen() { return settingWindowFullscreen.Get(); }
 
-void Settings_GetRender(std::span<TCHAR> buffer)
-{
-    if (!Settings_LoadStringValue(_T("Render"), buffer.data(), static_cast<int>((std::min)(buffer.size(), size_t{32}))))
-    {
-        constexpr auto fallback = _T("RenderVfw.dll");
-        const auto length = std::char_traits<TCHAR>::length(fallback);
-        if (buffer.size() > length)
-            std::copy_n(fallback, length + 1, buffer.begin());
-    }
-}
-void Settings_SetRender(LPCTSTR sValue)
-{
-    Settings_SaveStringValue(_T("Render"), sValue);
-}
-
 void Settings_GetFloppyFilePath(int slot, std::span<TCHAR> buffer)
 {
     TCHAR bufValueName[] = _T("Floppy0");

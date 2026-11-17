@@ -541,14 +541,7 @@ if(UKNCBTL_USE_PORTABLE_SETTINGS)
 endif()
 target_link_options(UKNCBTL PRIVATE "LINKER:/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='amd64' publicKeyToken='6595b64144ccf1df' language='*'")
 
-# The default renderer is loaded dynamically, so it must be built alongside the
-# executable even when only the UKNCBTL target is requested.
-add_library(RenderVfw SHARED third_party/RenderVfw/RenderVfw.cpp third_party/RenderVfw/RenderVfw.def)
-ukncbtl_toolchain(RenderVfw)
-target_compile_definitions(RenderVfw PRIVATE UNICODE _UNICODE)
-target_link_libraries(RenderVfw PRIVATE vfw32)
-add_dependencies(UKNCBTL RenderVfw)
-install(TARGETS UKNCBTL RenderVfw RUNTIME DESTINATION .)
+install(TARGETS UKNCBTL RUNTIME DESTINATION .)
 
 if(BUILD_TESTING)
   include(GoogleTest)

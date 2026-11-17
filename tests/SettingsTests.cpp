@@ -162,34 +162,20 @@ TEST_F(SettingsTests, WindowRectPersistsAndMalformedRectLeavesCallerUntouched)
     EXPECT_EQ(std::memcmp(&actual, &rect, sizeof(rect)), 0);
 }
 
-TEST_F(SettingsTests, RenderAndFontDefaultsAndCustomValues)
+TEST_F(SettingsTests, FontDefaultsAndCustomValues)
 {
     std::array<TCHAR, 32> text{};
-    Settings_GetRender(text);
-    EXPECT_STREQ(text.data(), _T("RenderVfw.dll"));
     Settings_GetDebugFontName(text);
     EXPECT_STREQ(text.data(), _T("Lucida Console"));
-    Settings_SetRender(_T("Custom.dll"));
     Settings_SetDebugFontName(_T("Consolas"));
     Settings_Init(path.data());
-    Settings_GetRender(text);
-    EXPECT_STREQ(text.data(), _T("Custom.dll"));
     Settings_GetDebugFontName(text);
     EXPECT_STREQ(text.data(), _T("Consolas"));
-    const std::basic_string<TCHAR> oversized(32, _T('x'));
-    Raw(_T("Render"), oversized.c_str());
-    Settings_GetRender(text);
-    EXPECT_STREQ(text.data(), _T("RenderVfw.dll"));
 }
 
 TEST_F(SettingsTests, GettersRespectSmallAndEmptyDestinations)
 {
     std::array<TCHAR, 5> guarded{_T('a'), _T('b'), _T('c'), _T('d'), _T('e')};
-    Settings_GetRender(std::span{guarded}.subspan<1, 3>());
-    EXPECT_EQ(guarded[0], _T('a'));
-    EXPECT_EQ(guarded[1], _T('\0'));
-    EXPECT_EQ(guarded[4], _T('e'));
-
     Settings_SetFloppyFilePath(0, _T("long.dsk"));
     Settings_GetFloppyFilePath(0, std::span{guarded}.subspan<1, 3>());
     EXPECT_EQ(guarded[1], _T('\0'));

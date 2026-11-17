@@ -8,8 +8,8 @@ platform. The existing Windows frontend remains the reference during migration.
 
 ## Baseline build
 
-The current supported build is Windows x64, MSVC and CMake; it requires
-`RenderVfw.dll` beside the executable. From a Visual Studio developer shell:
+The historical reference build is Windows x64, MSVC and CMake. It now uses the
+shared built-in scaler without a renderer DLL. From a Visual Studio developer shell:
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
@@ -248,8 +248,8 @@ permitted; never commit user disk images, ROMs or recordings without checking.
 - [ ] Save screenshots, copy an image to the clipboard and copy screen text;
       verify screenshot formats, dimensions and screen-to-text output. Confirm
       actual SDL clipboard image support per platform before claiming parity.
-- [ ] Remove external renderer selection and loading. Map or ignore obsolete
-      renderer settings and remove the renderer DLL and plugin ABI.
+- [x] Remove external renderer selection and loading. Ignore obsolete renderer
+      settings and remove the renderer DLL and plugin ABI.
 
 ### Media and persistence
 
@@ -279,8 +279,8 @@ permitted; never commit user disk images, ROMs or recordings without checking.
 - Host serial-port and serial-backed network connections and their host
   settings have been removed. Existing INI entries are left untouched. The
   emulated network station setting and internal device behavior remain.
-- Renderer plugins and the bundled Windows renderer are removed; retained
-  display modes become application-owned functionality.
+- Renderer plugins and the renderer DLL are removed; display modes use the
+  application-owned scaler in both frontends.
 - The historical checked-in Visual Studio 2015 solution and project files have
   been removed, and the CPU overflow routines now use Clang-assembled source
   instead of MASM. Application-owned WinAPI and Visual Studio generator support

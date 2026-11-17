@@ -82,10 +82,9 @@ and C++23 ranges support. Configure and build through CMake; the historical
 VS2015 project files have been removed.
 The emulator requires the x64 target. CMake also supports older
 installed Visual Studio generators; select the matching generator explicitly.
-The build also produces `RenderVfw.dll` beside the executable; keep both files
-together when distributing or moving the program. `cmake --install build
---config Release --prefix <destination>` installs both files. The default renderer
-is included from the upstream renderer project under `third_party/RenderVfw`.
+The reference frontend uses the shared built-in screen scaler and does not load
+renderer plugins. `cmake --install build --config Release --prefix <destination>`
+installs the executable.
 The ROM and other resources are embedded in the executable. This modern build
 uses the current Microsoft toolchain and Windows SDK and does not target Windows
 XP.

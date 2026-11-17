@@ -35,7 +35,6 @@
 #define IDC_NETWORKSTATION              1007
 #define IDC_BUTTON1                     1025
 #define IDC_BUTTON2                     1026
-#define IDC_RENDER                      1027
 #define IDC_TREE1                       1028
 #define IDC_LIST1                       1029
 #define IDC_DEBUGFONT                   1030

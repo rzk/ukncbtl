@@ -160,9 +160,7 @@ BOOL CreateMainWindow()
 
     MainWindow_RestorePositionAndShow();
 
-    TCHAR renderDllName[32];
-    Settings_GetRender(renderDllName);
-    if (!ScreenView_InitRender(renderDllName))
+    if (!ScreenView_InitRender())
     {
         ::PostQuitMessage(0);
         return FALSE;

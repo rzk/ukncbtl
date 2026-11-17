@@ -347,38 +347,6 @@ void ShowSettingsDialog()
     DialogBox(g_hInst, MAKEINTRESOURCE(IDD_SETTINGS), g_hwnd, SettingsProc);
 }
 
-void FillRenderCombo(HWND hRender)
-{
-    TCHAR searchPath[MAX_PATH];
-    DWORD length = ::GetModuleFileName(GetModuleHandle(nullptr), searchPath, MAX_PATH);
-    if (length == 0 || length >= MAX_PATH)
-        return;
-    TCHAR* separator = _tcsrchr(searchPath, _T('\\'));
-    if (separator == nullptr)
-        return;
-    TCHAR* pos = separator + 1;
-    if (_tcscpy_s(pos, MAX_PATH - (pos - searchPath), _T("Render*.dll")) != 0)
-        return;
-
-    WIN32_FIND_DATA finddata;
-    HANDLE hfind = ::FindFirstFile(searchPath, &finddata);
-    if (hfind != INVALID_HANDLE_VALUE)
-    {
-        for (;;)
-        {
-            ::SendMessage(hRender, CB_ADDSTRING, 0, (LPARAM)finddata.cFileName);
-
-            if (!::FindNextFile(hfind, &finddata))
-                break;
-        }
-        ::FindClose(hfind);
-    }
-
-    TCHAR buffer[32];
-    Settings_GetRender(buffer);
-    ::SendMessage(hRender, CB_SELECTSTRING, 0, (LPARAM)buffer);
-}
-
 void FillScreenshotModeCombo(HWND hScreenshotMode)
 {
     int screenshotMode = 0;
@@ -403,9 +371,6 @@ void SettingsDialog_InitGeneralDialog(HWND hDlg)
     SendMessage(hVolume, TBM_SETTICFREQ, 0x1000, 0);
     SendMessage(hVolume, TBM_SETPOS, TRUE, (LPARAM)Settings_GetSoundVolume());
 
-    HWND hRender = GetDlgItem(hDlg, IDC_RENDER);
-    FillRenderCombo(hRender);
-
     HWND hScreenshotMode = GetDlgItem(hDlg, IDC_SCREENSHOTMODE);
     FillScreenshotModeCombo(hScreenshotMode);
 
@@ -417,11 +382,6 @@ void SettingsDialog_SaveGeneralSettings(HWND hDlg)
     HWND hVolume = GetDlgItem(hDlg, IDC_VOLUME);
     DWORD volume = SendMessage(hVolume, TBM_GETPOS, 0, 0);
     Settings_SetSoundVolume((WORD)volume);
-
-    TCHAR buffer[32];
-
-    GetDlgItemText(hDlg, IDC_RENDER, buffer, 32);
-    Settings_SetRender(buffer);
 
     int screenshotMode = ::SendMessage(GetDlgItem(hDlg, IDC_SCREENSHOTMODE), CB_GETCURSEL, 0, 0);
     Settings_SetScreenshotMode(screenshotMode);
