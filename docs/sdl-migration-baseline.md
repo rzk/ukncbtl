@@ -92,6 +92,10 @@ processors. Optional instruction/interrupt recording keeps separate recent
 histories for CPU and PPU and is cleared on reset or state load. A display-list
 inspector shows the decoded video tags. The remaining debugger tools are still
 being migrated.
+When paused, the debugger can capture a comparison baseline for both processors
+and all memory views. Changed registers and accessible byte or word values are
+highlighted until the baseline is cleared or recaptured. The baseline is kept
+only for the current session and does not read device registers.
 Memory inspection includes selected CPU/PPU mappings, raw RAM planes and ROM,
 byte or word values, and octal or hexadecimal formatting. Inaccessible and I/O
 locations are marked without reading devices; these view options are saved.

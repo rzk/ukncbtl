@@ -161,6 +161,44 @@ TEST_F(PreviewDebuggerTest, SearchesMemoryInBothDirectionsAndWraps)
     EXPECT_EQ(debugger.FindMemory(MemorySource::ram2, Processor::cpu, 01000, 0xabcd, false, forward), 01000);
 }
 
+TEST_F(PreviewDebuggerTest, ComparesRegistersAndMemoryAgainstExplicitBaseline)
+{
+    preview_debugger::Session debugger(*board);
+    using preview_debugger::MemorySource;
+    using preview_debugger::Processor;
+    board->SetRAMWord(0, 01000, 0x1234);
+    board->SetRAMWord(1, 01000, 0x5678);
+    EXPECT_FALSE(debugger.HasComparison());
+    EXPECT_FALSE(debugger.RegisterChanged(Processor::cpu, 0));
+    debugger.CaptureComparison();
+    ASSERT_TRUE(debugger.HasComparison());
+    EXPECT_FALSE(debugger.MemoryChanged(MemorySource::ram0, Processor::cpu, 01000, false));
+    board->SetRAMByte(0, 01001, 0xab);
+    EXPECT_TRUE(debugger.MemoryChanged(MemorySource::ram0, Processor::cpu, 01000, false));
+    EXPECT_FALSE(debugger.MemoryChanged(MemorySource::ram0, Processor::cpu, 01000, true));
+    EXPECT_TRUE(debugger.MemoryChanged(MemorySource::ram0, Processor::cpu, 01001, true));
+    EXPECT_FALSE(debugger.MemoryChanged(MemorySource::ram0, Processor::cpu, 01001, false));
+    EXPECT_FALSE(debugger.MemoryChanged(MemorySource::ram1, Processor::cpu, 01000, false));
+    EXPECT_FALSE(debugger.MemoryChanged(MemorySource::rom, Processor::cpu, 01000, false));
+    EXPECT_FALSE(debugger.MemoryChanged(MemorySource::ppu, Processor::ppu, 0177700, false));
+    ASSERT_TRUE(debugger.WriteMemory(MemorySource::cpu, Processor::cpu, 01000, 0x4321, false));
+    EXPECT_TRUE(debugger.MemoryChanged(MemorySource::selected, Processor::cpu, 01000, false));
+    ASSERT_TRUE(debugger.WriteRegister(Processor::cpu, 0, 123));
+    EXPECT_TRUE(debugger.RegisterChanged(Processor::cpu, 0));
+    EXPECT_FALSE(debugger.RegisterChanged(Processor::ppu, 0));
+    ASSERT_TRUE(debugger.WriteRegister(Processor::ppu, 8, 017));
+    EXPECT_TRUE(debugger.RegisterChanged(Processor::ppu, 8));
+    EXPECT_FALSE(debugger.RegisterChanged(Processor::cpu, 8));
+    EXPECT_FALSE(debugger.RegisterChanged(Processor::cpu, -1));
+    EXPECT_FALSE(debugger.RegisterChanged(Processor::cpu, 11));
+    debugger.CaptureComparison();
+    EXPECT_FALSE(debugger.RegisterChanged(Processor::cpu, 0));
+    EXPECT_FALSE(debugger.MemoryChanged(MemorySource::ram0, Processor::cpu, 01000, false));
+    debugger.ClearComparison();
+    EXPECT_FALSE(debugger.HasComparison());
+    EXPECT_FALSE(debugger.MemoryChanged(MemorySource::ram0, Processor::cpu, 01000, false));
+}
+
 TEST_F(PreviewDebuggerTest, SearchesBytesAndSkipsInaccessibleMemory)
 {
     preview_debugger::Session debugger(*board);

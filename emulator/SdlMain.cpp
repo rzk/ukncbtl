@@ -195,6 +195,7 @@ int Run(const preview_options::Options& options)
         startupError += "\nThe saved paths are kept for the next launch.";
     }
     preview_debugger::Session debugger(board);
+    if (smokeTest) debugger.CaptureComparison();
     for (const auto address : settings.cpuBreakpoints)
         if (address != BreakpointSet::NoBreakpoint) (void)debugger.Breakpoints(preview_debugger::Processor::cpu).Add(address);
     for (const auto address : settings.ppuBreakpoints)
@@ -1177,16 +1178,37 @@ int Run(const preview_options::Options& options)
                 if (ImGui::Button("Step over") && debugger.StepOver(debugProcessor)) startMachine(started);
                 ImGui::EndDisabled();
                 ImGui::TextDisabled("Step advances both processors, as in the legacy debugger.");
+                ImGui::BeginDisabled(running);
+                if (ImGui::Button("Capture comparison baseline")) debugger.CaptureComparison();
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!debugger.HasComparison());
+                if (ImGui::Button("Clear comparison")) debugger.ClearComparison();
+                ImGui::EndDisabled();
+                ImGui::TextDisabled(debugger.HasComparison() ? "Highlighted values differ from the captured baseline." :
+                    "Pause and capture a baseline to compare registers and memory.");
                 auto& processor = debugger.GetProcessor(debugProcessor);
                 constexpr std::array registerNames{"R0", "R1", "R2", "R3", "R4", "R5", "SP", "PC"};
                 for (int reg = 0; reg < 8; ++reg)
                 {
                     if (reg % 4) ImGui::SameLine();
+                    const bool changed = debugger.RegisterChanged(debugProcessor, reg);
+                    if (changed)
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_PlotHistogram));
                     ImGui::Text("%s: %06o", registerNames[reg], static_cast<unsigned>(processor.GetReg(reg)));
+                    if (changed) ImGui::PopStyleColor();
                 }
-                ImGui::Text("PSW: %06o   CPC: %06o   CPSW: %06o   %s", static_cast<unsigned>(processor.GetPSW()),
-                    static_cast<unsigned>(processor.GetCPC()), static_cast<unsigned>(processor.GetCPSW()),
-                    processor.IsHaltMode() ? "HALT" : "USER");
+                const std::array statusValues{processor.GetPSW(), processor.GetCPC(), processor.GetCPSW()};
+                constexpr std::array statusNames{"PSW", "CPC", "CPSW"};
+                for (int index = 0; index < 3; ++index)
+                {
+                    if (index) ImGui::SameLine();
+                    const bool changed = debugger.RegisterChanged(debugProcessor, index + 8);
+                    if (changed) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_PlotHistogram));
+                    ImGui::Text("%s: %06o", statusNames[index], static_cast<unsigned>(statusValues[index]));
+                    if (changed) ImGui::PopStyleColor();
+                }
+                ImGui::SameLine(); ImGui::TextUnformatted(processor.IsHaltMode() ? "HALT" : "USER");
                 if (smokeTest) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
                 if (ImGui::CollapsingHeader("Edit registers (octal; paused)"))
                 {
@@ -1340,18 +1362,24 @@ int Run(const preview_options::Options& options)
                     else for (unsigned row = 0; row < 8; ++row)
                     {
                         const auto address = static_cast<std::uint16_t>(*base + row * 8);
-                        auto text = std::format("{:06o}  ", address);
+                        ImGui::Text("%06o  ", static_cast<unsigned>(address));
                         const unsigned stride = settings.memoryBytes ? 1 : 2;
                         for (unsigned offset = 0; offset < 8; offset += stride)
                         {
+                            const auto cellAddress = static_cast<std::uint16_t>(address + offset);
                             const auto cell = debugger.InspectMemory(static_cast<preview_debugger::MemorySource>(settings.memorySource),
-                                debugProcessor, static_cast<std::uint16_t>(address + offset), settings.memoryBytes);
+                                debugProcessor, cellAddress, settings.memoryBytes);
+                            std::string text;
                             if (!cell) text += settings.memoryBytes ? (settings.memoryHex ? "-- " : "--- ") :
                                 (settings.memoryHex ? "---- " : "------ ");
                             else if (settings.memoryHex) text += settings.memoryBytes ? std::format("{:02X} ", *cell) : std::format("{:04X} ", *cell);
                             else text += settings.memoryBytes ? std::format("{:03o} ", *cell) : std::format("{:06o} ", *cell);
+                            const bool changed = debugger.MemoryChanged(memorySource, debugProcessor, cellAddress, settings.memoryBytes);
+                            ImGui::SameLine(0, 0);
+                            if (changed) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_PlotHistogram));
+                            ImGui::TextUnformatted(text.c_str());
+                            if (changed) ImGui::PopStyleColor();
                         }
-                        ImGui::TextUnformatted(text.c_str());
                     }
                     ImGui::SetNextItemWidth(110);
                     ImGui::InputText("##memory-search", memorySearchValue.data(), memorySearchValue.size(),

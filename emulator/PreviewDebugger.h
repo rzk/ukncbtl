@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -40,7 +41,7 @@ struct Line
 class Session
 {
 public:
-    explicit Session(CMotherboard& board) : board_(board) {}
+    explicit Session(CMotherboard& board);
     ~Session();
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;
@@ -55,6 +56,14 @@ public:
     // Search starts after the given address, wraps once, and skips inaccessible memory.
     [[nodiscard]] std::optional<std::uint16_t> FindMemory(MemorySource source, Processor selected,
         std::uint16_t start, std::uint16_t value, bool byteMode, SearchDirection direction) const;
+    // Comparison is explicit and remains stable until recaptured or cleared.
+    void CaptureComparison();
+    void ClearComparison();
+    [[nodiscard]] bool HasComparison() const;
+    // Registers 0..7, PSW, CPC, CPSW are indexed 0..10.
+    [[nodiscard]] bool RegisterChanged(Processor which, int index) const;
+    [[nodiscard]] bool MemoryChanged(MemorySource source, Processor selected,
+        std::uint16_t address, bool byteMode) const;
     [[nodiscard]] DisasmHint CurrentHint(Processor which) const;
     // Register 0..7 selects R0..PC; index 8 selects PSW.
     [[nodiscard]] bool WriteRegister(Processor which, int index, std::uint16_t value);
@@ -94,12 +103,14 @@ public:
     [[nodiscard]] bool TraceConflicts(const std::filesystem::path& path) const;
     [[nodiscard]] bool TakeTraceError();
 private:
+    struct Comparison;
     void UpdateCallbacks();
     void TraceWrite(std::string_view text);
     static void OnInstruction(void* context, const CProcessor* processor, std::uint16_t address, std::uint16_t opcode);
     static void OnInterrupt(void* context, const CProcessor* processor, std::uint16_t oldPc, std::uint16_t vector);
     static void OnFloppyTrace(void* context, std::wstring_view text);
     CMotherboard& board_;
+    std::unique_ptr<Comparison> comparison_;
     BreakpointSet cpu_, ppu_;
     InstructionHistory history_;
     bool historyEnabled_ = false;

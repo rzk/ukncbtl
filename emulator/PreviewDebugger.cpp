@@ -6,6 +6,7 @@
 #include "emubase/Board.h"
 #include "emubase/Processor.h"
 #include "util/IniEncoding.h"
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <format>
@@ -43,6 +44,15 @@ std::optional<std::string> preview_debugger::ToUtf8(std::wstring_view text)
     if (!bytes) return std::nullopt;
     return std::string(bytes->begin(), bytes->end());
 }
+
+struct preview_debugger::Session::Comparison
+{
+    std::array<std::array<std::uint16_t, 11>, 2> registers{};
+    // One view each for CPU, PPU, the three raw RAM planes, and ROM.
+    std::array<std::vector<std::optional<std::uint16_t>>, 6> memory;
+};
+
+preview_debugger::Session::Session(CMotherboard& board) : board_(board) {}
 
 preview_debugger::Session::~Session()
 {
@@ -101,6 +111,63 @@ std::optional<std::uint16_t> preview_debugger::Session::FindMemory(MemorySource 
             return address;
     }
     return std::nullopt;
+}
+
+namespace
+{
+constexpr std::array comparisonSources{preview_debugger::MemorySource::cpu, preview_debugger::MemorySource::ppu,
+    preview_debugger::MemorySource::ram0, preview_debugger::MemorySource::ram1,
+    preview_debugger::MemorySource::ram2, preview_debugger::MemorySource::rom};
+
+std::uint16_t RegisterValue(const CProcessor& processor, int index)
+{
+    if (index < 8) return processor.GetReg(index);
+    if (index == 8) return processor.GetPSW();
+    if (index == 9) return processor.GetCPC();
+    return processor.GetCPSW();
+}
+}
+
+void preview_debugger::Session::CaptureComparison()
+{
+    auto capture = std::make_unique<Comparison>();
+    for (int processor = 0; processor < 2; ++processor)
+        for (int reg = 0; reg < 11; ++reg)
+            capture->registers[processor][reg] = RegisterValue(GetProcessor(processor ? Processor::ppu : Processor::cpu), reg);
+    for (std::size_t view = 0; view < comparisonSources.size(); ++view)
+    {
+        auto& values = capture->memory[view];
+        values.reserve(32768);
+        for (unsigned address = 0; address < 65536; address += 2)
+            values.push_back(InspectMemory(comparisonSources[view], Processor::cpu,
+                static_cast<std::uint16_t>(address), false));
+    }
+    comparison_ = std::move(capture);
+}
+
+void preview_debugger::Session::ClearComparison() { comparison_.reset(); }
+bool preview_debugger::Session::HasComparison() const { return static_cast<bool>(comparison_); }
+
+bool preview_debugger::Session::RegisterChanged(Processor which, int index) const
+{
+    if (!comparison_ || index < 0 || index >= 11) return false;
+    const auto processor = which == Processor::cpu ? 0 : 1;
+    return comparison_->registers[processor][index] != RegisterValue(GetProcessor(which), index);
+}
+
+bool preview_debugger::Session::MemoryChanged(MemorySource source, Processor selected,
+    std::uint16_t address, bool byteMode) const
+{
+    if (!comparison_ || (!byteMode && (address & 1))) return false;
+    if (source == MemorySource::selected) source = selected == Processor::cpu ? MemorySource::cpu : MemorySource::ppu;
+    const auto it = std::find(comparisonSources.begin(), comparisonSources.end(), source);
+    if (it == comparisonSources.end()) return false;
+    const auto view = static_cast<std::size_t>(it - comparisonSources.begin());
+    const auto previous = comparison_->memory[view][address / 2];
+    const auto current = InspectMemory(source, selected, static_cast<std::uint16_t>(address & 0xfffe), false);
+    if (!previous || !current) return false;
+    const auto difference = static_cast<std::uint16_t>(*previous ^ *current);
+    return byteMode ? ((difference >> ((address & 1) * 8)) & 0xff) != 0 : difference != 0;
 }
 
 DisasmHint preview_debugger::Session::CurrentHint(Processor which) const
