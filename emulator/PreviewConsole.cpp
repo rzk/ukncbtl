@@ -26,8 +26,9 @@ std::vector<std::string> Tokens(std::string_view input)
     {
         auto& first = result[0];
         std::size_t prefix = 0;
-        if (first.size() > 2 && first.starts_with("bc")) prefix = 2;
-        else if (first.size() > 1 && (first[0] == 'b' || first[0] == 'd' || first[0] == 'm' || first[0] == 'g') &&
+        if (first.size() > 2 && (first.starts_with("bc") || first.starts_with("fc")) &&
+            first[2] >= '0' && first[2] <= '9') prefix = 2;
+        else if (first.size() > 1 && (first[0] == 'b' || first[0] == 'd' || first[0] == 'D' || first[0] == 'm' || first[0] == 'g') &&
             first[1] >= '0' && first[1] <= '9') prefix = 1;
         if (prefix)
         {
@@ -95,9 +96,11 @@ preview_console::Action preview_console::Console::Submit(std::string_view comman
     if ((op == "h" || op == "help") && tokens.size() == 1)
     {
         say("p: CPU/PPU  r: registers  r0 [value] / rps [value]: register\n"
-            "m [address [value]]: memory  d [address]: disassemble\n"
+            "m [address [value]]: memory  mr0..mr7: memory at register\n"
+            "d [address]: disassemble  D [address]: short disassembly\n"
             "b [address]: list/add breakpoint  bc [address]: clear breakpoint(s)\n"
-            "s: step  so: step over  g [address]: run/run to  pause: pause  c: clear log");
+            "s: step  so: step over  g [address]: run/run to  pause: pause  c: clear log\n"
+            "fc high low: convert two octal FIS floating-point words");
     }
     else if (op == "c" && tokens.size() == 1) log_.clear();
     else if (op == "p" && tokens.size() == 1)
@@ -109,7 +112,7 @@ preview_console::Action preview_console::Console::Submit(std::string_view comman
     {
         for (int index = 0; index < 8; ++index) Append(std::format("R{}={:06o}{}", index,
             cpu.GetReg(index), index == 7 ? "\n" : "  "));
-        Append(std::format("PSW={:06o}\n", cpu.GetPSW()));
+        Append(std::format("PSW={:06o}  PC'={:06o}  PSW'={:06o}\n", cpu.GetPSW(), cpu.GetCPC(), cpu.GetCPSW()));
     }
     else if ((op == "rps" || (op.size() == 2 && op[0] == 'r' && op[1] >= '0' && op[1] <= '7')) && tokens.size() <= 2)
     {
@@ -124,9 +127,23 @@ preview_console::Action preview_console::Console::Submit(std::string_view comman
             say("Register updated.");
         }
     }
-    else if ((op == "m" || op == "d") && tokens.size() <= (op == "m" ? 3u : 2u))
+    else if (op == "fc" && tokens.size() == 3)
     {
-        const auto address = tokens.size() >= 2 ? ParseAddress(tokens[1]) : std::optional{cpu.GetPC()};
+        const auto high = ParseWord(tokens[1]);
+        const auto low = ParseWord(tokens[2]);
+        if (!high || !low) return fail();
+        const auto mantissa = ((static_cast<std::uint32_t>(*high) << 16 | *low) & 0x7fffffu) | 0x800000u;
+        const int exponent = (*high >> 7) & 0xff;
+        const auto value = preview_debugger::ToUtf8(Disasm_FloatToString(*high, *low)).value_or("?");
+        Append(std::format("exp: {}, mant: 0x{:x}\n{}\n", exponent == 0 ? 0 : exponent - 128, mantissa, value));
+    }
+    else if ((op == "m" || op == "d" || op == "D" || op.starts_with("mr")) &&
+        tokens.size() <= (op == "m" ? 3u : op.starts_with("mr") ? 1u : 2u))
+    {
+        const bool registerMemory = op.starts_with("mr");
+        if (registerMemory && (op.size() != 3 || op[2] < '0' || op[2] > '7')) return fail();
+        const auto address = registerMemory ? std::optional{cpu.GetReg(op[2] - '0')} :
+            tokens.size() >= 2 ? ParseAddress(tokens[1]) : std::optional{cpu.GetPC()};
         if (!address || (*address & 1)) return fail();
         if (op == "m" && tokens.size() == 3)
         {
@@ -135,7 +152,7 @@ preview_console::Action preview_console::Console::Submit(std::string_view comman
             if (!paused()) return Action::none;
             say(debugger.WriteMemory(processor, *address, *value) ? "RAM updated." : "Address is not writable RAM.");
         }
-        else if (op == "m")
+        else if (op == "m" || registerMemory)
             for (int row = 0; row < 8; ++row)
             {
                 const auto at = static_cast<std::uint16_t>(*address + row * 2);
@@ -146,7 +163,8 @@ preview_console::Action preview_console::Console::Submit(std::string_view comman
             if (!line.blockComment.empty()) { Append(line.blockComment); Append("\n"); }
             const auto mnemonic = preview_debugger::ToUtf8(line.instruction.mnemonic).value_or("?");
             const auto argument = preview_debugger::ToUtf8(line.instruction.argument).value_or("?");
-            Append(std::format("{:06o}  {:06o}  {} {} {}\n", line.address, line.word, mnemonic, argument, line.comment));
+            if (op == "D") Append(std::format("{:06o}  {} {}\n", line.address, mnemonic, argument));
+            else Append(std::format("{:06o}  {:06o}  {} {} {}\n", line.address, line.word, mnemonic, argument, line.comment));
         }
     }
     else if ((op == "b" || op == "bc") && tokens.size() <= 2)

@@ -81,6 +81,41 @@ TEST_F(PreviewConsoleTest, RejectsInvalidCommandsAndPreservesReadOnlyMemory)
     EXPECT_NE(console.Log().find("not writable RAM"), std::string::npos);
 }
 
+TEST_F(PreviewConsoleTest, DumpsMemoryAtSelectedRegisterAndValidatesAddresses)
+{
+    Submit("r0=001000");
+    Submit("mr0");
+    EXPECT_NE(console.Log().find("001000  005200"), std::string::npos);
+    Submit("c");
+    Submit("r0=001001");
+    Submit("mr0");
+    EXPECT_NE(console.Log().find("Invalid command"), std::string::npos);
+    Submit("c");
+    Submit("mr8");
+    EXPECT_NE(console.Log().find("Invalid command"), std::string::npos);
+    Submit("c");
+    Submit("mr0 1000");
+    EXPECT_NE(console.Log().find("Invalid command"), std::string::npos);
+}
+
+TEST_F(PreviewConsoleTest, ConvertsFisWordsAndSupportsShortDisassembly)
+{
+    Submit("fc000000 000000");
+    EXPECT_NE(console.Log().find("exp: 0, mant: 0x800000\n0"), std::string::npos);
+    Submit("c");
+    Submit("fc 040200 000000");
+    EXPECT_NE(console.Log().find("exp: 1, mant: 0x800000"), std::string::npos);
+    Submit("c");
+    Submit("fc 8 0");
+    EXPECT_NE(console.Log().find("Invalid command"), std::string::npos);
+    Submit("c");
+    Submit("D01000");
+    EXPECT_NE(console.Log().find("001000  INC"), std::string::npos);
+    EXPECT_EQ(console.Log().find("001000  005200"), std::string::npos);
+    Submit("r");
+    EXPECT_NE(console.Log().find("PC'="), std::string::npos);
+}
+
 TEST_F(PreviewConsoleTest, StepAndStepOverFollowDebuggerExecutionRules)
 {
     using preview_console::Action;
