@@ -70,5 +70,6 @@ private:
     std::unique_ptr<Output> output_;
     SDL_AudioDeviceID device_ = SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
     bool active_ = false;
+    int primingFrames_ = 0;
 };
 }

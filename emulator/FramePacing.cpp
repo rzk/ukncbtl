@@ -47,7 +47,11 @@ std::optional<frame_pacing::Duration> frame_pacing::Remaining(Duration target, D
 void frame_pacing::Scheduler::FrameStarted(Clock::time_point now, std::uint16_t speed, unsigned framesPerSecond)
 {
     const auto target = Target(speed, framesPerSecond);
-    next_ = target ? now + std::chrono::duration_cast<Clock::duration>(*target) : now;
+    if (!target) { next_ = now; return; }
+    const auto interval = std::chrono::duration_cast<Clock::duration>(*target);
+    // Preserve the schedule across late wakeups, but do not replay an
+    // unbounded backlog after a long stall or debugger interruption.
+    next_ = std::max(next_, now - interval * 3) + interval;
 }
 
 frame_pacing::Duration frame_pacing::Scheduler::Delay(Clock::time_point now, std::uint16_t speed, bool running) const

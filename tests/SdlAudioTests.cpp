@@ -125,6 +125,18 @@ TEST(SdlAudioPlayback, ReopensTransactionallyAndPreservesCallbackOwnership)
     EXPECT_FALSE(playback.Active());
     EXPECT_TRUE(playback.SetActive(true));
     EXPECT_TRUE(playback.Active());
+    EXPECT_TRUE(SDL_AudioDevicePaused(playback.LogicalDevice()));
+    for (int i = 0; i < 2; ++i)
+    {
+        ASSERT_TRUE(board.SystemFrame());
+        ASSERT_TRUE(playback.SubmitFrame());
+        EXPECT_TRUE(SDL_AudioDevicePaused(playback.LogicalDevice()));
+    }
+    ASSERT_TRUE(board.SystemFrame());
+    ASSERT_TRUE(playback.SubmitFrame());
+    EXPECT_FALSE(SDL_AudioDevicePaused(playback.LogicalDevice()));
+    ASSERT_TRUE(playback.Reset());
+    EXPECT_TRUE(SDL_AudioDevicePaused(playback.LogicalDevice()));
     EXPECT_FALSE(playback.Open(0, 1, 50, true));
     EXPECT_FALSE(playback.Open(static_cast<SDL_AudioDeviceID>(0x7ffffffe), 1, 50, true));
     EXPECT_FALSE(playback.Open(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, 4, 50, true));

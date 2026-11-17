@@ -73,14 +73,14 @@ bool sdl_audio::Playback::Open(SDL_AudioDeviceID device, std::uint16_t speed, in
     const SDL_AudioSpec spec{SDL_AUDIO_S16LE, Channels, SampleRate};
     std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> candidate(
         SDL_OpenAudioDeviceStream(device, &spec, nullptr, nullptr), SDL_DestroyAudioStream);
-    if (!candidate || !ConfigureStream(*candidate, speed, volume) ||
-        (active && !SDL_ResumeAudioStreamDevice(candidate.get()))) return false;
+    if (!candidate || !ConfigureStream(*candidate, speed, volume)) return false;
     // The old adapter must detach before a new one installs its board callback.
     output_.reset();
     stream_ = std::move(candidate);
     output_ = std::make_unique<Output>(board_, *stream_);
     device_ = device;
     active_ = active;
+    primingFrames_ = active ? 3 : 0;
     return true;
 }
 
@@ -89,6 +89,7 @@ void sdl_audio::Playback::Close()
     output_.reset();
     stream_.reset();
     active_ = false;
+    primingFrames_ = 0;
 }
 
 SDL_AudioDeviceID sdl_audio::Playback::LogicalDevice() const
@@ -111,13 +112,24 @@ bool sdl_audio::Playback::SetActive(bool active)
 {
     if (!output_) return false;
     if (active_ == active) return true;
-    if (!SDL_PauseAudioStreamDevice(stream_.get()) || !output_->Reset() ||
-        (active && !SDL_ResumeAudioStreamDevice(stream_.get()))) return false;
+    if (!SDL_PauseAudioStreamDevice(stream_.get()) || !output_->Reset()) return false;
     active_ = active;
+    primingFrames_ = active ? 3 : 0;
     return true;
 }
 
 bool sdl_audio::Playback::Configure(std::uint16_t speed, int volume)
 { return output_ && output_->Configure(speed, volume); }
-bool sdl_audio::Playback::Reset() { return output_ && output_->Reset(); }
-bool sdl_audio::Playback::SubmitFrame() { return output_ && output_->SubmitFrame(); }
+bool sdl_audio::Playback::Reset()
+{
+    if (!output_ || (active_ && !SDL_PauseAudioStreamDevice(stream_.get())) || !output_->Reset()) return false;
+    primingFrames_ = active_ ? 3 : 0;
+    return true;
+}
+bool sdl_audio::Playback::SubmitFrame()
+{
+    if (!output_ || !output_->SubmitFrame()) return false;
+    if (active_ && primingFrames_ > 0 && --primingFrames_ == 0)
+        return SDL_ResumeAudioStreamDevice(stream_.get());
+    return true;
+}

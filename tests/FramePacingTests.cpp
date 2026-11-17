@@ -67,3 +67,18 @@ TEST(FramePacing, SchedulerKeepsUiResponsiveAndRunsFramesAtSelectedRate)
     scheduler.FrameStarted(start + 400ms, 0, 50);
     EXPECT_EQ(scheduler.Delay(start + 400ms, 0, true), 0ms);
 }
+
+TEST(FramePacing, LateWakeupsDoNotAccumulateAndLongStallsHaveBoundedCatchup)
+{
+    const frame_pacing::Clock::time_point start{};
+    frame_pacing::Scheduler scheduler(start);
+    scheduler.FrameStarted(start, 1, 50);
+    scheduler.FrameStarted(start + 22ms, 1, 50);
+    EXPECT_TRUE(scheduler.Due(start + 40ms));
+    scheduler.FrameStarted(start + 1s, 1, 50);
+    EXPECT_TRUE(scheduler.Due(start + 1s));
+    scheduler.FrameStarted(start + 1s, 1, 50);
+    scheduler.FrameStarted(start + 1s, 1, 50);
+    scheduler.FrameStarted(start + 1s, 1, 50);
+    EXPECT_FALSE(scheduler.Due(start + 1s));
+}
