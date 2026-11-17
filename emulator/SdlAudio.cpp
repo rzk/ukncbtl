@@ -91,6 +91,22 @@ void sdl_audio::Playback::Close()
     active_ = false;
 }
 
+SDL_AudioDeviceID sdl_audio::Playback::LogicalDevice() const
+{ return stream_ ? SDL_GetAudioStreamDevice(stream_.get()) : 0; }
+
+sdl_audio::RemovalResult sdl_audio::Playback::HandleDeviceRemoval(SDL_AudioDeviceID removed, bool recording,
+    std::uint16_t speed, int volume)
+{
+    if (!IsOpen() || recording || !removed) return RemovalResult::ignored;
+    const auto logical = LogicalDevice();
+    if (removed != logical && (device_ == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK || removed != device_))
+        return RemovalResult::ignored;
+    const bool wasActive = active_;
+    if (Open(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, speed, volume, wasActive)) return RemovalResult::switchedToDefault;
+    Close();
+    return RemovalResult::unavailable;
+}
+
 bool sdl_audio::Playback::SetActive(bool active)
 {
     if (!output_) return false;

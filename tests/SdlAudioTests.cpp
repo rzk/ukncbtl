@@ -145,4 +145,39 @@ TEST(SdlAudioPlayback, ReopensTransactionallyAndPreservesCallbackOwnership)
     EXPECT_FALSE(playback.SetActive(true));
     EXPECT_FALSE(playback.SubmitFrame());
 }
+
+TEST(SdlAudioPlayback, HandlesSelectedAndLogicalDeviceRemoval)
+{
+    ASSERT_TRUE(SDL_SetHintWithPriority(SDL_HINT_AUDIO_DRIVER, "dummy", SDL_HINT_OVERRIDE));
+    ASSERT_TRUE(SDL_InitSubSystem(SDL_INIT_AUDIO)) << SDL_GetError();
+    struct AudioGuard { ~AudioGuard() { SDL_QuitSubSystem(SDL_INIT_AUDIO); } } audioGuard;
+    CProcessor::Init();
+    struct ProcessorGuard { ~ProcessorGuard() { CProcessor::Done(); } } processorGuard;
+    CMotherboard board;
+    board.Reset();
+    board.GetCPU()->SetDCLOPin(true); board.GetPPU()->SetDCLOPin(true);
+    sdl_audio::Playback playback(board);
+    using enum sdl_audio::RemovalResult;
+    EXPECT_EQ(playback.HandleDeviceRemoval(1, false, 1, 50), ignored);
+    ASSERT_TRUE(playback.Open(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, 1, 50, true));
+    const auto logical = playback.LogicalDevice();
+    ASSERT_NE(logical, 0u);
+    EXPECT_EQ(playback.HandleDeviceRemoval(logical, true, 1, 50), ignored);
+    EXPECT_EQ(playback.HandleDeviceRemoval(0, false, 1, 50), ignored);
+    const auto devices = sdl_audio::PlaybackDevices();
+    ASSERT_FALSE(devices.empty());
+    EXPECT_EQ(playback.HandleDeviceRemoval(devices.front().id, false, 1, 50), ignored);
+    EXPECT_EQ(playback.HandleDeviceRemoval(logical, false, 1, 50), switchedToDefault);
+    EXPECT_EQ(playback.Device(), SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK);
+    EXPECT_TRUE(playback.Active());
+    ASSERT_TRUE(board.SystemFrame());
+    EXPECT_TRUE(playback.SubmitFrame());
+    ASSERT_TRUE(playback.Open(devices.front().id, 2, 25, false));
+    EXPECT_EQ(playback.HandleDeviceRemoval(devices.front().id, false, 2, 25), switchedToDefault);
+    EXPECT_EQ(playback.Device(), SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK);
+    EXPECT_FALSE(playback.Active());
+    EXPECT_EQ(playback.HandleDeviceRemoval(playback.LogicalDevice(), false, 4, 25), unavailable);
+    EXPECT_FALSE(playback.IsOpen());
+    EXPECT_FALSE(playback.Active());
+}
 }

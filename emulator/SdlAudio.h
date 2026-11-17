@@ -43,6 +43,7 @@ private:
 
 struct DeviceInfo { SDL_AudioDeviceID id; std::string name; };
 [[nodiscard]] std::vector<DeviceInfo> PlaybackDevices();
+enum class RemovalResult { ignored, switchedToDefault, unavailable };
 
 // Owns the stream and callback. Opening a new device leaves the old one intact
 // if the replacement cannot be initialized. SDL audio must be initialized first.
@@ -55,6 +56,10 @@ public:
     [[nodiscard]] bool IsOpen() const { return output_ != nullptr; }
     [[nodiscard]] bool Active() const { return active_; }
     [[nodiscard]] SDL_AudioDeviceID Device() const { return device_; }
+    // SDL also reports removal of the logical device bound to this stream.
+    [[nodiscard]] SDL_AudioDeviceID LogicalDevice() const;
+    [[nodiscard]] RemovalResult HandleDeviceRemoval(SDL_AudioDeviceID removed, bool recording,
+        std::uint16_t speed, int volume);
     [[nodiscard]] bool SetActive(bool active);
     [[nodiscard]] bool Configure(std::uint16_t speed, int volume);
     [[nodiscard]] bool Reset();

@@ -190,6 +190,8 @@ in the legacy application. These settings are saved with the preview preferences
 Audio > Output selects the system default or an available playback device for
 the current session. A failed device change leaves the existing output active;
 after an audio failure, use that menu to retry without restarting the emulator.
+If a selected output is disconnected, the frontend attempts to switch to the
+system default and reports the result. SDL handles normal default-device changes.
 The Emulator menu can enable the emulated mouse; its setting is saved with the
 preview preferences. Pointer motion is scaled to the displayed screen, and mouse
 input is released when the window loses focus, emulation pauses, or ImGui

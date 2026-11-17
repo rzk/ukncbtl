@@ -365,6 +365,20 @@ int Run(const preview_options::Options& options)
         while (SDL_PollEvent(&event))
         {
             ImGui_ImplSDL3_ProcessEvent(&event);
+            if (event.type == SDL_EVENT_AUDIO_DEVICE_REMOVED)
+            {
+                const auto result = audio.HandleDeviceRemoval(event.adevice.which, event.adevice.recording,
+                    settings.speed, settings.volume);
+                if (result != sdl_audio::RemovalResult::ignored)
+                {
+                    if (showActionError && !actionError.empty()) actionError += "\n";
+                    else actionError.clear();
+                    actionError += result == sdl_audio::RemovalResult::switchedToDefault ?
+                        "Audio output was disconnected; switched to the system default." :
+                        "Audio output was disconnected. Use Audio > Output to retry.";
+                    showActionError = true;
+                }
+            }
             if ((event.type == SDL_EVENT_DROP_BEGIN || event.type == SDL_EVENT_DROP_FILE ||
                 event.type == SDL_EVENT_DROP_COMPLETE) && event.drop.windowID == SDL_GetWindowID(window.get()))
             {
