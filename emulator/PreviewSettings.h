@@ -59,6 +59,8 @@ enum class ImportEncoding { unicode, windows1251, windows1252 };
     const std::filesystem::path& path, ImportEncoding encoding, const Settings& current);
 
 [[nodiscard]] bool ValidWindowSize(int width, int height);
+// Compares existing aliases and normalized paths that may not exist yet.
+[[nodiscard]] bool SameFile(const std::filesystem::path& first, const std::filesystem::path& second);
 // Missing files and invalid individual values use defaults. Other read errors
 // are returned to the caller, which should avoid overwriting the file.
 [[nodiscard]] std::expected<Settings, IniFileError> Load(const std::filesystem::path& path);

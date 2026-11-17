@@ -71,6 +71,7 @@ in emulated frames; resetting, pausing or losing focus cancels the sequence.
 The executable accepts `--run`/`--paused`, `--sound`/`--no-sound`,
 `--fullscreen`/`--windowed`, `--rom PATH`, `--floppy 0..3 PATH`,
 `--cartridge 1..2 PATH`, `--hard-disk 1..2 PATH`, and `--boot 1..7`.
+`--settings PATH` selects a separate settings file; its parent must exist.
 Command-line overrides apply only to that launch. Media is attached before
 the machine starts; a hard disk requires the corresponding cartridge. Use
 `--help` for usage. Windows command-line arguments are received as UTF-8 via SDL.
@@ -144,6 +145,8 @@ captures keyboard input or an SDL file dialog is pending.
 Window size, sound preference, display settings, and screenshot size are saved in the SDL
 preference directory selected by `SDL_GetPrefPath("UKNCBTL", "SDL Preview")`,
 separate from legacy settings.
+The active settings file, including an unreadable one, is protected from
+being mounted as media or used as an output file by the frontend.
 The preview also offers the legacy speed choices, volume, AY and Covox toggles.
 Audio speed and pitch track the selected rate; maximum speed uses 500% audio as
 in the legacy application. These settings are saved with the preview preferences.

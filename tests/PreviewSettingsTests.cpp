@@ -119,6 +119,19 @@ TEST_F(PreviewSettingsTest, MediaPathsRoundTripAndInvalidEncodedPathsAreIgnored)
     for (const auto& value : malformed->floppies) EXPECT_TRUE(value.empty());
 }
 
+TEST_F(PreviewSettingsTest, SameFileDetectsExistingAndFuturePathAliases)
+{
+    const auto alias = directory / "alias.ini";
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{alias};
+    EXPECT_TRUE(preview_settings::SameFile(path, directory / "." / path.filename()));
+    EXPECT_FALSE(preview_settings::SameFile(path, alias));
+    EXPECT_FALSE(preview_settings::SameFile({}, path));
+    Write("[SDLPreview]\nSound=1\n");
+    std::error_code error;
+    std::filesystem::create_hard_link(path, alias, error);
+    if (!error) EXPECT_TRUE(preview_settings::SameFile(path, alias));
+}
+
 TEST_F(PreviewSettingsTest, ImportRejectsUnrecognizedFilesAndIgnoresInvalidValues)
 {
     Write("[Other]\nSound=1\n");

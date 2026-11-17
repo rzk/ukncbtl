@@ -21,10 +21,10 @@ std::expected<preview_options::Options, std::string> preview_options::Parse(std:
                 return std::unexpected("--boot requires a selection from 1 to 7");
             options.boot = args[i][0] - '0';
         }
-        else if (arg == "--rom" || arg == "--floppy" || arg == "--cartridge" || arg == "--hard-disk")
+        else if (arg == "--settings" || arg == "--rom" || arg == "--floppy" || arg == "--cartridge" || arg == "--hard-disk")
         {
             int slot = 0;
-            if (arg != "--rom")
+            if (arg != "--rom" && arg != "--settings")
             {
                 if (++i == args.size() || args[i].size() != 1 || args[i][0] < (arg == "--floppy" ? '0' : '1') ||
                     args[i][0] > (arg == "--floppy" ? '3' : '2'))
@@ -35,7 +35,8 @@ std::expected<preview_options::Options, std::string> preview_options::Parse(std:
                 return std::unexpected(std::string(arg) + " requires a file path");
             const std::u8string utf8(reinterpret_cast<const char8_t*>(args[i].data()), args[i].size());
             auto path = std::filesystem::path(utf8);
-            if (arg == "--rom") options.rom = std::move(path);
+            if (arg == "--settings") options.settingsFile = std::move(path);
+            else if (arg == "--rom") options.rom = std::move(path);
             else if (arg == "--floppy") options.floppies[slot] = std::move(path);
             else if (arg == "--cartridge") options.cartridges[slot] = std::move(path);
             else options.hardDisks[slot] = std::move(path);

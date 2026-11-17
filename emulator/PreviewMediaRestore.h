@@ -12,5 +12,6 @@ namespace preview_media_restore
 // Explicit command-line media takes precedence and is not written to settings.
 // Failed saved paths remain in settings so a temporarily missing device can return.
 [[nodiscard]] std::vector<std::string> Restore(const preview_settings::Settings& settings,
-    const preview_options::Options& options, preview_roms::Roms& roms, media_slots::Slots& media);
+    const preview_options::Options& options, preview_roms::Roms& roms, media_slots::Slots& media,
+    const std::filesystem::path& protectedSettings = {});
 }

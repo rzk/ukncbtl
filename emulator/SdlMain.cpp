@@ -93,16 +93,25 @@ int Run(const preview_options::Options& options)
     SdlRuntime sdl;
     preview_settings::Settings settings;
     std::optional<std::filesystem::path> settingsPath;
+    std::optional<std::filesystem::path> protectedSettingsPath;
     std::string startupError;
     bool settingsDirty = false;
     bool importedSettings = false;
     if (!smokeTest)
     {
-        const std::unique_ptr<char, decltype(&SDL_free)> directory(SDL_GetPrefPath("UKNCBTL", "SDL Preview"), SDL_free);
-        if (directory)
+        if (options.settingsFile) settingsPath = *options.settingsFile;
+        else
         {
-            const std::u8string utf8(reinterpret_cast<const char8_t*>(directory.get()));
-            settingsPath = std::filesystem::path(utf8) / "settings.ini";
+            const std::unique_ptr<char, decltype(&SDL_free)> directory(SDL_GetPrefPath("UKNCBTL", "SDL Preview"), SDL_free);
+            if (directory)
+            {
+                const std::u8string utf8(reinterpret_cast<const char8_t*>(directory.get()));
+                settingsPath = std::filesystem::path(utf8) / "settings.ini";
+            }
+        }
+        if (settingsPath)
+        {
+            protectedSettingsPath = settingsPath;
             const auto loaded = preview_settings::Load(*settingsPath);
             if (loaded) settings = *loaded;
             else { settingsPath.reset(); startupError = "Could not load preview settings. Changes will not be saved."; }
@@ -135,6 +144,14 @@ int Run(const preview_options::Options& options)
     CMotherboard board;
     media_slots::Slots media(board);
     preview_roms::Roms roms(board);
+    const auto isSettingsFile = [&](const std::filesystem::path& path) {
+        return protectedSettingsPath && preview_settings::SameFile(path, *protectedSettingsPath);
+    };
+    if ((options.rom && isSettingsFile(*options.rom)) ||
+        std::ranges::any_of(options.floppies, [&](const auto& path) { return path && isSettingsFile(*path); }) ||
+        std::ranges::any_of(options.cartridges, [&](const auto& path) { return path && isSettingsFile(*path); }) ||
+        std::ranges::any_of(options.hardDisks, [&](const auto& path) { return path && isSettingsFile(*path); }))
+    { SDL_Log("The settings file cannot be used as a media image."); return 1; }
     if (options.rom && !roms.LoadSystem(*options.rom))
     { SDL_Log("Could not load the requested system ROM."); return 1; }
     for (int slot = 0; slot < 2; ++slot)
@@ -143,7 +160,8 @@ int Run(const preview_options::Options& options)
     for (int slot = 0; slot < 4; ++slot)
         if (options.floppies[slot] && !media.Attach(media_slots::Kind::floppy, slot, *options.floppies[slot]))
         { SDL_Log("Could not attach requested floppy %d.", slot); return 1; }
-    const auto restoreErrors = preview_media_restore::Restore(settings, options, roms, media);
+    const auto restoreErrors = preview_media_restore::Restore(settings, options, roms, media,
+        protectedSettingsPath.value_or(std::filesystem::path{}));
     if (!restoreErrors.empty())
     {
         if (!startupError.empty()) startupError += "\n";
@@ -248,7 +266,7 @@ int Run(const preview_options::Options& options)
         }
     };
     const auto conflicts = [&](const std::filesystem::path& path) {
-        return media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path) || tape.Conflicts(path) || debugger.TraceConflicts(path);
+        return isSettingsFile(path) || media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path) || tape.Conflicts(path) || debugger.TraceConflicts(path);
     };
     bool running = smokeTest || options.boot != 0 || options.run.value_or(settings.autostart && restoreErrors.empty());
     if (options.boot) (void)autoBoot.Start(options.boot);
@@ -368,10 +386,7 @@ int Run(const preview_options::Options& options)
                 {
                     auto target = std::filesystem::path(path);
                     if (!target.has_extension()) target += ".log";
-                    std::error_code error;
-                    const bool settingsConflict = settingsPath && (*settingsPath == target ||
-                        (std::filesystem::equivalent(*settingsPath, target, error) && !error));
-                    if (settingsConflict || conflicts(target) || !debugger.StartTrace(target, static_cast<std::uint16_t>(result->slot)))
+                    if (conflicts(target) || !debugger.StartTrace(target, static_cast<std::uint16_t>(result->slot)))
                     { actionError = "Could not start the trace. The selected file may be in use or unavailable."; showActionError = true; }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::memoryDump ||
@@ -395,7 +410,7 @@ int Run(const preview_options::Options& options)
                     auto target = std::filesystem::path(path);
                     const bool creating = result->purpose == sdl_file_dialog::Purpose::tapeCreate;
                     if (creating && !target.has_extension()) target += ".wav";
-                    if ((creating && conflicts(target)) || (!creating && (printer.Conflicts(target) || tape.Conflicts(target) || debugger.TraceConflicts(target))))
+                    if ((creating && conflicts(target)) || (!creating && (isSettingsFile(target) || printer.Conflicts(target) || tape.Conflicts(target) || debugger.TraceConflicts(target))))
                     { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
                     else if (!(creating ? tape.Create(target) : tape.Open(target)))
                     { actionError = creating ? "Could not create the WAV file." : "Could not open the WAV file or its format is unsupported."; showActionError = true; }
@@ -419,7 +434,7 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose != sdl_file_dialog::Purpose::screenshot &&
                     result->purpose != sdl_file_dialog::Purpose::snapshotSave &&
-                    (printer.Conflicts(std::filesystem::path(path)) || tape.Conflicts(std::filesystem::path(path)) ||
+                    (isSettingsFile(std::filesystem::path(path)) || printer.Conflicts(std::filesystem::path(path)) || tape.Conflicts(std::filesystem::path(path)) ||
                         debugger.TraceConflicts(std::filesystem::path(path))))
                 { actionError = "The selected file is used for emulator output. Choose another file."; showActionError = true; }
                 else if (result->purpose == sdl_file_dialog::Purpose::screenshot)
@@ -1509,7 +1524,7 @@ int main(int argc, char** argv)
     {
         std::printf("Usage: ukncbtl-sdl [--run|--paused] [--sound|--no-sound] [--fullscreen|--windowed]\n"
                     "  [--rom PATH] [--floppy 0..3 PATH] [--cartridge 1..2 PATH]\n"
-                    "  [--hard-disk 1..2 PATH] [--boot 1..7]\n");
+                    "  [--hard-disk 1..2 PATH] [--boot 1..7] [--settings PATH]\n");
         return 0;
     }
     return Run(*options);

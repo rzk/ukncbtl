@@ -4,23 +4,24 @@
 #include "PreviewRoms.h"
 
 std::vector<std::string> preview_media_restore::Restore(const preview_settings::Settings& settings,
-    const preview_options::Options& options, preview_roms::Roms& roms, media_slots::Slots& media)
+    const preview_options::Options& options, preview_roms::Roms& roms, media_slots::Slots& media,
+    const std::filesystem::path& protectedSettings)
 {
     std::vector<std::string> errors;
     if (!settings.restoreMedia || options.smokeTest) return errors;
-    if (!options.rom && !settings.systemRom.empty() && !roms.LoadSystem(settings.systemRom))
+    if (!options.rom && !settings.systemRom.empty() && (preview_settings::SameFile(settings.systemRom, protectedSettings) || !roms.LoadSystem(settings.systemRom)))
         errors.emplace_back("System ROM");
     for (int slot = 0; slot < 2; ++slot)
         if (!options.cartridges[slot] && !settings.cartridges[slot].empty() &&
-            !roms.Insert(slot, settings.cartridges[slot]))
+            (preview_settings::SameFile(settings.cartridges[slot], protectedSettings) || !roms.Insert(slot, settings.cartridges[slot])))
             errors.push_back("Cartridge " + std::to_string(slot + 1));
     for (int slot = 0; slot < 4; ++slot)
         if (!options.floppies[slot] && !settings.floppies[slot].empty() &&
-            !media.Attach(media_slots::Kind::floppy, slot, settings.floppies[slot]))
+            (preview_settings::SameFile(settings.floppies[slot], protectedSettings) || !media.Attach(media_slots::Kind::floppy, slot, settings.floppies[slot])))
             errors.push_back("Floppy " + std::to_string(slot + 1));
     for (int slot = 0; slot < 2; ++slot)
         if (!options.hardDisks[slot] && !settings.hardDisks[slot].empty() &&
-            !media.Attach(media_slots::Kind::hardDisk, slot, settings.hardDisks[slot]))
+            (preview_settings::SameFile(settings.hardDisks[slot], protectedSettings) || !media.Attach(media_slots::Kind::hardDisk, slot, settings.hardDisks[slot])))
             errors.push_back("Hard disk " + std::to_string(slot + 1));
     return errors;
 }

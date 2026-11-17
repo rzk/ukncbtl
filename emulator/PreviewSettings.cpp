@@ -4,6 +4,7 @@
 #include "util/ScreenScale.h"
 #include "util/SettingsCodec.h"
 #include <algorithm>
+#include <cwctype>
 #include <optional>
 #include <string>
 #include <utility>
@@ -119,6 +120,26 @@ bool ValidBreakpoints(const SavedBreakpoints& values)
 bool preview_settings::ValidWindowSize(int width, int height)
 {
     return width >= 320 && width <= 7680 && height >= 240 && height <= 4320;
+}
+
+bool preview_settings::SameFile(const std::filesystem::path& first, const std::filesystem::path& second)
+{
+    if (first.empty() || second.empty()) return false;
+    std::error_code error;
+    if (std::filesystem::equivalent(first, second, error) && !error) return true;
+    error.clear();
+    const auto a = std::filesystem::weakly_canonical(first, error);
+    if (error) return first.lexically_normal() == second.lexically_normal();
+    const auto b = std::filesystem::weakly_canonical(second, error);
+    if (error) return first.lexically_normal() == second.lexically_normal();
+#ifdef _WIN32
+    auto left = a.native(), right = b.native();
+    std::ranges::transform(left, left.begin(), [](wchar_t ch) { return std::towlower(ch); });
+    std::ranges::transform(right, right.begin(), [](wchar_t ch) { return std::towlower(ch); });
+    return left == right;
+#else
+    return a == b;
+#endif
 }
 
 std::expected<preview_settings::Settings, IniFileError> preview_settings::ImportLegacy(

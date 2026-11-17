@@ -19,6 +19,9 @@ cmake --install build/sdl --prefix <destination>
 ```
 
 Run `build/sdl/ukncbtl-sdl.exe` or the installed `bin/ukncbtl-sdl.exe`.
+To use a separate configuration, start it with `--settings <path-to-ini>`;
+the parent directory must already exist. The selected file contains that
+instance's preferences and saved media paths.
 The installation includes the application and its license notices. SDL3,
 Dear ImGui and GoogleTest are fetched at pinned versions on first configure;
 `FETCHCONTENT_SOURCE_DIR_SDL3`, `FETCHCONTENT_SOURCE_DIR_IMGUI` and

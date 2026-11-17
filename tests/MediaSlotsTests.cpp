@@ -135,6 +135,20 @@ TEST_F(MediaSlotsTest, MissingCartridgeReportsBothDependentDevices)
     EXPECT_FALSE(media.Attached(media_slots::Kind::hardDisk, 1));
 }
 
+TEST_F(MediaSlotsTest, RestoreRefusesToMountTheSettingsFile)
+{
+    CMotherboard board;
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_settings::Settings settings;
+    settings.restoreMedia = true;
+    settings.floppies[0] = floppy;
+    const auto errors = preview_media_restore::Restore(settings, {}, roms, media, directory / "." / floppy.filename());
+    ASSERT_EQ(errors.size(), 1u);
+    EXPECT_EQ(errors[0], "Floppy 1");
+    EXPECT_FALSE(media.Attached(media_slots::Kind::floppy, 0));
+}
+
 TEST_F(MediaSlotsTest, RejectsInvalidOrOccupiedSlotsWithoutDetachingExistingDisk)
 {
     CMotherboard board;
