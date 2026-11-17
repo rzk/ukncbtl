@@ -196,29 +196,16 @@ int Run(const preview_options::Options& options)
     board.SetNetStation(settings.networkStation);
     if (smokeTest) debugger.SetHistoryEnabled(true);
     preview_snapshot::Session snapshots(board);
-    std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audioStream(nullptr, SDL_DestroyAudioStream);
-    std::unique_ptr<sdl_audio::Output> audio;
+    sdl_audio::Playback audio(board);
     const bool initialSound = options.sound.value_or(settings.sound);
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO))
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO) || !audio.Open(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, settings.speed, settings.volume, false))
     {
-        const SDL_AudioSpec spec{SDL_AUDIO_S16LE, sdl_audio::Channels, sdl_audio::SampleRate};
-        audioStream.reset(SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr));
-        if (audioStream)
-        {
-            audio = std::make_unique<sdl_audio::Output>(board, *audioStream);
-            if (!audio->Configure(settings.speed, settings.volume) ||
-                (initialSound && !SDL_ResumeAudioStreamDevice(audioStream.get())))
-            {
-                SDL_Log("Audio unavailable: %s", SDL_GetError());
-                audio.reset(); audioStream.reset();
-            }
-        }
-        else SDL_Log("Audio unavailable: %s", SDL_GetError());
+        SDL_Log("Audio unavailable: %s", SDL_GetError());
+        if (!smokeTest && initialSound)
+        { if (!actionError.empty()) actionError += "\n"; actionError += "Audio is unavailable. Use Audio > Output to retry."; showActionError = true; }
     }
-    else SDL_Log("Audio unavailable: %s", SDL_GetError());
-    if (smokeTest && !audio) return 1;
-    bool soundEnabled = audio != nullptr && initialSound;
-    bool audioActive = soundEnabled;
+    if (smokeTest && !audio.IsOpen()) return 1;
+    bool soundEnabled = initialSound;
     std::vector<std::uint32_t> pixels(video::Width * video::Height);
     sdl_screen::Renderer screen(*renderer);
     sdl_sprite::Texture spriteTexture(*renderer);
@@ -259,10 +246,10 @@ int Run(const preview_options::Options& options)
         board.SetMouse(settings.mouse);
         printer.Synchronize();
         snapshots.ResetTracking();
-        if (audio && !audio->Reset())
+        if (audio.IsOpen() && !audio.Reset())
         {
             SDL_Log("Audio reset failed: %s", SDL_GetError());
-            audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
+            audio.Close(); actionError = "Audio failed. Use Audio > Output to retry."; showActionError = true;
         }
     };
     const auto conflicts = [&](const std::filesystem::path& path) {
@@ -454,16 +441,13 @@ int Run(const preview_options::Options& options)
                         releaseMouse();
                         debugger.Stop();
                         running = false;
-                        if (audio)
+                        if (audio.IsOpen())
                         {
-                            const bool paused = SDL_PauseAudioStreamDevice(audioStream.get());
-                            const bool cleared = audio->Reset();
-                            if (!paused || !cleared)
+                            if (!audio.SetActive(false) || !audio.Reset())
                             {
                                 SDL_Log("Audio pause failed: %s", SDL_GetError());
-                                audio.reset(); audioStream.reset(); soundEnabled = false;
+                                audio.Close(); actionError = "Audio failed. Use Audio > Output to retry."; showActionError = true;
                             }
-                            audioActive = false;
                         }
                     }))
                     {
@@ -669,7 +653,7 @@ int Run(const preview_options::Options& options)
                     actionError = "Could not open the file dialog.";
                     showActionError = true;
                 }
-                if (ImGui::MenuItem("Sound", nullptr, &soundEnabled, audio != nullptr))
+                if (ImGui::MenuItem("Sound", nullptr, &soundEnabled))
                 {
                     settings.sound = soundEnabled;
                     settingsDirty = true;
@@ -692,6 +676,31 @@ int Run(const preview_options::Options& options)
                 }
                 if (ImGui::BeginMenu("Audio"))
                 {
+                    if (ImGui::BeginMenu("Output"))
+                    {
+                        if (!audio.IsOpen()) ImGui::TextDisabled("Audio output unavailable");
+                        const auto chooseDevice = [&](SDL_AudioDeviceID device) {
+                            if (!(SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO) && !SDL_InitSubSystem(SDL_INIT_AUDIO))
+                            { actionError = "Could not initialize audio."; showActionError = true; }
+                            else if (!audio.Open(device, settings.speed, settings.volume, running && soundEnabled))
+                            { actionError = "Could not open the selected audio device."; showActionError = true; }
+                        };
+                        if (ImGui::MenuItem("System default", nullptr,
+                            audio.IsOpen() && audio.Device() == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK))
+                            chooseDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK);
+                        if (SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO)
+                        {
+                            const auto devices = sdl_audio::PlaybackDevices();
+                            for (const auto& device : devices)
+                            {
+                                ImGui::PushID(static_cast<int>(device.id));
+                                if (ImGui::MenuItem(device.name.c_str(), nullptr, audio.IsOpen() && audio.Device() == device.id))
+                                    chooseDevice(device.id);
+                                ImGui::PopID();
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
                     if (ImGui::MenuItem("AY sound", nullptr, &settings.soundAY))
                     { board.SetSoundAY(settings.soundAY); settingsDirty = true; }
                     if (ImGui::MenuItem("Covox sound", nullptr, &settings.soundCovox))
@@ -942,7 +951,8 @@ int Run(const preview_options::Options& options)
                 const auto uptime = snapshots.Uptime();
                 ImGui::Text("%s  |  Uptime %02u:%02u:%02u  |  %s  |  %s", running ? "Running" : "Paused",
                     uptime / 3600, uptime / 60 % 60, uptime % 60,
-                    debugProcessor == preview_debugger::Processor::cpu ? "CPU" : "PPU", soundEnabled ? "Sound on" : "Sound off");
+                    debugProcessor == preview_debugger::Processor::cpu ? "CPU" : "PPU",
+                    !audio.IsOpen() ? "Audio unavailable" : soundEnabled ? "Sound on" : "Sound off");
             }
             ImGui::End();
         }
@@ -1390,24 +1400,20 @@ int Run(const preview_options::Options& options)
         }
         if (toggleFullscreen && !sdl_display::ToggleFullscreen(*window))
         { actionError = "Could not change fullscreen mode."; showActionError = true; }
-        if (audio && (speedChanged || volumeChanged) &&
-            ((speedChanged && !audio->Reset()) || !audio->Configure(settings.speed, settings.volume)))
+        if (audio.IsOpen() && (speedChanged || volumeChanged) &&
+            ((speedChanged && !audio.Reset()) || !audio.Configure(settings.speed, settings.volume)))
         {
             SDL_Log("Audio configuration failed: %s", SDL_GetError());
-            audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
+            audio.Close(); actionError = "Audio failed. Use Audio > Output to retry."; showActionError = true;
         }
-        const bool shouldPlay = running && soundEnabled && audio != nullptr;
-        if (audio && shouldPlay != audioActive)
+        const bool shouldPlay = running && soundEnabled;
+        if (audio.IsOpen() && shouldPlay != audio.Active())
         {
-            const bool paused = SDL_PauseAudioStreamDevice(audioStream.get());
-            const bool cleared = audio->Reset();
-            const bool resumed = !shouldPlay || SDL_ResumeAudioStreamDevice(audioStream.get());
-            if (!paused || !cleared || !resumed)
+            if (!audio.SetActive(shouldPlay))
             {
                 SDL_Log("Audio device failed: %s", SDL_GetError());
-                audio.reset(); audioStream.reset(); soundEnabled = false;
+                audio.Close(); actionError = "Audio failed. Use Audio > Output to retry."; showActionError = true;
             }
-            audioActive = audio && shouldPlay;
         }
         int width = 0, height = 0;
         if (!SDL_GetRenderOutputSize(renderer.get(), &width, &height)) return 1;
@@ -1457,10 +1463,10 @@ int Run(const preview_options::Options& options)
                     queueKey(sdl_keyboard::Source::automatic, {event->scan, event->pressed});
                 snapshots.FrameCompleted();
                 if (smokeTest) ++frames;
-                if (audio && audioActive && !audio->SubmitFrame())
+                if (audio.IsOpen() && audio.Active() && !audio.SubmitFrame())
                 {
                     SDL_Log("Audio submission failed: %s", SDL_GetError());
-                    audio.reset(); audioStream.reset(); soundEnabled = audioActive = false;
+                    audio.Close(); actionError = "Audio failed. Use Audio > Output to retry."; showActionError = true;
                 }
             }
         }

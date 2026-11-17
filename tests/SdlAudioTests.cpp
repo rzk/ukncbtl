@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "SdlAudio.h"
 #include "emubase/Emubase.h"
+#include <SDL3/SDL.h>
 #include <gtest/gtest.h>
 #include <array>
 #include <memory>
@@ -106,5 +107,42 @@ TEST_F(SdlAudioTest, ConfiguresSpeedAndVolumeWithoutChangingInvalidValues)
     EXPECT_FALSE(output.Configure(1, 101));
     EXPECT_FLOAT_EQ(SDL_GetAudioStreamFrequencyRatio(stream.get()), 0.1f);
     EXPECT_FLOAT_EQ(SDL_GetAudioStreamGain(stream.get()), 0.35f);
+}
+
+TEST(SdlAudioPlayback, ReopensTransactionallyAndPreservesCallbackOwnership)
+{
+    ASSERT_TRUE(SDL_SetHintWithPriority(SDL_HINT_AUDIO_DRIVER, "dummy", SDL_HINT_OVERRIDE));
+    ASSERT_TRUE(SDL_InitSubSystem(SDL_INIT_AUDIO)) << SDL_GetError();
+    struct AudioGuard { ~AudioGuard() { SDL_QuitSubSystem(SDL_INIT_AUDIO); } } audioGuard;
+    CProcessor::Init();
+    struct ProcessorGuard { ~ProcessorGuard() { CProcessor::Done(); } } processorGuard;
+    CMotherboard board;
+    board.Reset();
+    board.GetCPU()->SetDCLOPin(true); board.GetPPU()->SetDCLOPin(true);
+    sdl_audio::Playback playback(board);
+    EXPECT_FALSE(playback.IsOpen());
+    ASSERT_TRUE(playback.Open(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, 1, 50, false)) << SDL_GetError();
+    EXPECT_FALSE(playback.Active());
+    EXPECT_TRUE(playback.SetActive(true));
+    EXPECT_TRUE(playback.Active());
+    EXPECT_FALSE(playback.Open(0, 1, 50, true));
+    EXPECT_FALSE(playback.Open(static_cast<SDL_AudioDeviceID>(0x7ffffffe), 1, 50, true));
+    EXPECT_FALSE(playback.Open(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, 4, 50, true));
+    EXPECT_TRUE(playback.IsOpen());
+    EXPECT_TRUE(playback.Active());
+    ASSERT_TRUE(board.SystemFrame());
+    EXPECT_TRUE(playback.SubmitFrame());
+    ASSERT_TRUE(playback.Open(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, 2, 25, false)) << SDL_GetError();
+    EXPECT_FALSE(playback.Active());
+    ASSERT_TRUE(board.SystemFrame());
+    EXPECT_TRUE(playback.SubmitFrame());
+    EXPECT_TRUE(playback.Reset());
+    for (const auto& device : sdl_audio::PlaybackDevices())
+    { EXPECT_NE(device.id, 0u); EXPECT_FALSE(device.name.empty()); }
+    playback.Close();
+    EXPECT_FALSE(playback.IsOpen());
+    EXPECT_FALSE(playback.Active());
+    EXPECT_FALSE(playback.SetActive(true));
+    EXPECT_FALSE(playback.SubmitFrame());
 }
 }

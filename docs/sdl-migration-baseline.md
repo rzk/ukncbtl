@@ -154,6 +154,9 @@ being mounted as media or used as an output file by the frontend.
 The preview also offers the legacy speed choices, volume, AY and Covox toggles.
 Audio speed and pitch track the selected rate; maximum speed uses 500% audio as
 in the legacy application. These settings are saved with the preview preferences.
+Audio > Output selects the system default or an available playback device for
+the current session. A failed device change leaves the existing output active;
+after an audio failure, use that menu to retry without restarting the emulator.
 The Emulator menu can enable the emulated mouse; its setting is saved with the
 preview preferences. Pointer motion is scaled to the displayed screen, and mouse
 input is released when the window loses focus, emulation pauses, or ImGui
