@@ -12,7 +12,7 @@ The current supported build is Windows x64, MSVC and CMake; it requires
 `RenderVfw.dll` beside the executable. From a Visual Studio developer shell:
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 18 2026" -A x64
+cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
@@ -45,7 +45,7 @@ is available separately from the SDL frontend's settings import.
 Debug `trace.log` output is UTF-8 without a byte-order mark. Earlier Windows
 builds wrote text using the system's active code page.
 
-SDL3 migration targets can be enabled with `-DUKNCBTL_ENABLE_SDL3=ON`. CMake
+SDL3 migration targets are enabled by default in fresh builds. CMake
 fetches SDL 3.4.16 with a verified source hash; an offline checkout can be
 provided with `FETCHCONTENT_SOURCE_DIR_SDL3`. The headless SDL smoke test checks
 surface creation and PNG round trips without opening a window.
@@ -60,7 +60,7 @@ The SDL screen renderer draws emulator frames in the SDL frontend and is also
 tested with SDL's software renderer; hardware rendering and platform display
 behavior still need interactive testing.
 Dear ImGui and its SDL3 platform and SDL renderer backends can be built with
-`-DUKNCBTL_ENABLE_SDL3=ON -DUKNCBTL_ENABLE_IMGUI=ON`. CMake pins Dear ImGui
+the default configuration. CMake pins Dear ImGui
 v1.92.9b to a release commit; `FETCHCONTENT_SOURCE_DIR_IMGUI` supports an
 offline checkout. A dummy-video test exercises UI rendering over a prepared
 frame and SDL keyboard events. The experimental `ukncbtl-sdl` executable boots

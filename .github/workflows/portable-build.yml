@@ -27,13 +27,13 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
       - name: Configure Linux
         if: runner.os == 'Linux'
-        run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++-19 -DCMAKE_CXX_FLAGS=-stdlib=libc++ -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF
+        run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++-19 -DCMAKE_CXX_FLAGS=-stdlib=libc++ -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
       - name: Configure macOS
         if: runner.os == 'macOS'
-        run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF
+        run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
       - name: Configure Windows
         if: runner.os == 'Windows'
-        run: cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF
+        run: cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
       - name: Build
         run: cmake --build build
       - name: Test
@@ -46,11 +46,11 @@ jobs:
       - name: Set up Windows SDK and linker environment
         uses: ilammy/msvc-dev-cmd@v1
       - name: Configure SDL frontend
-        run: cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF -DUKNCBTL_ENABLE_SDL3=ON -DUKNCBTL_ENABLE_IMGUI=ON
+        run: cmake --preset windows-clang
       - name: Build
-        run: cmake --build build
+        run: cmake --build --preset windows-clang
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --preset windows-clang
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy

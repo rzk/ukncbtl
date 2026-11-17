@@ -24,7 +24,7 @@ jobs:
         run: |
           "C:\Program Files (x86)\PVS-Studio\PVS-Studio_Cmd.exe" credentials -u ${{ secrets.PVS_STUDIO_USERNAME }} -n ${{ secrets.PVS_STUDIO_KEY }}
       - name: Configure CMake
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
       - name: Run PVS Studio
         run: |
           mkdir Results

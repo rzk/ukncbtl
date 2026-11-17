@@ -1,0 +1,32 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "windows-clang",
+      "displayName": "Windows SDL frontend (Clang and Ninja)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-clang",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl"
+      }
+    },
+    {
+      "name": "windows-clang-debug",
+      "displayName": "Windows SDL frontend (Clang and Ninja, Debug)",
+      "inherits": "windows-clang",
+      "binaryDir": "${sourceDir}/build/windows-clang-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-clang", "configurePreset": "windows-clang" },
+    { "name": "windows-clang-debug", "configurePreset": "windows-clang-debug" }
+  ],
+  "testPresets": [
+    { "name": "windows-clang", "configurePreset": "windows-clang", "output": { "outputOnFailure": true } },
+    { "name": "windows-clang-debug", "configurePreset": "windows-clang-debug", "output": { "outputOnFailure": true } }
+  ]
+}

@@ -12,13 +12,18 @@ From a Windows developer command prompt with Clang and Ninja on `PATH`, a
 Windows SDK, and a compatible C++ standard library and linker, build it with:
 
 ```powershell
-cmake -S . -B build/sdl -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF -DUKNCBTL_ENABLE_SDL3=ON -DUKNCBTL_ENABLE_IMGUI=ON
-cmake --build build/sdl
-ctest --test-dir build/sdl --output-on-failure
-cmake --install build/sdl --prefix <destination>
+cmake --preset windows-clang
+cmake --build --preset windows-clang
+ctest --preset windows-clang
+cmake --install build/windows-clang --prefix <destination>
 ```
 
-Run `build/sdl/ukncbtl-sdl.exe` or the installed `bin/ukncbtl-sdl.exe`.
+Run `build/windows-clang/ukncbtl-sdl.exe` or the installed `bin/ukncbtl-sdl.exe`.
+The `windows-clang-debug` preset provides the same workflow for debug builds.
+SDL3 and Dear ImGui are enabled by default for fresh CMake configurations.
+Existing build directories retain their cached options; reconfigure them with
+`UKNCBTL_BUILD_LEGACY=OFF`, `UKNCBTL_ENABLE_SDL3=ON`, and
+`UKNCBTL_ENABLE_IMGUI=ON`, or use a fresh preset build directory.
 To use a separate configuration, start it with `--settings <path-to-ini>`;
 the parent directory must already exist. The selected file contains that
 instance's preferences and saved media paths.
@@ -35,7 +40,7 @@ application still requires the Windows toolchain documented below.
 With a Clang toolchain available on `PATH`, configure and run the headless tests:
 
 ```sh
-cmake -S . -B build/portable -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=OFF
+cmake -S . -B build/portable -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
 cmake --build build/portable
 ctest --test-dir build/portable --output-on-failure
 ```
@@ -56,7 +61,7 @@ must currently be made as separate architecture builds. Windows x86-64 has
 been executed locally; the other combinations still require native CI or hardware
 verification even though their objects have been cross-assembled.
 
-### Building on Windows
+### Building the legacy Windows reference
 
 Install Visual Studio 2026 with the Desktop development with C++ workload and a
 Windows SDK, and install LLVM/Clang with `clang` on `PATH` for the CPU assembly.
@@ -64,7 +69,7 @@ Use its bundled CMake (4.1 or newer for the Visual Studio 2026
 generator), for example from a Visual Studio Developer PowerShell:
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 18 2026" -A x64
+cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
 cmake --build build --config Release
 ```
 

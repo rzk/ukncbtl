@@ -28,7 +28,7 @@ Existing populated build directories can use `-DFETCHCONTENT_UPDATES_DISCONNECTE
 ## Correctness
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 18 2026" -A x64
+cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
 cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
@@ -52,7 +52,7 @@ For memory-safety checks, install the MSVC AddressSanitizer component and run
 from Developer PowerShell so the sanitizer runtime DLL is on `PATH`:
 
 ```powershell
-cmake -S . -B build-asan -G "Visual Studio 18 2026" -A x64 -DUKNCBTL_ENABLE_ASAN=ON
+cmake -S . -B build-asan -G "Visual Studio 18 2026" -A x64 -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF -DUKNCBTL_ENABLE_ASAN=ON
 cmake --build build-asan --config RelWithDebInfo
 ctest --test-dir build-asan -C RelWithDebInfo --output-on-failure
 ```
@@ -92,7 +92,7 @@ build configuration, and measure with Tracy disabled. A quick smoke run uses
 Use a separate directory to keep instrumented timings out of benchmark baselines:
 
 ```powershell
-cmake -S . -B build/profile -G "Visual Studio 18 2026" -A x64 -DBUILD_TESTING=OFF -DUKNCBTL_ENABLE_TRACY=ON
+cmake -S . -B build/profile -G "Visual Studio 18 2026" -A x64 -DBUILD_TESTING=OFF -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF -DUKNCBTL_ENABLE_TRACY=ON
 cmake --build build/profile --config RelWithDebInfo --target UKNCBTL --parallel
 ./build/profile/RelWithDebInfo/UKNCBTL.exe
 ```
