@@ -1,4 +1,4 @@
-﻿/*  This file is part of UKNCBTL.
+/*  This file is part of UKNCBTL.
     UKNCBTL is free software: you can redistribute it and/or modify it under the terms
 of the GNU Lesser General Public License as published by the Free Software Foundation,
 either version 3 of the License, or (at your option) any later version.
@@ -69,9 +69,7 @@ void MainWindow_DoEmulatorSound();
 void MainWindow_DoEmulatorSoundAY();
 void MainWindow_DoEmulatorSoundCovox();
 void MainWindow_DoEmulatorMouse();
-void MainWindow_DoEmulatorSerial();
 void MainWindow_DoEmulatorParallel();
-void MainWindow_DoEmulatorNetwork();
 void MainWindow_DoFileSaveState();
 void MainWindow_DoFileLoadState();
 void MainWindow_DoEmulatorFloppy(int slot);
@@ -162,9 +160,7 @@ BOOL CreateMainWindow()
 
     MainWindow_RestorePositionAndShow();
 
-    TCHAR renderDllName[32];
-    Settings_GetRender(renderDllName);
-    if (!ScreenView_InitRender(renderDllName))
+    if (!ScreenView_InitRender())
     {
         ::PostQuitMessage(0);
         return FALSE;
@@ -205,7 +201,7 @@ BOOL MainWindow_InitToolbar()
     addbitmap.nID = IDB_TOOLBAR;
     SendMessage(m_hwndToolbar, TB_ADDBITMAP, 2, (LPARAM) &addbitmap);
 
-    std::array<TBBUTTON, 19> buttons{};
+    std::array<TBBUTTON, 17> buttons{};
     for (auto& button : buttons)
     {
         button.fsState = TBSTATE_ENABLED;
@@ -252,23 +248,17 @@ BOOL MainWindow_InitToolbar()
     buttons[11].fsStyle = BTNS_BUTTON | BTNS_SHOWTEXT;
     buttons[11].iString = (int)SendMessage(m_hwndToolbar, TB_ADDSTRING, (WPARAM)0, (LPARAM)_T("2"));
     buttons[12].fsStyle = BTNS_SEP;
-    buttons[13].idCommand = ID_EMULATOR_SERIAL;
-    buttons[13].iBitmap = ToolbarImageSerial;
+    buttons[13].idCommand = ID_EMULATOR_PARALLEL;
+    buttons[13].iBitmap = ToolbarImageParallel;
     buttons[13].fsStyle = BTNS_BUTTON;
-    buttons[14].idCommand = ID_EMULATOR_PARALLEL;
-    buttons[14].iBitmap = ToolbarImageParallel;
-    buttons[14].fsStyle = BTNS_BUTTON;
-    buttons[15].idCommand = ID_EMULATOR_NETWORK;
-    buttons[15].iBitmap = ToolbarImageNetwork;
-    buttons[15].fsStyle = BTNS_BUTTON;
-    buttons[16].fsStyle = BTNS_SEP;
-    buttons[17].idCommand = ID_EMULATOR_SOUND;
-    buttons[17].iBitmap = ToolbarImageSoundOff;
-    buttons[17].fsStyle = BTNS_BUTTON | BTNS_SHOWTEXT;
-    buttons[17].iString = (int)SendMessage(m_hwndToolbar, TB_ADDSTRING, (WPARAM)0, (LPARAM)_T("Sound"));
-    buttons[18].idCommand = ID_FILE_SCREENSHOT;
-    buttons[18].iBitmap = ToolbarImageScreenshot;
-    buttons[18].fsStyle = BTNS_BUTTON;
+    buttons[14].fsStyle = BTNS_SEP;
+    buttons[15].idCommand = ID_EMULATOR_SOUND;
+    buttons[15].iBitmap = ToolbarImageSoundOff;
+    buttons[15].fsStyle = BTNS_BUTTON | BTNS_SHOWTEXT;
+    buttons[15].iString = (int)SendMessage(m_hwndToolbar, TB_ADDSTRING, (WPARAM)0, (LPARAM)_T("Sound"));
+    buttons[16].idCommand = ID_FILE_SCREENSHOT;
+    buttons[16].iBitmap = ToolbarImageScreenshot;
+    buttons[16].fsStyle = BTNS_BUTTON;
 
     SendMessage(m_hwndToolbar, TB_ADDBUTTONS, static_cast<WPARAM>(buttons.size()), reinterpret_cast<LPARAM>(buttons.data()));
 
@@ -355,28 +345,11 @@ void MainWindow_RestoreSettings()
     if (scrmode <= 0 || scrmode > 3) scrmode = GRBScreen;
     ScreenView_SetMode((ScreenViewMode) scrmode);
 
-    // Restore Serial flag
-    if (Settings_GetSerial())
-    {
-        TCHAR portname[10];
-        Settings_GetSerialPort(portname);
-        if (!Emulator_SetSerial(TRUE, portname))
-            Settings_SetSerial(FALSE);
-    }
-
-    // Restore Network flag
-    if (Settings_GetNetwork())
-    {
-        TCHAR portname[10];
-        Settings_GetNetComPort(portname);
-        if (!Emulator_SetNetwork(TRUE, portname))
-            Settings_SetNetwork(FALSE);
-    }
-
     // Restore Parallel
     if (Settings_GetParallel())
     {
-        Emulator_SetParallel(TRUE);
+        if (!Emulator_SetParallel(TRUE))
+            Settings_SetParallel(FALSE);
     }
 }
 
@@ -932,10 +905,6 @@ void MainWindow_UpdateMenu()
     CheckMenuItem(hMenu, ID_EMULATOR_SOUNDAY, (Settings_GetSoundAY() ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(hMenu, ID_EMULATOR_SOUNDCOVOX, (Settings_GetSoundCovox() ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(hMenu, ID_EMULATOR_MOUSE, (Settings_GetMouse() ? MF_CHECKED : MF_UNCHECKED));
-    CheckMenuItem(hMenu, ID_EMULATOR_SERIAL, (Settings_GetSerial() ? MF_CHECKED : MF_UNCHECKED));
-    SendMessage(m_hwndToolbar, TB_CHECKBUTTON, ID_EMULATOR_SERIAL, (Settings_GetSerial() ? 1 : 0));
-    CheckMenuItem(hMenu, ID_EMULATOR_NETWORK, (Settings_GetNetwork() ? MF_CHECKED : MF_UNCHECKED));
-    SendMessage(m_hwndToolbar, TB_CHECKBUTTON, ID_EMULATOR_NETWORK, (Settings_GetNetwork() ? 1 : 0));
     CheckMenuItem(hMenu, ID_EMULATOR_PARALLEL, (Settings_GetParallel() ? MF_CHECKED : MF_UNCHECKED));
     SendMessage(m_hwndToolbar, TB_CHECKBUTTON, ID_EMULATOR_PARALLEL, (Settings_GetParallel() ? 1 : 0));
 
@@ -1127,12 +1096,6 @@ bool MainWindow_DoCommand(int commandId)
         break;
     case ID_EMULATOR_SPEED400:
         MainWindow_DoEmulatorSpeed(3);
-        break;
-    case ID_EMULATOR_SERIAL:
-        MainWindow_DoEmulatorSerial();
-        break;
-    case ID_EMULATOR_NETWORK:
-        MainWindow_DoEmulatorNetwork();
         break;
     case ID_EMULATOR_PARALLEL:
         MainWindow_DoEmulatorParallel();
@@ -1397,51 +1360,12 @@ void MainWindow_DoEmulatorMouse()
     MainWindow_UpdateMenu();
 }
 
-void MainWindow_DoEmulatorSerial()
-{
-    BOOL okSerial = Settings_GetSerial();
-    if (!okSerial)
-    {
-        TCHAR portname[10];
-        Settings_GetSerialPort(portname);
-        if (Emulator_SetSerial(TRUE, portname))
-            Settings_SetSerial(TRUE);
-    }
-    else
-    {
-        Emulator_SetSerial(FALSE, nullptr);
-        Settings_SetSerial(FALSE);
-    }
-
-    MainWindow_UpdateMenu();
-}
-
-void MainWindow_DoEmulatorNetwork()
-{
-    BOOL okNetwork = Settings_GetNetwork();
-    if (!okNetwork)
-    {
-        TCHAR portname[10];
-        Settings_GetNetComPort(portname);
-        if (Emulator_SetNetwork(TRUE, portname))
-            Settings_SetNetwork(TRUE);
-    }
-    else
-    {
-        Emulator_SetNetwork(FALSE, nullptr);
-        Settings_SetNetwork(FALSE);
-    }
-
-    MainWindow_UpdateMenu();
-}
-
 void MainWindow_DoEmulatorParallel()
 {
     BOOL okParallel = Settings_GetParallel();
     if (!okParallel)
     {
-        Emulator_SetParallel(TRUE);
-        Settings_SetParallel(TRUE);
+        Settings_SetParallel(Emulator_SetParallel(TRUE) ? TRUE : FALSE);
     }
     else
     {

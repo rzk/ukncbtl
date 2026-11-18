@@ -10,13 +10,20 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 /// \file Memory.cpp  Memory controller classes implementation
 
-#include "stdafx.h"
 #include "Memory.h"
 #include "Board.h"
 #include "Processor.h"
 #include "ImageSerialization.h"
 #include <algorithm>
+#include <cassert>
 #include <span>
+
+namespace {
+constexpr uint16_t MakeWord(uint8_t low, uint8_t high)
+{
+    return static_cast<uint16_t>(low | (static_cast<uint16_t>(high) << 8));
+}
+}
 
 
 //////////////////////////////////////////////////////////////////////
@@ -73,7 +80,7 @@ MemoryWordView CMemoryController::GetWordView(uint16_t address, bool okHaltMode,
     case ADDRTYPE_RAM2:
         value = m_pBoard->GetRAMWord(2, offset); break;
     case ADDRTYPE_RAM12:
-        value = MAKEWORD(
+        value = MakeWord(
                 m_pBoard->GetRAMByte(1, offset / 2),
                 m_pBoard->GetRAMByte(2, offset / 2)); break;
     case ADDRTYPE_ROMCART1:
@@ -87,7 +94,7 @@ MemoryWordView CMemoryController::GetWordView(uint16_t address, bool okHaltMode,
     case ADDRTYPE_NONE:
         break;
     default:
-        ASSERT(false);  // Unexpected address type
+        assert(false);  // Unexpected address type
         break;
     }
     return {value, addrtype};
@@ -107,7 +114,7 @@ uint16_t CMemoryController::GetWord(uint16_t address, bool okHaltMode, bool okEx
     case ADDRTYPE_RAM2:
         return m_pBoard->GetRAMWord(2, offset);
     case ADDRTYPE_RAM12:
-        return MAKEWORD(
+        return MakeWord(
                 m_pBoard->GetRAMByte(1, offset / 2),
                 m_pBoard->GetRAMByte(2, offset / 2));
     case ADDRTYPE_ROM:
@@ -125,7 +132,7 @@ uint16_t CMemoryController::GetWord(uint16_t address, bool okHaltMode, bool okEx
         return 0;
     }
 
-    ASSERT(false);  // If we are here - then addrtype has invalid value
+    assert(false);  // If we are here - then addrtype has invalid value
     return 0;
 }
 
@@ -162,7 +169,7 @@ uint8_t CMemoryController::GetByte(uint16_t address, bool okHaltMode)
         return 0;
     }
 
-    ASSERT(false);  // If we are here - then addrtype has invalid value
+    assert(false);  // If we are here - then addrtype has invalid value
     return 0;
 }
 
@@ -200,7 +207,7 @@ void CMemoryController::SetWord(uint16_t address, bool okHaltMode, uint16_t word
         return;
     }
 
-    ASSERT(false);  // If we are here - then addrtype has invalid value
+    assert(false);  // If we are here - then addrtype has invalid value
 }
 
 void CMemoryController::SetByte(uint16_t address, bool okHaltMode, uint8_t byte)
@@ -239,7 +246,7 @@ void CMemoryController::SetByte(uint16_t address, bool okHaltMode, uint8_t byte)
         return;
     }
 
-    ASSERT(false);  // If we are here - then addrtype has invalid value
+    assert(false);  // If we are here - then addrtype has invalid value
 }
 
 
@@ -336,7 +343,7 @@ uint16_t CFirstMemoryController::GetPortWord(uint16_t address)
         return m_Port176640;  // Plane address register
     case 0176642:
     case 0176643:
-        m_Port176642 = MAKEWORD(m_pBoard->GetRAMByte(1, m_Port176640), m_pBoard->GetRAMByte(2, m_Port176640));
+        m_Port176642 = MakeWord(m_pBoard->GetRAMByte(1, m_Port176640), m_pBoard->GetRAMByte(2, m_Port176640));
         return m_Port176642;  // Plane 1 & 2 data register
 
     case 0176644: case 0176645:
@@ -567,7 +574,7 @@ void CFirstMemoryController::SetPortWord(uint16_t address, uint16_t word)
     case 0176640:  // Plane address register
     case 0176641:
         m_Port176640 = word;
-        m_Port176642 = MAKEWORD(
+        m_Port176642 = MakeWord(
                 m_pBoard->GetRAMByte(1, m_Port176640), m_pBoard->GetRAMByte(2, m_Port176640));
         break;
     case 0176642:  // Plane 1 & 2 data register
@@ -1316,7 +1323,7 @@ void CSecondMemoryController::SetPortWord(uint16_t address, uint16_t word)
     case 0177011:
         m_Port177010 = word;
         m_Port177012 = m_pBoard->GetRAMByte(0, word);
-        m_Port177014 = MAKEWORD(
+        m_Port177014 = MakeWord(
                 m_pBoard->GetRAMByte(1, word), m_pBoard->GetRAMByte(2, word));
         break;
     case 0177012:  // Plane 0 data register

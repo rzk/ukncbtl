@@ -95,9 +95,7 @@ enum ToolbarButtonImages
     ToolbarImageStepInto = 15,
     ToolbarImageStepOver = 16,
     ToolbarImageCpuPpu = 17,
-    ToolbarImageSerial = 18,
     ToolbarImageParallel = 19,
-    ToolbarImageNetwork = 20,
     ToolbarImageMemoryRom = 21,
     ToolbarImageMemoryCpu = 22,
     ToolbarImageMemoryPpu = 23,
@@ -150,32 +148,6 @@ enum ColorIndices
 
 
 //////////////////////////////////////////////////////////////////////
-// Renders
-
-/// \brief Initialize the render.
-/// @param width Source bitmap width
-/// @param height Source bitmap height
-/// @return Initialization result
-using RENDER_INIT_CALLBACK = BOOL (CALLBACK*)(int width, int height, HWND hwndTarget);
-
-/// \brief Finalize the render.
-using RENDER_DONE_CALLBACK = void (CALLBACK*)();
-
-/// \brief Definition for render mode enumeration procedure.
-using RENDER_MODE_ENUM_PROC = void (CALLBACK*)(int modeNum, LPCTSTR modeDesc, int modeWidth, int modeHeight);
-
-/// \brief Enumerate available render modes.
-using RENDER_ENUM_MODES_CALLBACK = void (CALLBACK*)(RENDER_MODE_ENUM_PROC);
-
-/// \brief Select current render mode.
-using RENDER_SELECT_MODE_CALLBACK = BOOL (CALLBACK*)(int mode);
-
-/// \brief Draw the source bitmap to the target window.
-/// @param pixels Source bitmap
-using RENDER_DRAW_CALLBACK = void (CALLBACK*)(const void * pixels, HDC hdcTarget);
-
-
-//////////////////////////////////////////////////////////////////////
 // Settings
 
 // Optional explicit INI path; reinitialization invalidates all cached values.
@@ -187,8 +159,6 @@ void Settings_SetWindowMaximized(BOOL flag);
 BOOL Settings_GetWindowMaximized();
 void Settings_SetWindowFullscreen(BOOL flag);
 BOOL Settings_GetWindowFullscreen();
-void Settings_GetRender(std::span<TCHAR> buffer);
-void Settings_SetRender(LPCTSTR sValue);
 void Settings_SetFloppyFilePath(int slot, LPCTSTR sFilePath);
 void Settings_GetFloppyFilePath(int slot, std::span<TCHAR> buffer);
 void Settings_SetCartridgeFilePath(int slot, LPCTSTR sFilePath);
@@ -247,22 +217,10 @@ WORD Settings_GetSpriteWidth();
 void Settings_SetSpriteWidth(WORD value);
 WORD Settings_GetSpriteMode();
 void Settings_SetSpriteMode(WORD value);
-void Settings_SetSerial(BOOL flag);
-BOOL Settings_GetSerial();
-void Settings_GetSerialPort(std::span<TCHAR> buffer);
-void Settings_SetSerialPort(LPCTSTR sValue);
-void Settings_GetSerialConfig(DCB * pDcb);
-void Settings_SetSerialConfig(const DCB * pDcb);
 void Settings_SetParallel(BOOL flag);
 BOOL Settings_GetParallel();
-void Settings_SetNetwork(BOOL flag);
-BOOL Settings_GetNetwork();
 int  Settings_GetNetStation();
 void Settings_SetNetStation(int value);
-void Settings_GetNetComPort(std::span<TCHAR> buffer);
-void Settings_SetNetComPort(LPCTSTR sValue);
-void Settings_GetNetComConfig(DCB * pDcb);
-void Settings_SetNetComConfig(const DCB * pDcb);
 
 LPCTSTR Settings_GetColorFriendlyName(ColorIndices colorIndex);
 COLORREF Settings_GetColor(ColorIndices colorIndex);

@@ -15,11 +15,20 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "Defines.h"
 #include <memory>
 #include <array>
+#include <cassert>
+#include <filesystem>
 #include <span>
+#include <string_view>
+#include <optional>
 
 class CProcessor;
 class CMemoryController;
 class CSoundAY;
+using FLOPPYTRACECALLBACK = void(*)(void* context, std::wstring_view text);
+enum class FloppyError { readFailed, writeFailed, invalidTrack };
+struct FloppyFailure { FloppyError error; int slot; };
+enum class HardDiskError { readFailed, writeFailed };
+struct HardDiskFailure { HardDiskError error; int slot; };
 
 inline constexpr auto FRAMERATE = 50;  // Number of frames per second
 
@@ -68,51 +77,55 @@ struct kbd_row
 //   samples    Number of samples to play.
 // Output:
 //   result     Bit to put in tape input port.
-using TAPEREADCALLBACK = bool (CALLBACK*)(unsigned int samples);
+using TAPEREADCALLBACK = bool (*)(unsigned int samples);
+using TAPEREADCONTEXTCALLBACK = bool (*)(void* context, unsigned int samples);
 
 // Tape emulator callback used to write a data to tape.
 // Input:
 //   value      Sample value to write.
-using TAPEWRITECALLBACK = void (CALLBACK*)(int value, unsigned int samples);
+using TAPEWRITECALLBACK = void (*)(int value, unsigned int samples);
+using TAPEWRITECONTEXTCALLBACK = void (*)(void* context, int value, unsigned int samples);
 
 // Sound generator callback function type
-using SOUNDGENCALLBACK = void (CALLBACK*)(unsigned short L, unsigned short R);
+using SOUNDGENCALLBACK = void (*)(unsigned short L, unsigned short R);
+using SOUNDGENCONTEXTCALLBACK = void (*)(void* context, unsigned short L, unsigned short R);
 
 // Network port callback for receiving
 // Output:
 //   pbyte      Byte received
 //   result     true means we have a new byte, false means not ready yet
-using NETWORKINCALLBACK = bool (CALLBACK*)(uint8_t* pbyte);
+using NETWORKINCALLBACK = bool (*)(uint8_t* pbyte);
 
 // Network port callback for translating
 // Input:
 //   byte       A byte to translate
 // Output:
 //   result     true means we translated the byte successfully, false means we have an error
-using NETWORKOUTCALLBACK = bool (CALLBACK*)(uint8_t byte);
+using NETWORKOUTCALLBACK = bool (*)(uint8_t byte);
 
 // Serial port callback for receiving
 // Output:
 //   pbyte      Byte received
 //   result     true means we have a new byte, false means not ready yet
-using SERIALINCALLBACK = bool (CALLBACK*)(uint8_t* pbyte);
+using SERIALINCALLBACK = bool (*)(uint8_t* pbyte);
 
 // Serial port callback for translating
 // Input:
 //   byte       A byte to translate
 // Output:
 //   result     true means we translated the byte successfully, false means we have an error
-using SERIALOUTCALLBACK = bool (CALLBACK*)(uint8_t byte);
+using SERIALOUTCALLBACK = bool (*)(uint8_t byte);
 
 // Parallel port output callback
 // Input:
 //   byte       An output byte
 // Output:
 //   result     true means OK, false means we have an error
-using PARALLELOUTCALLBACK = bool (CALLBACK*)(uint8_t byte);
+using PARALLELOUTCALLBACK = bool (*)(uint8_t byte);
+using PARALLELOUTCONTEXTCALLBACK = bool (*)(void* context, uint8_t byte);
 
 // Terminal out callback -- CPU sends character by channel 0
-using TERMINALOUTCALLBACK = void (CALLBACK*)(uint8_t byte);
+using TERMINALOUTCALLBACK = void (*)(uint8_t byte);
 
 // Instruction execution callback -- called by CPU/PPU just before an instruction is executed,
 // memory and registers are still in pre-execution state
@@ -120,7 +133,8 @@ using TERMINALOUTCALLBACK = void (CALLBACK*)(uint8_t byte);
 //   pProc      Processor executing the instruction (CPU or PPU), see CProcessor::GetName()
 //   address    Address of the instruction, PC value before the fetch
 //   opcode     First word of the instruction as fetched
-using INSTRUCTIONCALLBACK = void (CALLBACK*)(const CProcessor* pProc, uint16_t address, uint16_t opcode);
+using INSTRUCTIONCALLBACK = void (*)(const CProcessor* pProc, uint16_t address, uint16_t opcode);
+using INSTRUCTIONCONTEXTCALLBACK = void (*)(void* context, const CProcessor* pProc, uint16_t address, uint16_t opcode);
 
 // Interrupt callback -- called by CPU/PPU when an interrupt or trap has been taken: the old PC/PSW
 // are saved and the new PC/PSW are loaded from the vector
@@ -129,10 +143,12 @@ using INSTRUCTIONCALLBACK = void (CALLBACK*)(const CProcessor* pProc, uint16_t a
 //              pProc->GetPC() / GetPSW() are the handler address and PSW, IsHaltMode() is the handler mode
 //   oldPc      PC where the interrupt appeared: the address of the code that was interrupted
 //   vector     Interrupt vector address; for HALT mode interrupts it includes the SEL register high byte
-using INTERRUPTCALLBACK = void (CALLBACK*)(const CProcessor* pProc, uint16_t oldPc, uint16_t vector);
+using INTERRUPTCALLBACK = void (*)(const CProcessor* pProc, uint16_t oldPc, uint16_t vector);
+using INTERRUPTCONTEXTCALLBACK = void (*)(void* context, const CProcessor* pProc, uint16_t oldPc, uint16_t vector);
 
 class CFloppyController;
 class CHardDrive;
+struct PreparedFloppyImage;
 
 //////////////////////////////////////////////////////////////////////
 
@@ -148,7 +164,7 @@ class CBusDevice
 {
 public:
     /// \brief Name of the device
-    virtual LPCTSTR GetName() const = 0;
+    virtual const wchar_t* GetName() const = 0;
     /// \brief Device address ranges
     virtual std::span<const BusAddressRange> GetAddressRanges() const = 0;
 
@@ -169,6 +185,7 @@ protected:  // Devices
     std::unique_ptr<CMemoryController> m_pSecondMemCtl;  ///< PPU memory control
     std::unique_ptr<CFloppyController> m_pFloppyCtl;  ///< FDD control
     std::array<std::unique_ptr<CHardDrive>, 2> m_pHardDrives;  ///< HDD control
+    std::array<std::optional<HardDiskError>, 2> m_hardFailures{};
     std::array<std::unique_ptr<CSoundAY>, 3> m_pSoundAY;
 
 public:  // Getting devices
@@ -271,9 +288,14 @@ public:  // System control
     void        MouseMove(int16_t dx, int16_t dy, bool btnLeft, bool btnRight);
 
     /// \brief Attach floppy image to the slot -- insert the disk.
-    bool        AttachFloppyImage(int slot, LPCTSTR sFileName);
+    bool        AttachFloppyImage(int slot, const wchar_t* sFileName);
+    bool        AttachFloppyImage(int slot, const std::filesystem::path& path, bool readOnly = false);
+    bool        AttachPreparedFloppy(int slot, PreparedFloppyImage image);
     /// \brief Empty the floppy slot -- remove the disk.
     void        DetachFloppyImage(int slot);
+    // A failed flush keeps the dirty track in memory for a later retry.
+    [[nodiscard]] bool FlushFloppyImage();
+    [[nodiscard]] std::optional<FloppyFailure> TakeFloppyFailure();
     /// \brief Check if the floppy attached.
     bool        IsFloppyImageAttached(int slot) const;
     /// \brief Check if the attached floppy image is read-only.
@@ -286,6 +308,8 @@ public:  // System control
     void        SetSoundAYVal(int chip, uint8_t val);
     void        SetFloppyState(uint16_t val);
     void        SetFloppyData(uint16_t val);
+    // Callback is borrowed and must be detached before its context is destroyed.
+    void        SetFloppyTraceCallback(FLOPPYTRACECALLBACK callback, void* context);
 
     /// \brief Check if ROM cartridge image assigned to the cartridge slot.
     bool        IsROMCartridgeLoaded(int cartno) const;
@@ -293,13 +317,17 @@ public:  // System control
     void        UnloadROMCartridge(int cartno);
 
     /// \brief Attach hard drive image to the slot.
-    bool        AttachHardImage(int slot, LPCTSTR sFileName);
+    bool        AttachHardImage(int slot, const wchar_t* sFileName);
+    bool        AttachHardImage(int slot, const std::filesystem::path& path, bool readOnly = false);
+    void        InstallHardDrive(int slot, std::unique_ptr<CHardDrive> drive);
     /// \brief Empty hard drive slot.
     void        DetachHardImage(int slot);
     /// \brief Check if the hard drive attached.
     bool        IsHardImageAttached(int slot) const;
     /// \brief Check if the attached hard drive image is read-only.
     bool        IsHardImageReadOnly(int slot) const;
+    // Host I/O failures are reported once; invalid guest requests are excluded.
+    [[nodiscard]] std::optional<HardDiskFailure> TakeHardDiskFailure();
     uint16_t    GetHardPortWord(int slot, uint16_t port);  ///< To use from CSecondMemoryController only
     void        SetHardPortWord(int slot, uint16_t port, uint16_t data);  ///< To use from CSecondMemoryController only
 
@@ -307,20 +335,28 @@ public:  // System control
     void        SetTapeReadCallback(TAPEREADCALLBACK callback, int sampleRate);
     /// \brief Assign write read callback function.
     void        SetTapeWriteCallback(TAPEWRITECALLBACK callback, int sampleRate);
+    void        SetTapeReadCallbackWithContext(TAPEREADCONTEXTCALLBACK callback, void* context, int sampleRate);
+    void        SetTapeWriteCallbackWithContext(TAPEWRITECONTEXTCALLBACK callback, void* context, int sampleRate);
     /// \brief Assign sound output callback function.
     void        SetSoundGenCallback(SOUNDGENCALLBACK callback);
+    // Setting either sound callback replaces the other; context is borrowed.
+    void        SetSoundGenCallbackWithContext(SOUNDGENCONTEXTCALLBACK callback, void* context);
     /// \brief Assign serial port input/output callback functions.
     void        SetSerialCallbacks(SERIALINCALLBACK incallback, SERIALOUTCALLBACK outcallback);
     /// \brief Assign parallel port output callback function.
     void        SetParallelOutCallback(PARALLELOUTCALLBACK outcallback);
+    // Setting either callback replaces the other; context is borrowed.
+    void        SetParallelOutCallbackWithContext(PARALLELOUTCONTEXTCALLBACK outcallback, void* context);
     /// \brief Assign network port input/output callback functions.
     void        SetNetworkCallbacks(NETWORKINCALLBACK incallback, NETWORKOUTCALLBACK outcallback);
     /// \brief Assign terminal callback functions.
     void        SetTerminalCallback(TERMINALOUTCALLBACK callback) { m_TerminalOutCallback = callback; }
     /// \brief Assign callback for CPU/PPU instruction execution, nullptr to remove
     void        SetInstructionCallback(INSTRUCTIONCALLBACK callback);
+    void        SetInstructionCallbackWithContext(INSTRUCTIONCONTEXTCALLBACK callback, void* context);
     /// \brief Assign callback for CPU/PPU interrupts, nullptr to remove
     void        SetInterruptCallback(INTERRUPTCALLBACK callback);
+    void        SetInterruptCallbackWithContext(INTERRUPTCONTEXTCALLBACK callback, void* context);
 public:  // Saving/loading emulator status
     void        SaveToImage(std::span<uint8_t, UKNCIMAGE_SIZE> image);
     void        LoadFromImage(std::span<const uint8_t, UKNCIMAGE_SIZE> image);
@@ -364,14 +400,21 @@ private:
 private:
     TAPEREADCALLBACK    m_TapeReadCallback;
     TAPEWRITECALLBACK   m_TapeWriteCallback;
+    TAPEREADCONTEXTCALLBACK m_TapeReadContextCallback = nullptr;
+    TAPEWRITECONTEXTCALLBACK m_TapeWriteContextCallback = nullptr;
+    void* m_TapeContext = nullptr;
     int                 m_nTapeSampleRate;
     uint64_t            m_tapeSamplePhase = 0;
     SOUNDGENCALLBACK    m_SoundGenCallback;
+    SOUNDGENCONTEXTCALLBACK m_SoundGenContextCallback = nullptr;
+    void*               m_SoundGenContext = nullptr;
     int                 m_SoundPrevValue;  ///< Previous value of the sound signal
     int                 m_SoundChanges;  ///< Sound signal 0 to 1 changes since the beginning of the frame
     SERIALINCALLBACK    m_SerialInCallback;
     SERIALOUTCALLBACK   m_SerialOutCallback;
     PARALLELOUTCALLBACK m_ParallelOutCallback;
+    PARALLELOUTCONTEXTCALLBACK m_ParallelOutContextCallback = nullptr;
+    void* m_ParallelOutContext = nullptr;
     NETWORKINCALLBACK   m_NetworkInCallback;
     NETWORKOUTCALLBACK  m_NetworkOutCallback;
     TERMINALOUTCALLBACK m_TerminalOutCallback;
@@ -381,25 +424,25 @@ private:
 
 inline uint16_t CMotherboard::GetRAMWord(int plan, uint16_t offset) const
 {
-    ASSERT(plan >= 0 && plan <= 2);
+    assert(plan >= 0 && plan <= 2);
     offset &= 0xFFFE;
     return static_cast<uint16_t>(m_pRAM[plan][offset] | (m_pRAM[plan][offset + 1] << 8));
 }
 inline uint8_t CMotherboard::GetRAMByte(int plan, uint16_t offset) const
 {
-    ASSERT(plan >= 0 && plan <= 2);
+    assert(plan >= 0 && plan <= 2);
     return m_pRAM[plan][offset];
 }
 inline void CMotherboard::SetRAMWord(int plan, uint16_t offset, uint16_t word)
 {
-    ASSERT(plan >= 0 && plan <= 2);
+    assert(plan >= 0 && plan <= 2);
     offset &= 0xFFFE;
     m_pRAM[plan][offset] = static_cast<uint8_t>(word);
     m_pRAM[plan][offset + 1] = static_cast<uint8_t>(word >> 8);
 }
 inline void CMotherboard::SetRAMByte(int plan, uint16_t offset, uint8_t byte)
 {
-    ASSERT(plan >= 0 && plan <= 2);
+    assert(plan >= 0 && plan <= 2);
     m_pRAM[plan][offset] = byte;
 }
 

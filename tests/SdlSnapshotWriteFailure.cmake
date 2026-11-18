@@ -1,0 +1,15 @@
+file(MAKE_DIRECTORY "${TEST_DIR}")
+set(blocker "${TEST_DIR}/not-a-directory")
+file(WRITE "${blocker}" "keep this file")
+set(snapshot "${blocker}/state.uknc")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  UKNCBTL_TEST_SNAPSHOT_FAILURE_EXIT=1 "UKNCBTL_TEST_SNAPSHOT_PATH=${snapshot}"
+  "${APP}" --smoke-test --sound RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 25)
+if(NOT result EQUAL 0 OR NOT error MATCHES "Could not save the state image")
+  message(FATAL_ERROR "SDL did not report the background state-save failure (${result}): ${error}")
+endif()
+file(READ "${blocker}" contents)
+if(NOT contents STREQUAL "keep this file")
+  message(FATAL_ERROR "The blocking file was modified")
+endif()
+file(REMOVE "${blocker}")

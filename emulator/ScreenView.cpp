@@ -1,4 +1,4 @@
-﻿/*  This file is part of UKNCBTL.
+/*  This file is part of UKNCBTL.
     UKNCBTL is free software: you can redistribute it and/or modify it under the terms
 of the GNU Lesser General Public License as published by the Free Software Foundation,
 either version 3 of the License, or (at your option) any later version.
@@ -18,10 +18,16 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <windowsx.h>
 #include "Input.h"
 #include "ScreenText.h"
+#include "ScreenshotImage.h"
+#include "VideoPalette.h"
+#ifdef UKNCBTL_SDL3_PNG
+#include "ScreenshotFile.h"
+#endif
 #include "Main.h"
 #include "Views.h"
 #include "Emulator.h"
 #include "util/BitmapFile.h"
+#include "util/ScreenshotFormat.h"
 #include "util/ScreenScale.h"
 #include "emubase/Emubase.h"
 
@@ -39,13 +45,8 @@ int m_yScreenOffset = 0;
 ScreenViewMode m_ScreenMode = RGBScreen;
 int m_ScreenHeightMode = 0;  // Render mode
 
-HMODULE g_hModuleRender = nullptr;
 static bool g_renderInitialized = false;
-RENDER_INIT_CALLBACK RenderInitProc = nullptr;
-RENDER_DONE_CALLBACK RenderDoneProc = nullptr;
-RENDER_DRAW_CALLBACK RenderDrawProc = nullptr;
-RENDER_ENUM_MODES_CALLBACK RenderEnumModesProc = nullptr;
-RENDER_SELECT_MODE_CALLBACK RenderSelectModeProc = nullptr;
+static std::vector<uint32_t> g_renderPixels;
 HMENU g_hScreenModeMenu = nullptr;
 int g_nScreenModeIndex = 0;
 
@@ -64,92 +65,6 @@ void ScreenView_OnDraw(HDC hdc);
 
 void ScreenView_OnRButtonDown(int mousex, int mousey);
 
-
-//////////////////////////////////////////////////////////////////////
-// Colors
-
-/*
-yrgb  R   G   B  0xRRGGBB
-0000 000 000 000 0x000000
-0001 000 000 128 0x000080
-0010 000 128 000 0x008000
-0011 000 128 128 0x008080
-0100 128 000 000 0x800000
-0101 128 000 128 0x800080
-0110 128 128 000 0x808000
-0111 128 128 128 0x808080
-1000 000 000 000 0x000000
-1001 000 000 255 0x0000FF
-1010 000 255 000 0x00FF00
-1011 000 255 255 0x00FFFF
-1100 255 000 000 0xFF0000
-1101 255 000 255 0xFF00FF
-1110 255 255 000 0xFFFF00
-1111 255 255 255 0xFFFFFF
-*/
-
-// Table for color conversion yrgb (4 bits) -> DWORD (32 bits)
-constexpr uint32_t ScreenView_StandardRGBColors[16 * 8] =
-{
-    0x000000, 0x000080, 0x008000, 0x008080, 0x800000, 0x800080, 0x808000, 0x808080,
-    0x000000, 0x0000FF, 0x00FF00, 0x00FFFF, 0xFF0000, 0xFF00FF, 0xFFFF00, 0xFFFFFF,
-    0x000000, 0x000060, 0x008000, 0x008060, 0x800000, 0x800060, 0x808000, 0x808060,
-    0x000000, 0x0000DF, 0x00FF00, 0x00FFDF, 0xFF0000, 0xFF00DF, 0xFFFF00, 0xFFFFDF,
-    0x000000, 0x000080, 0x006000, 0x006080, 0x800000, 0x800080, 0x806000, 0x806080,
-    0x000000, 0x0000FF, 0x00DF00, 0x00DFFF, 0xFF0000, 0xFF00FF, 0xFFDF00, 0xFFDFFF,
-    0x000000, 0x000060, 0x006000, 0x006060, 0x800000, 0x800060, 0x806000, 0x806060,
-    0x000000, 0x0000DF, 0x00DF00, 0x00DFDF, 0xFF0000, 0xFF00DF, 0xFFDF00, 0xFFDFDF,
-    0x000000, 0x000080, 0x008000, 0x008080, 0x600000, 0x600080, 0x608000, 0x608080,
-    0x000000, 0x0000FF, 0x00FF00, 0x00FFFF, 0xDF0000, 0xDF00FF, 0xDFFF00, 0xDFFFFF,
-    0x000000, 0x000060, 0x008000, 0x008060, 0x600000, 0x600060, 0x608000, 0x608060,
-    0x000000, 0x0000DF, 0x00FF00, 0x00FFDF, 0xDF0000, 0xDF00DF, 0xDFFF00, 0xDFFFDF,
-    0x000000, 0x000080, 0x006000, 0x006080, 0x600000, 0x600080, 0x606000, 0x606080,
-    0x000000, 0x0000FF, 0x00DF00, 0x00DFFF, 0xDF0000, 0xDF00FF, 0xDFDF00, 0xDFDFFF,
-    0x000000, 0x000060, 0x006000, 0x006060, 0x600000, 0x600060, 0x606000, 0x606060,
-    0x000000, 0x0000DF, 0x00DF00, 0x00DFDF, 0xDF0000, 0xDF00DF, 0xDFDF00, 0xDFDFDF,
-};
-constexpr uint32_t ScreenView_StandardGRBColors[16 * 8] =
-{
-    0x000000, 0x000080, 0x800000, 0x800080, 0x008000, 0x008080, 0x808000, 0x808080,
-    0x000000, 0x0000FF, 0xFF0000, 0xFF00FF, 0x00FF00, 0x00FFFF, 0xFFFF00, 0xFFFFFF,
-    0x000000, 0x000060, 0x800000, 0x800060, 0x008000, 0x008060, 0x808000, 0x808060,
-    0x000000, 0x0000DF, 0xFF0000, 0xFF00DF, 0x00FF00, 0x00FFDF, 0xFFFF00, 0xFFFFDF,
-    0x000000, 0x000080, 0x600000, 0x600080, 0x008000, 0x008080, 0x608000, 0x608080,
-    0x000000, 0x0000FF, 0xDF0000, 0xDF00FF, 0x00FF00, 0x00FFFF, 0xDFFF00, 0xDFFFFF,
-    0x000000, 0x000060, 0x600000, 0x600060, 0x008000, 0x008060, 0x608000, 0x608060,
-    0x000000, 0x0000DF, 0xDF0000, 0xDF00DF, 0x00FF00, 0x00FFDF, 0xDFFF00, 0xDFFFDF,
-    0x000000, 0x000080, 0x800000, 0x800080, 0x006000, 0x006080, 0x806000, 0x806080,
-    0x000000, 0x0000FF, 0xFF0000, 0xFF00FF, 0x00DF00, 0x00DFFF, 0xFFDF00, 0xFFDFFF,
-    0x000000, 0x000060, 0x800000, 0x800060, 0x006000, 0x006060, 0x806000, 0x806060,
-    0x000000, 0x0000DF, 0xFF0000, 0xFF00DF, 0x00DF00, 0x00DFDF, 0xFFDF00, 0xFFDFDF,
-    0x000000, 0x000080, 0x600000, 0x600080, 0x006000, 0x006080, 0x606000, 0x606080,
-    0x000000, 0x0000FF, 0xDF0000, 0xDF00FF, 0x00DF00, 0x00DFFF, 0xDFDF00, 0xDFDFFF,
-    0x000000, 0x000060, 0x600000, 0x600060, 0x006000, 0x006060, 0x606000, 0x606060,
-    0x000000, 0x0000DF, 0xDF0000, 0xDF00DF, 0x00DF00, 0x00DFDF, 0xDFDF00, 0xDFDFDF,
-};
-// Table for color conversion, gray (black and white) display
-constexpr uint32_t ScreenView_GrayColors[16 * 8] =
-{
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-    0x000000, 0x242424, 0x484848, 0x6C6C6C, 0x909090, 0xB4B4B4, 0xD8D8D8, 0xFFFFFF,
-};
-
-
-//////////////////////////////////////////////////////////////////////
 
 //Prototype of the screen conversion function
 using PREPARE_SCREEN_CALLBACK = void (CALLBACK*)(void* pImageBits);
@@ -219,109 +134,33 @@ void ScreenView_SetMode(ScreenViewMode newMode)
     m_ScreenMode = newMode;
 }
 
-void CALLBACK ScreenView_EnumModesProc(int modeNum, LPCTSTR modeDesc, int modeWidth, int modeHeight)
+BOOL ScreenView_InitRender()
 {
-    if (g_nScreenModeIndex >= 32 || modeDesc == nullptr)
-        return;
-
-    ScreenModeStruct* pmode = ScreenModeReference + g_nScreenModeIndex;
-    pmode->modeNum = modeNum;
-    pmode->width = modeWidth;
-    pmode->height = modeHeight;
-    _tcsncpy_s(pmode->description, _countof(pmode->description), modeDesc, _TRUNCATE);
-
-    g_nScreenModeIndex++;
-}
-
-BOOL ScreenView_InitRender(LPCTSTR szRenderLibraryName)
-{
-    g_hModuleRender = ::LoadLibrary(szRenderLibraryName);
-    if (g_hModuleRender == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to load render library \"{}\" (0x{:08x})."),
-                szRenderLibraryName, ::GetLastError());
-        return FALSE;
-    }
-
-    RenderInitProc = (RENDER_INIT_CALLBACK) ::GetProcAddress(g_hModuleRender, "RenderInit");
-    if (RenderInitProc == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to retrieve RenderInit address (0x{:08x})."), ::GetLastError());
-        ScreenView_DoneRender();
-        return FALSE;
-    }
-    RenderDoneProc = (RENDER_DONE_CALLBACK) ::GetProcAddress(g_hModuleRender, "RenderDone");
-    if (RenderDoneProc == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to retrieve RenderDone address (0x{:08x})."), ::GetLastError());
-        ScreenView_DoneRender();
-        return FALSE;
-    }
-    RenderDrawProc = (RENDER_DRAW_CALLBACK) ::GetProcAddress(g_hModuleRender, "RenderDraw");
-    if (RenderDrawProc == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to retrieve RenderDraw address (0x{:08x})."), ::GetLastError());
-        ScreenView_DoneRender();
-        return FALSE;
-    }
-    RenderEnumModesProc = (RENDER_ENUM_MODES_CALLBACK) ::GetProcAddress(g_hModuleRender, "RenderEnumModes");
-    if (RenderEnumModesProc == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to retrieve RenderEnumModes address (0x{:08x})."), ::GetLastError());
-        ScreenView_DoneRender();
-        return FALSE;
-    }
-    RenderSelectModeProc = (RENDER_SELECT_MODE_CALLBACK) ::GetProcAddress(g_hModuleRender, "RenderSelectMode");
-    if (RenderSelectModeProc == nullptr)
-    {
-        AlertWarningFormat(_T("Failed to retrieve RenderSelectMode address (0x{:08x})."), ::GetLastError());
-        ScreenView_DoneRender();
-        return FALSE;
-    }
-
-    // Enumerate render modes
     std::ranges::fill(ScreenModeReference, ScreenModeStruct{});
     g_nScreenModeIndex = 0;
-    RenderEnumModesProc(ScreenView_EnumModesProc);
-    g_hScreenModeMenu = nullptr;
-
-    // Fill Render Mode menu
-    MainWindow_UpdateRenderModeMenu();
-
-    //ScreenView_CreateScreen();
-
-    if (!RenderInitProc(UKNC_SCREEN_WIDTH, UKNC_SCREEN_HEIGHT, g_hwndScreen))
+    for (const auto& mode : screen_scale::Modes())
     {
-        AlertWarning(_T("Failed to initialize the render."));
-        ScreenView_DoneRender();
-        return FALSE;
+        auto& entry = ScreenModeReference[g_nScreenModeIndex];
+        entry.modeNum = g_nScreenModeIndex;
+        entry.width = mode.width;
+        entry.height = mode.height;
+        _tcsncpy_s(entry.description, _countof(entry.description), mode.description, _TRUNCATE);
+        ++g_nScreenModeIndex;
     }
-
+    g_hScreenModeMenu = nullptr;
+    MainWindow_UpdateRenderModeMenu();
     g_renderInitialized = true;
+    const auto& mode = screen_scale::GetMode(m_ScreenHeightMode);
+    m_cxScreenWidth = mode.width;
+    m_cyScreenHeight = mode.height;
+    g_renderPixels.resize(static_cast<size_t>(mode.width) * mode.height);
     return TRUE;
 }
 
 void ScreenView_DoneRender()
 {
-    if (g_hModuleRender != nullptr)
-    {
-        if (g_renderInitialized && RenderDoneProc != nullptr)
-            RenderDoneProc();
-        g_renderInitialized = false;
-
-        RenderInitProc = nullptr;
-        RenderDoneProc = nullptr;
-        RenderDrawProc = nullptr;
-        RenderEnumModesProc = nullptr;
-        RenderSelectModeProc = nullptr;
-
-        ::FreeLibrary(g_hModuleRender);
-        g_hModuleRender = nullptr;
-
-        //DestroyScreen();
-    }
-
-    //TODO: Clear Render Mode menu
+    g_renderInitialized = false;
+    g_renderPixels.clear();
 }
 
 // Create Screen View as child of Main Window
@@ -435,13 +274,13 @@ void ScreenView_SetRenderMode(int newRenderMode)
 {
     if (m_ScreenHeightMode == newRenderMode) return;
 
-    if (RenderSelectModeProc == nullptr)
+    if (!g_renderInitialized || newRenderMode < 0 || newRenderMode >= g_nScreenModeIndex)
         return;
 
     ScreenModeStruct* pmode = ScreenModeReference + newRenderMode;
-    RenderSelectModeProc(pmode->modeNum);
     m_cxScreenWidth = pmode->width;
     m_cyScreenHeight = pmode->height;
+    g_renderPixels.resize(static_cast<size_t>(pmode->width) * pmode->height);
     m_ScreenHeightMode = newRenderMode;
 
     ScreenView_RedrawScreen();
@@ -459,9 +298,23 @@ void ScreenView_SetRenderMode(int newRenderMode)
 void ScreenView_OnDraw(HDC hdc)
 {
     UKNC_PROFILE_SCOPE("Screen draw");
-    if (RenderDrawProc != nullptr)
+    if (g_renderInitialized && m_bits && screen_scale::Apply(m_ScreenHeightMode,
+        std::span<const uint32_t>(m_bits, UKNC_SCREEN_WIDTH * UKNC_SCREEN_HEIGHT), g_renderPixels))
     {
-        RenderDrawProc(m_bits, hdc);
+        RECT client{};
+        ::GetClientRect(g_hwndScreen, &client);
+        ::FillRect(hdc, &client, static_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH)));
+        const int x = std::max(0L, (client.right - m_cxScreenWidth) / 2);
+        const int y = std::max(0L, (client.bottom - m_cyScreenHeight) / 2);
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = m_cxScreenWidth;
+        info.bmiHeader.biHeight = m_cyScreenHeight;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        ::SetDIBitsToDevice(hdc, x, y, m_cxScreenWidth, m_cyScreenHeight, 0, 0,
+            0, m_cyScreenHeight, g_renderPixels.data(), &info, DIB_RGB_COLORS);
     }
 
     // Calculate m_xScreenOffset and m_yScreenOffset for mouse calculations
@@ -476,7 +329,11 @@ void ScreenView_OnDraw(HDC hdc)
 void ScreenView_RedrawScreen()
 {
     ScreenView_PrepareScreen();
+    ScreenView_DrawPreparedScreen();
+}
 
+void ScreenView_DrawPreparedScreen()
+{
     HDC hdc = GetDC(g_hwndScreen);
     ScreenView_OnDraw(hdc);
     VERIFY(::ReleaseDC(g_hwndScreen, hdc));
@@ -487,9 +344,9 @@ std::span<const uint32_t, 16 * 8> ScreenView_GetPalette()
 {
     switch (m_ScreenMode)
     {
-    case GrayScreen: return ScreenView_GrayColors;
-    case GRBScreen: return ScreenView_StandardGRBColors;
-    default: return ScreenView_StandardRGBColors;
+    case GrayScreen: return video_palette::Get(video_palette::Mode::gray);
+    case GRBScreen: return video_palette::Get(video_palette::Mode::grb);
+    default: return video_palette::Get(video_palette::Mode::rgb);
     }
 }
 
@@ -573,19 +430,20 @@ BOOL ScreenView_SaveScreenshot(LPCTSTR sFileName, int screenshotMode)
     std::vector<uint32_t> bits(UKNC_SCREEN_WIDTH * UKNC_SCREEN_HEIGHT);
     Emulator_PrepareScreenRGB32(bits, ScreenView_GetPalette());
 
-    const auto [scrwidth, scrheight, description] = screen_scale::GetMode(screenshotMode);
-    std::vector<uint32_t> scrBits(static_cast<size_t>(scrwidth) * scrheight);
-    if (!screen_scale::Apply(screenshotMode, bits, scrBits))
+    const auto image = screenshot_image::Prepare(bits, screenshotMode);
+    if (!image)
         return FALSE;
 
-    LPCTSTR sFileNameExt = _tcsrchr(sFileName, _T('.'));
-    BitmapFileFormat imageFormat = BitmapFileFormatPng;
-    if (sFileNameExt != nullptr && _tcsicmp(sFileNameExt, _T(".bmp")) == 0)
-        imageFormat = BitmapFileFormatBmp;
+#ifdef UKNCBTL_SDL3_PNG
+    return screenshot_file::Save(std::filesystem::path(sFileName), *image).has_value();
+#else
+    const auto imageFormat = screenshot_format::FromPath(std::filesystem::path(sFileName)) == screenshot_format::Format::bmp
+        ? BitmapFileFormatBmp : BitmapFileFormatPng;
     BOOL result = BitmapFile_SaveImageFile(
-            scrBits, sFileName, imageFormat, scrwidth, scrheight);
+            image->pixels, sFileName, imageFormat, image->width, image->height);
 
     return result;
+#endif
 }
 
 HGLOBAL ScreenView_GetScreenshotAsDIB(int screenshotMode)
@@ -594,10 +452,11 @@ HGLOBAL ScreenView_GetScreenshotAsDIB(int screenshotMode)
 
     Emulator_PrepareScreenRGB32(bits, ScreenView_GetPalette());
 
-    const auto [scrwidth, scrheight, description] = screen_scale::GetMode(screenshotMode);
-    std::vector<uint32_t> scrBits(static_cast<size_t>(scrwidth) * scrheight);
-    if (!screen_scale::Apply(screenshotMode, bits, scrBits))
+    const auto image = screenshot_image::Prepare(bits, screenshotMode);
+    if (!image)
         return nullptr;
+    const auto scrwidth = image->width;
+    const auto scrheight = image->height;
 
     BITMAPINFOHEADER bi{};
     bi.biSize = sizeof(BITMAPINFOHEADER);
@@ -622,11 +481,11 @@ HGLOBAL ScreenView_GetScreenshotAsDIB(int screenshotMode)
     }
     ::CopyMemory(p, &bi, sizeof(BITMAPINFOHEADER));
     p += sizeof(BITMAPINFOHEADER);
-    for (int line = 0; line < scrheight; line++)
+    if (!screenshot_image::CopyTopDown(*image, std::span{reinterpret_cast<std::byte*>(p), static_cast<size_t>(bi.biSizeImage)}))
     {
-        const auto row = std::span{scrBits}.subspan(static_cast<size_t>(scrheight - line - 1) * scrwidth, scrwidth);
-        ::CopyMemory(p, row.data(), row.size_bytes());
-        p += row.size_bytes();
+        ::GlobalUnlock(hDIB);
+        ::GlobalFree(hDIB);
+        return nullptr;
     }
     ::GlobalUnlock(hDIB);
 
@@ -639,7 +498,7 @@ BOOL ScreenView_ScreenToText(std::span<uint8_t> buffer)
     if (buffer.size() < screen_text::OutputSize) return FALSE;
     // Get screenshot
     std::vector<uint32_t> bits(UKNC_SCREEN_WIDTH * UKNC_SCREEN_HEIGHT);
-    Emulator_PrepareScreenToText(bits, ScreenView_GrayColors);
+    Emulator_PrepareScreenToText(bits, video_palette::Get(video_palette::Mode::gray));
 
     // Prepare font, get current font data from PPU memory
     CMemoryController* pPpuMemCtl = g_pBoard->GetPPUMemoryController();

@@ -1,0 +1,46 @@
+# Assemble with Clang even when the C++ compiler uses another driver.
+find_program(UKNCBTL_CLANG_ASSEMBLER NAMES clang clang-20 clang-19 clang-18 REQUIRED)
+
+if(CMAKE_OSX_ARCHITECTURES)
+  list(LENGTH CMAKE_OSX_ARCHITECTURES arch_count)
+  if(NOT arch_count EQUAL 1)
+    message(FATAL_ERROR "CpuOverflow currently requires one macOS target architecture per build")
+  endif()
+  set(cpu_arch "${CMAKE_OSX_ARCHITECTURES}")
+elseif(CMAKE_CXX_COMPILER_ARCHITECTURE_ID)
+  set(cpu_arch "${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}")
+elseif(CMAKE_CXX_COMPILER_TARGET)
+  string(REGEX MATCH "^[^-]+" cpu_arch "${CMAKE_CXX_COMPILER_TARGET}")
+else()
+  set(cpu_arch "${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+string(TOLOWER "${cpu_arch}" cpu_arch)
+if(cpu_arch MATCHES "^(x64|amd64|x86_64)$")
+  set(cpu_arch x86_64)
+elseif(cpu_arch MATCHES "^(arm64|aarch64)$")
+  set(cpu_arch aarch64)
+else()
+  message(FATAL_ERROR "Unsupported CpuOverflow target architecture: ${cpu_arch}")
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+  set(cpu_target "${cpu_arch}-pc-windows-msvc")
+  set(cpu_object "${CMAKE_CURRENT_BINARY_DIR}/CpuOverflow.obj")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(cpu_target "${cpu_arch}-unknown-linux-gnu")
+  set(cpu_object "${CMAKE_CURRENT_BINARY_DIR}/CpuOverflow.o")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  set(cpu_target "${cpu_arch}-apple-darwin")
+  set(cpu_object "${CMAKE_CURRENT_BINARY_DIR}/CpuOverflow.o")
+else()
+  message(FATAL_ERROR "Unsupported CpuOverflow target OS: ${CMAKE_SYSTEM_NAME}")
+endif()
+
+add_custom_command(OUTPUT "${cpu_object}"
+  COMMAND "${UKNCBTL_CLANG_ASSEMBLER}" --target=${cpu_target} -c -x assembler-with-cpp
+          "${PROJECT_SOURCE_DIR}/emulator/emubase/CpuOverflow.S" -o "${cpu_object}"
+  DEPENDS "${PROJECT_SOURCE_DIR}/emulator/emubase/CpuOverflow.S"
+  VERBATIM)
+set_source_files_properties("${cpu_object}" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+add_library(CpuOverflow STATIC "${cpu_object}")
+set_target_properties(CpuOverflow PROPERTIES LINKER_LANGUAGE CXX)

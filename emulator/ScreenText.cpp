@@ -1,6 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include "ScreenText.h"
+#include "util/UkncCharset.h"
 namespace screen_text {
 std::optional<uint8_t> Recognize(std::span<const uint8_t> fontcur, std::span<const uint8_t> fontstd, std::span<const uint32_t> pixels)
 {
@@ -54,16 +54,40 @@ bool Convert(std::span<const uint8_t> current, std::span<const uint8_t> standard
 {
     if (current.size() < FontSize || standard.size() < FontSize ||
         pixels.size() < FrameSize || output.size() < OutputSize) return false;
-    size_t index = 0;
-    for (size_t row = 0; row < 26; ++row)
+    std::size_t index = 0;
+    for (std::size_t row = 0; row < 26; ++row)
     {
-        const size_t y = row * 11 + (row > 0 ? 1 : 0) + (row == 25 ? 1 : 0);
-        for (size_t x = 0; x < 640; x += 8)
+        const std::size_t y = row * 11 + (row > 0 ? 1 : 0) + (row == 25 ? 1 : 0);
+        for (std::size_t x = 0; x < 640; x += 8)
             output[index++] = *Recognize(current, standard, pixels.subspan(y * 640 + x));
         output[index++] = '\r';
         output[index++] = '\n';
     }
     output[index] = 0;
     return true;
+}
+
+std::string ToUtf8(std::span<const uint8_t> text)
+{
+    std::string result;
+    result.reserve(text.size());
+    for (const auto byte : text)
+    {
+        if (!byte) break;
+        const auto ch = uknc_charset::ToUnicode(byte);
+        if (ch < 0x80) result.push_back(static_cast<char>(ch));
+        else if (ch < 0x800)
+        {
+            result.push_back(static_cast<char>(0xc0 | (ch >> 6)));
+            result.push_back(static_cast<char>(0x80 | (ch & 0x3f)));
+        }
+        else
+        {
+            result.push_back(static_cast<char>(0xe0 | (ch >> 12)));
+            result.push_back(static_cast<char>(0x80 | ((ch >> 6) & 0x3f)));
+            result.push_back(static_cast<char>(0x80 | (ch & 0x3f)));
+        }
+    }
+    return result;
 }
 }

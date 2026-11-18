@@ -49,7 +49,7 @@ extern HWND g_hwndScreen;  // Screen View window handle
 void ScreenView_RegisterClass();
 void ScreenView_Init();
 void ScreenView_Done();
-BOOL ScreenView_InitRender(LPCTSTR szRenderLibraryName);
+BOOL ScreenView_InitRender();
 void ScreenView_DoneRender();
 ScreenViewMode ScreenView_GetMode();
 void ScreenView_SetMode(ScreenViewMode);
@@ -57,6 +57,8 @@ int ScreenView_GetRenderMode();
 void ScreenView_SetRenderMode(int renderMode);
 LPCTSTR ScreenView_GetRenderModeDescription(int renderMode);
 void ScreenView_PrepareScreen();
+// Draw the last prepared pixels without reading the motherboard.
+void ScreenView_DrawPreparedScreen();
 void ScreenView_ScanKeyboard();
 void ScreenView_UpdateMouse();
 void ScreenView_RedrawScreen();  // Force to call PrepareScreen and to draw the image
@@ -214,6 +216,8 @@ extern HWND g_hwndTape;  // Tape View window handle
 void TapeView_RegisterClass();
 void TapeView_Create(HWND hwndParent, int x, int y, int width, int height);
 void TapeView_Done();
+// Deliver tape changes and errors after a frame, on the UI thread.
+void TapeView_ServiceFrame();
 LRESULT CALLBACK TapeViewWndProc(HWND, UINT, WPARAM, LPARAM);
 
 

@@ -1,0 +1,58 @@
+file(MAKE_DIRECTORY "${TEST_DIR}")
+set(tape "${TEST_DIR}/worker-日本.wav")
+execute_process(COMMAND "${FIXTURE}" "${tape}" --wav RESULT_VARIABLE result)
+if(NOT result STREQUAL "0")
+  message(FATAL_ERROR "Could not create tape fixture (${result})")
+endif()
+file(SHA256 "${tape}" original)
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  "UKNCBTL_TEST_TAPE_PATH=${tape}" "UKNCBTL_TEST_SCREENSHOT_PATH=${tape}"
+  UKNCBTL_TEST_SCREENSHOT_CONFLICT=1 "${APP}" --smoke-test --sound
+  RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 25)
+if(NOT result STREQUAL "0")
+  message(FATAL_ERROR "SDL tape open or reservation failed (${result}): ${error}")
+endif()
+file(SHA256 "${tape}" after)
+if(NOT after STREQUAL original)
+  message(FATAL_ERROR "Conflicting output changed the tape")
+endif()
+file(WRITE "${tape}" "not a WAV")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  "UKNCBTL_TEST_TAPE_PATH=${tape}" UKNCBTL_TEST_TAPE_OPEN_FAILURE=1 "${APP}" --smoke-test --sound
+  RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 25)
+if(NOT result STREQUAL "0")
+  message(FATAL_ERROR "SDL tape failure handling failed (${result}): ${error}")
+endif()
+foreach(mode IN ITEMS install exit)
+  set(quit_env)
+  if(mode STREQUAL "exit")
+    set(quit_env UKNCBTL_TEST_TAPE_CREATE_EXIT=1)
+  else()
+    set(quit_env "UKNCBTL_TEST_SCREENSHOT_PATH=${tape}" UKNCBTL_TEST_SCREENSHOT_CONFLICT=1)
+  endif()
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    "UKNCBTL_TEST_TAPE_PATH=${tape}" UKNCBTL_TEST_TAPE_CREATE=1 ${quit_env}
+    "${APP}" --smoke-test --sound RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
+  if(NOT result STREQUAL "0")
+    message(FATAL_ERROR "SDL tape creation (${mode}) failed (${result}): ${error}")
+  endif()
+  file(SIZE "${tape}" size)
+  file(READ "${tape}" header OFFSET 0 LIMIT 12 HEX)
+  if(NOT size EQUAL 44 OR NOT header STREQUAL "524946462400000057415645")
+    message(FATAL_ERROR "Invalid empty WAV after ${mode}: ${size}, ${header}")
+  endif()
+endforeach()
+foreach(mode IN ITEMS install exit)
+  set(quit_env)
+  if(mode STREQUAL "exit")
+    set(quit_env UKNCBTL_TEST_TAPE_CREATE_EXIT=1)
+  endif()
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    "UKNCBTL_TEST_TAPE_PATH=${TEST_DIR}/missing/worker.wav" UKNCBTL_TEST_TAPE_OPEN_FAILURE=1
+    UKNCBTL_TEST_TAPE_CREATE=1 ${quit_env} "${APP}" --smoke-test --sound
+    RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
+  if(NOT result STREQUAL "0" OR NOT error MATCHES "Could not finish creating the WAV file")
+    message(FATAL_ERROR "SDL tape creation failure (${mode}) was not reported on exit (${result}): ${error}")
+  endif()
+endforeach()
+file(REMOVE "${tape}")

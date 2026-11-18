@@ -166,6 +166,23 @@ TEST_F(SnapshotTests, NullAndMissingPathsAreRejectedWithoutStateChanges)
     const auto missing = std::basic_string<TCHAR>(path.data()) + _T(".missing");
     ExpectRejected(missing.c_str());
     EXPECT_FALSE(snapshot::Save(nullptr, *board, uptime));
+    EXPECT_FALSE(snapshot::Save(std::filesystem::path{}, *board, uptime));
+}
+
+TEST_F(SnapshotTests, FilesystemPathRoundTripsUnicodeFilename)
+{
+    auto unicodePath = std::filesystem::path(path.data());
+    unicodePath += L"-\u0414\u0438\u0441\u043a-\u65e5\u672c.uknc";
+    struct RemoveFile {
+        std::filesystem::path path;
+        ~RemoveFile() { std::error_code error; std::filesystem::remove(path, error); }
+    } cleanup{unicodePath};
+    const auto before = State();
+    ASSERT_TRUE(snapshot::Save(unicodePath, *board, uptime));
+    board->GetCPU()->SetReg(0, 0);
+    ASSERT_TRUE(snapshot::Load(unicodePath, *board, uptime, history, [&] { ++stops; }));
+    EXPECT_EQ(State(), before);
+    EXPECT_EQ(stops, 1);
 }
 
 TEST_F(SnapshotTests, ExclusiveFileLockRejectsReadsAndWrites)

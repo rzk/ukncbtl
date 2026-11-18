@@ -19,70 +19,6 @@ BOOL Settings_LoadColorValue(LPCTSTR, COLORREF*);
 BOOL Settings_SaveBinaryValue(LPCTSTR, const void*, int);
 BOOL Settings_LoadBinaryValue(LPCTSTR, void*, int);
 
-TEST(SettingsCodec, DecimalBoundariesAndLeadingZeros)
-{
-    EXPECT_EQ(settings_codec::DecodeDword(_T("0")), 0u);
-    EXPECT_EQ(settings_codec::DecodeDword(_T("4294967295")), UINT32_MAX);
-    EXPECT_EQ(settings_codec::DecodeDword(_T("0000123")), 123u);
-}
-
-TEST(SettingsCodec, RejectsMalformedDecimalAndOverflow)
-{
-    for (const auto text : {_T(""), _T("-1"), _T("+1"), _T("1x"), _T(" 1"),
-             _T("1 "), _T("0x10"), _T("1.0"), _T("4294967296"), _T("99999999999999999999")})
-        EXPECT_FALSE(settings_codec::DecodeDword(text)) << testing::PrintToString(text);
-    EXPECT_FALSE(settings_codec::DecodeDword(std::basic_string_view<TCHAR>(_T("1\0x"), 3)));
-}
-
-TEST(SettingsCodec, ColorEncodingUsesRgbOrderAndSixUppercaseDigits)
-{
-    EXPECT_EQ(settings_codec::EncodeColor(RGB(0x12, 0x34, 0xab)), _T("1234AB"));
-    EXPECT_EQ(settings_codec::EncodeColor(0), _T("000000"));
-    EXPECT_EQ(settings_codec::EncodeColor(0xffffffff), _T("FFFFFF"));
-    EXPECT_EQ(settings_codec::DecodeColor(_T("1234ab")), RGB(0x12, 0x34, 0xab));
-    EXPECT_EQ(settings_codec::DecodeColor(_T("F")), RGB(0, 0, 15));
-}
-
-TEST(SettingsCodec, RejectsInvalidOrOutOfRangeColors)
-{
-    for (const auto text : {_T(""), _T("#FFFFFF"), _T("-1"), _T("FFFFFG"), _T("FFFFFFx"),
-                            _T("1000000"), _T("FFFFFFFF"), _T("FF FF")})
-        EXPECT_FALSE(settings_codec::DecodeColor(text));
-}
-
-TEST(SettingsCodec, BinaryRoundTripsEveryByteAndAcceptsLowercase)
-{
-    std::array<uint8_t, 256> source{}, target{};
-    for (size_t i = 0; i < source.size(); ++i) source[i] = static_cast<uint8_t>(i);
-    auto text = settings_codec::EncodeBinary(source);
-    EXPECT_EQ(text.size(), 512u);
-    EXPECT_EQ(text.substr(0, 8), _T("00010203"));
-    EXPECT_EQ(text.substr(508), _T("FEFF"));
-    for (auto& ch : text) if (ch >= _T('A') && ch <= _T('F')) ch += _T('a') - _T('A');
-    EXPECT_TRUE(settings_codec::DecodeBinary(text, target));
-    EXPECT_EQ(target, source);
-    EXPECT_EQ(settings_codec::EncodeBinary({}), _T(""));
-    EXPECT_TRUE(settings_codec::DecodeBinary(_T(""), {}));
-}
-
-TEST(SettingsCodec, BinaryFailureDoesNotPartiallyOverwriteOutput)
-{
-    for (const auto text : {_T(""), _T("01"), _T("010"), _T("010203"), _T("01G0"), _T("010 ")})
-    {
-        std::array<uint8_t, 4> guarded{0xaa, 0xbb, 0xcc, 0xdd};
-        const auto before = guarded;
-        EXPECT_FALSE(settings_codec::DecodeBinary(text, std::span{guarded}.subspan<1, 2>()));
-        EXPECT_EQ(guarded, before);
-    }
-}
-
-TEST(SettingsCodec, BinarySuccessPreservesSurroundingBytes)
-{
-    std::array<uint8_t, 4> bytes{0xaa, 0, 0, 0xdd};
-    EXPECT_TRUE(settings_codec::DecodeBinary(_T("01fE"), std::span{bytes}.subspan<1, 2>()));
-    EXPECT_EQ(bytes, (std::array<uint8_t, 4>{0xaa, 1, 0xfe, 0xdd}));
-}
-
 namespace {
 class SettingsTests : public testing::Test
 {
@@ -226,42 +162,28 @@ TEST_F(SettingsTests, WindowRectPersistsAndMalformedRectLeavesCallerUntouched)
     EXPECT_EQ(std::memcmp(&actual, &rect, sizeof(rect)), 0);
 }
 
-TEST_F(SettingsTests, RenderAndFontDefaultsAndCustomValues)
+TEST_F(SettingsTests, FontDefaultsAndCustomValues)
 {
     std::array<TCHAR, 32> text{};
-    Settings_GetRender(text);
-    EXPECT_STREQ(text.data(), _T("RenderVfw.dll"));
     Settings_GetDebugFontName(text);
     EXPECT_STREQ(text.data(), _T("Lucida Console"));
-    Settings_SetRender(_T("Custom.dll"));
     Settings_SetDebugFontName(_T("Consolas"));
     Settings_Init(path.data());
-    Settings_GetRender(text);
-    EXPECT_STREQ(text.data(), _T("Custom.dll"));
     Settings_GetDebugFontName(text);
     EXPECT_STREQ(text.data(), _T("Consolas"));
-    const std::basic_string<TCHAR> oversized(32, _T('x'));
-    Raw(_T("Render"), oversized.c_str());
-    Settings_GetRender(text);
-    EXPECT_STREQ(text.data(), _T("RenderVfw.dll"));
 }
 
 TEST_F(SettingsTests, GettersRespectSmallAndEmptyDestinations)
 {
     std::array<TCHAR, 5> guarded{_T('a'), _T('b'), _T('c'), _T('d'), _T('e')};
-    Settings_GetRender(std::span{guarded}.subspan<1, 3>());
-    EXPECT_EQ(guarded[0], _T('a'));
-    EXPECT_EQ(guarded[1], _T('\0'));
-    EXPECT_EQ(guarded[4], _T('e'));
-
-    Settings_SetSerialPort(_T("COM12"));
-    Settings_GetSerialPort(std::span{guarded}.subspan<1, 3>());
+    Settings_SetFloppyFilePath(0, _T("long.dsk"));
+    Settings_GetFloppyFilePath(0, std::span{guarded}.subspan<1, 3>());
     EXPECT_EQ(guarded[1], _T('\0'));
     EXPECT_EQ(guarded[4], _T('e'));
     Settings_GetDebugFontName(std::span<TCHAR>{});
 }
 
-TEST_F(SettingsTests, DevicePathsAndPortNamesPersistIndependently)
+TEST_F(SettingsTests, DevicePathsPersistIndependently)
 {
     const auto unicode = _T("C:\\images\\\u0423\u041a\u041d\u0426.dsk");
     Settings_SetFloppyFilePath(0, unicode);
@@ -270,8 +192,6 @@ TEST_F(SettingsTests, DevicePathsAndPortNamesPersistIndependently)
     Settings_SetHardFilePath(2, _T("two.hdi"));
     Settings_SetCartridgeFilePath(1, _T("one.rom"));
     Settings_SetCartridgeFilePath(2, _T("two.rom"));
-    Settings_SetSerialPort(_T("COM12"));
-    Settings_SetNetComPort(_T("COM34"));
     Settings_Init(path.data());
     std::array<TCHAR, MAX_PATH> text{};
     Settings_GetFloppyFilePath(0, text); EXPECT_STREQ(text.data(), unicode);
@@ -281,8 +201,6 @@ TEST_F(SettingsTests, DevicePathsAndPortNamesPersistIndependently)
     Settings_GetHardFilePath(2, text); EXPECT_STREQ(text.data(), _T("two.hdi"));
     Settings_GetCartridgeFilePath(1, text); EXPECT_STREQ(text.data(), _T("one.rom"));
     Settings_GetCartridgeFilePath(2, text); EXPECT_STREQ(text.data(), _T("two.rom"));
-    Settings_GetSerialPort(text); EXPECT_STREQ(text.data(), _T("COM12"));
-    Settings_GetNetComPort(text); EXPECT_STREQ(text.data(), _T("COM34"));
 }
 
 TEST_F(SettingsTests, BreakpointSlotsAndProcessorsPersistIndependentlyAndDelete)
@@ -337,46 +255,26 @@ TEST_F(SettingsTests, InvalidColorKeepsOutputAndFallsBackToDefault)
     Settings_SetColor(ColorIndicesCount, 0);
 }
 
-TEST_F(SettingsTests, SerialAndNetworkDefaultsAreDistinct)
+TEST_F(SettingsTests, LegacyHostPortEntriesArePreservedButUnused)
 {
-    DCB serial{}, network{};
-    Settings_GetSerialConfig(&serial);
-    Settings_GetNetComConfig(&network);
-    EXPECT_EQ(serial.DCBlength, sizeof(DCB));
-    EXPECT_EQ(network.DCBlength, sizeof(DCB));
-    EXPECT_EQ(serial.BaudRate, 9600u);
-    EXPECT_EQ(network.BaudRate, 57600u);
-    EXPECT_EQ(serial.ByteSize, 8);
-    EXPECT_EQ(network.ByteSize, 8);
-    EXPECT_EQ(serial.Parity, NOPARITY);
-    EXPECT_EQ(network.Parity, ODDPARITY);
-    EXPECT_EQ(serial.StopBits, TWOSTOPBITS);
-    EXPECT_EQ(network.StopBits, TWOSTOPBITS);
-    EXPECT_EQ(static_cast<DWORD>(serial.fRtsControl), RTS_CONTROL_HANDSHAKE);
-    EXPECT_EQ(static_cast<DWORD>(network.fRtsControl), RTS_CONTROL_DISABLE);
-}
-
-TEST_F(SettingsTests, ConfigurationsPersistCacheAndResetAfterFileSwitch)
-{
-    DCB serial{}, network{};
-    Settings_GetSerialConfig(&serial);
-    Settings_GetNetComConfig(&network);
-    serial.BaudRate = 19200;
-    network.BaudRate = 115200;
-    Settings_SetSerialConfig(&serial);
-    Settings_SetNetComConfig(&network);
-    Raw(_T("SerialConfig"), _T("invalid"));
-    DCB actual{};
-    Settings_GetSerialConfig(&actual);
-    EXPECT_EQ(actual.BaudRate, 19200u);
+    Raw(_T("Serial"), _T("1"));
+    Raw(_T("SerialPort"), _T("COM12"));
+    Raw(_T("SerialConfig"), _T("legacy"));
+    Raw(_T("Network"), _T("1"));
+    Raw(_T("NetComPort"), _T("COM34"));
+    Raw(_T("NetComConfig"), _T("legacy-network"));
+    Settings_SetParallel(TRUE);
     Settings_Init(path.data());
-    Settings_GetSerialConfig(&actual);
-    EXPECT_EQ(actual.BaudRate, 9600u);
-    Settings_GetNetComConfig(&actual);
-    EXPECT_EQ(std::memcmp(&actual, &network, sizeof(DCB)), 0);
-    Settings_Init(other.data());
-    Settings_GetNetComConfig(&actual);
-    EXPECT_EQ(actual.BaudRate, 57600u);
+    EXPECT_TRUE(Settings_GetParallel());
+    for (const auto& [key, expected] : std::array{
+             std::pair{_T("Serial"), _T("1")}, std::pair{_T("SerialPort"), _T("COM12")},
+             std::pair{_T("SerialConfig"), _T("legacy")}, std::pair{_T("Network"), _T("1")},
+             std::pair{_T("NetComPort"), _T("COM34")}, std::pair{_T("NetComConfig"), _T("legacy-network")}})
+    {
+        std::array<TCHAR, 64> value{};
+        GetPrivateProfileString(_T("UKNCBTL"), key, nullptr, value.data(), static_cast<DWORD>(value.size()), path.data());
+        EXPECT_STREQ(value.data(), expected);
+    }
 }
 
 struct CachedSetting
@@ -442,9 +340,7 @@ INSTANTIATE_TEST_SUITE_P(AllCachedSettings, CachedSettingsTests, testing::Values
     CachedSetting{"Keyboard", _T("Keyboard"), TRUE, [] { return static_cast<DWORD>(Settings_GetKeyboard()); }, [](DWORD value) { Settings_SetKeyboard(static_cast<BOOL>(value)); }},
     CachedSetting{"Tape", _T("Tape"), FALSE, [] { return static_cast<DWORD>(Settings_GetTape()); }, [](DWORD value) { Settings_SetTape(static_cast<BOOL>(value)); }},
     CachedSetting{"InstrHistory", _T("InstrHistory"), FALSE, [] { return static_cast<DWORD>(Settings_GetInstrHistory()); }, [](DWORD value) { Settings_SetInstrHistory(static_cast<BOOL>(value)); }},
-    CachedSetting{"Serial", _T("Serial"), FALSE, [] { return static_cast<DWORD>(Settings_GetSerial()); }, [](DWORD value) { Settings_SetSerial(static_cast<BOOL>(value)); }},
     CachedSetting{"Parallel", _T("Parallel"), FALSE, [] { return static_cast<DWORD>(Settings_GetParallel()); }, [](DWORD value) { Settings_SetParallel(static_cast<BOOL>(value)); }},
-    CachedSetting{"Network", _T("Network"), FALSE, [] { return static_cast<DWORD>(Settings_GetNetwork()); }, [](DWORD value) { Settings_SetNetwork(static_cast<BOOL>(value)); }},
     CachedSetting{"NetStation", _T("NetStation"), 0, [] { return static_cast<DWORD>(Settings_GetNetStation()); }, [](DWORD value) { Settings_SetNetStation(static_cast<int>(value)); }},
     CachedSetting{"SpriteAddress", _T("SpriteAddress"), 0, [] { return static_cast<DWORD>(Settings_GetSpriteAddress()); }, [](DWORD value) { Settings_SetSpriteAddress(static_cast<WORD>(value)); }},
     CachedSetting{"SpriteWidth", _T("SpriteWidth"), 2, [] { return static_cast<DWORD>(Settings_GetSpriteWidth()); }, [](DWORD value) { Settings_SetSpriteWidth(static_cast<WORD>(value)); }},

@@ -6,6 +6,13 @@
 #include <optional>
 #include <vector>
 
+TEST(ProcessorNames, EmptyAndLongNamesAreTerminated)
+{
+    EXPECT_STREQ(CProcessor(nullptr).GetName(), L"");
+    EXPECT_STREQ(CProcessor(L"CPU").GetName(), L"CPU");
+    EXPECT_STREQ(CProcessor(L"LONGER").GetName(), L"LONG");
+}
+
 void DebugLog(LPCTSTR) {}
 const TCHAR* REGISTER_NAME[] = {L"R0",L"R1",L"R2",L"R3",L"R4",L"R5",L"SP",L"PC"};
 #ifdef _DEBUG

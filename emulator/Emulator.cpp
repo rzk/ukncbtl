@@ -1,4 +1,4 @@
-﻿/*  This file is part of UKNCBTL.
+/*  This file is part of UKNCBTL.
     UKNCBTL is free software: you can redistribute it and/or modify it under the terms
 of the GNU Lesser General Public License as published by the Free Software Foundation,
 either version 3 of the License, or (at your option) any later version.
@@ -12,14 +12,17 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 #include "stdafx.h"
 #include "RamChanges.h"
+#include "FrameControl.h"
+#include "FrameTiming.h"
+#include "PrinterOutput.h"
+#include "RomFile.h"
+#include "EmbeddedRom.h"
 #include "util/Profiler.h"
-#include <cstdio>
 #include <algorithm>
 #include <array>
 #include <format>
 #include <memory>
 #include <vector>
-#include <share.h>
 #include "Main.h"
 #include "Emulator.h"
 #include "Views.h"
@@ -47,20 +50,11 @@ bool m_okEmulatorSound = false;
 uint16_t m_wEmulatorSoundSpeed = 100;
 int m_nEmulatorSoundChanges = 0;
 
-uint16_t m_Settings_NetStation_Bits = 0;
-bool m_okEmulatorNetwork = false;
-HANDLE m_hEmulatorNetPort = INVALID_HANDLE_VALUE;
-
-bool m_okEmulatorSerial = false;
-HANDLE m_hEmulatorComPort = INVALID_HANDLE_VALUE;
-
 bool m_okEmulatorParallel = false;
-UniqueFile m_parallelOutput;
+static PrinterOutput m_parallelOutput;
+static void Emulator_ReportPrinterFailure();
 
-long m_nFrameCount = 0;
-uint32_t m_dwTickCount = 0;
-uint32_t m_dwEmulatorUptime = 0;  // UKNC uptime, seconds, from turn on or reset, increments every 25 frames
-long m_nUptimeFrameCount = 0;
+static frame_timing::Tracker frameTiming(FRAMERATE);
 
 uint8_t* g_pEmulatorRam[3] = { nullptr, nullptr, nullptr };  // RAM values - for change tracking
 uint8_t* g_pEmulatorChangedRam[3] = { nullptr, nullptr, nullptr };  // RAM change flags
@@ -87,31 +81,10 @@ bool Emulator_LoadUkncRom()
 {
     std::array<uint8_t, 32768> data{};
 
-    UniqueFile fpFile(::_tfsopen(FILE_NAME_UKNC_ROM, _T("rb"), _SH_DENYWR));
-    if (fpFile != nullptr)
-    {
-        size_t dwBytesRead = ::fread(data.data(), 1, 32256, fpFile.get());
-        fpFile.reset();
-        if (dwBytesRead != 32256)
-        {
-            return false;
-        }
-    }
-    else  // uknc_rom.bin not found, use ROM image from resources
-    {
-        HRSRC hRes = nullptr;
-        DWORD dwDataSize = 0;
-        HGLOBAL hResLoaded = nullptr;
-        void * pResData = nullptr;
-        if ((hRes = ::FindResource(nullptr, MAKEINTRESOURCE(IDR_UKNC_ROM), _T("BIN"))) == nullptr ||
-            (dwDataSize = ::SizeofResource(nullptr, hRes)) < 32256 ||
-            (hResLoaded = ::LoadResource(nullptr, hRes)) == nullptr ||
-            (pResData = ::LockResource(hResLoaded)) == nullptr)
-        {
-            return false;
-        }
-        std::copy_n(static_cast<const uint8_t*>(pResData), 32256, data.begin());
-    }
+    const auto external = rom_file::ReadPrefix(std::filesystem::path(FILE_NAME_UKNC_ROM), std::span{data}.first(embedded_rom::Size));
+    if (!external && external.error() != rom_file::Error::open_failed) return false;
+    if (!external)  // External ROM could not be opened; use the embedded image.
+        std::ranges::copy(embedded_rom::Bytes(), data.begin());
 
     g_pBoard->LoadROM(data);
 
@@ -162,8 +135,7 @@ bool Emulator_Init()
         g_pBoard->SetSoundGenCallback(SoundGen_FeedDAC);
     }
 
-    m_nUptimeFrameCount = 0;
-    m_dwEmulatorUptime = 0;
+    frameTiming.ResetUptime();
 
     // Allocate memory for old RAM values
     for (int i = 0; i < 3; i++)
@@ -197,22 +169,10 @@ void Emulator_Done()
     g_pBoard->SetSoundGenCallback(nullptr);
     SoundGen_Finalize();
 
-    g_pBoard->SetSerialCallbacks(nullptr, nullptr);
-    if (m_hEmulatorComPort != INVALID_HANDLE_VALUE)
-    {
-        ::CloseHandle(m_hEmulatorComPort);
-        m_hEmulatorComPort = INVALID_HANDLE_VALUE;
-    }
-
-    g_pBoard->SetNetworkCallbacks(nullptr, nullptr);
-    if (m_hEmulatorNetPort != INVALID_HANDLE_VALUE)
-    {
-        ::CloseHandle(m_hEmulatorNetPort);
-        m_hEmulatorNetPort = INVALID_HANDLE_VALUE;
-    }
-
     g_pBoard->SetParallelOutCallback(nullptr);
-    m_parallelOutput.reset();
+    (void)m_parallelOutput.Close();
+    if (m_parallelOutput.TakeError())
+        AlertWarning(_T("Failed to write or close the printer output file."));
     m_okEmulatorParallel = false;
 
     g_boardOwner.reset();
@@ -238,25 +198,20 @@ void Emulator_Start()
     MainWindow_UpdateWindowTitle();
     MainWindow_UpdateMenu();
 
-    m_nFrameCount = 0;
-    m_dwTickCount = GetTickCount();
+    frameTiming.Start(frame_timing::Clock::now());
 
     // For proper breakpoint processing
-    if (!cpuBreakpoints.Addresses().empty() || !ppuBreakpoints.Addresses().empty())
-    {
-        g_pBoard->GetCPU()->ClearInternalTick();
-        g_pBoard->GetPPU()->ClearInternalTick();
-    }
+    frame_control::PrepareRun(*g_pBoard, cpuBreakpoints, ppuBreakpoints);
 }
 void Emulator_Stop()
 {
     g_okEmulatorRunning = false;
 
-    Emulator_SetTempCPUBreakpoint(0177777);
-    Emulator_SetTempPPUBreakpoint(0177777);
+    frame_control::CancelTemporaryBreakpoints(cpuBreakpoints, ppuBreakpoints);
 
-    if (m_parallelOutput)
-        std::fflush(m_parallelOutput.get());
+    if (m_parallelOutput.IsOpen())
+        (void)m_parallelOutput.Flush();
+    Emulator_ReportPrinterFailure();
 
     // Reset title bar message
     MainWindow_UpdateWindowTitle();
@@ -276,8 +231,7 @@ void Emulator_Reset()
 
     Emulator_ClearHistory();
 
-    m_nUptimeFrameCount = 0;
-    m_dwEmulatorUptime = 0;
+    frameTiming.ResetUptime();
 
     MainWindow_UpdateAllViews();
 }
@@ -455,265 +409,95 @@ void Emulator_SetTrace(uint32_t dwTrace)
 
 #endif // !PRODUCT
 
-bool CALLBACK Emulator_NetworkIn_Callback(uint8_t* pByte)
-{
-    DWORD dwBytesRead = 0;
-    BOOL result = ::ReadFile(m_hEmulatorNetPort, pByte, 1, &dwBytesRead, nullptr);
-
-    if (result && (dwBytesRead == 1))
-        DebugLogFormat(_T("Net IN {:02x}\r\n"), (int)(*pByte));
-
-    return result && (dwBytesRead == 1);
-}
-
-bool CALLBACK Emulator_NetworkOut_Callback(uint8_t byte)
-{
-    DWORD dwBytesWritten = 0;
-    const BOOL result = ::WriteFile(m_hEmulatorNetPort, &byte, 1, &dwBytesWritten, nullptr);
-
-    DebugLogFormat(_T("Net OUT {:02x}\r\n"), byte);
-
-    return result && dwBytesWritten == 1;
-}
-
-bool Emulator_SetNetwork(bool networkOnOff, LPCTSTR networkPort)
-{
-    if (m_okEmulatorNetwork != networkOnOff)
-    {
-        m_Settings_NetStation_Bits = (uint16_t)Settings_GetNetStation();
-        uint16_t rotateBits = (m_Settings_NetStation_Bits / 16);
-        m_Settings_NetStation_Bits = (256 * (16 * rotateBits + m_Settings_NetStation_Bits));
-        g_pBoard->SetNetStation(m_Settings_NetStation_Bits);
-
-        if (networkOnOff)
-        {
-            // Prepare port name
-            if (networkPort == nullptr) return false;
-            const auto port = std::format(_T("\\\\.\\{}"), networkPort);
-
-            // Open port
-            m_hEmulatorNetPort = ::CreateFile(port.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (m_hEmulatorNetPort == INVALID_HANDLE_VALUE)
-            {
-                DWORD dwError = ::GetLastError();
-                AlertWarningFormat(_T("Failed to open network COM port (0x{:08x})."), dwError);
-                return false;
-            }
-
-            // Set port settings
-            DCB dcb;
-            Settings_GetNetComConfig(&dcb);
-            if (!::SetCommState(m_hEmulatorNetPort, &dcb))
-            {
-                DWORD dwError = ::GetLastError();
-                ::CloseHandle(m_hEmulatorNetPort);
-                m_hEmulatorNetPort = INVALID_HANDLE_VALUE;
-                AlertWarningFormat(_T("Failed to configure the Network COM port (0x{:08x})."), dwError);
-                return false;
-            }
-
-            // Set timeouts: ReadIntervalTimeout value of MAXDWORD, combined with zero values for both the ReadTotalTimeoutConstant
-            // and ReadTotalTimeoutMultiplier members, specifies that the read operation is to return immediately with the bytes
-            // that have already been received, even if no bytes have been received.
-            COMMTIMEOUTS timeouts{};
-            timeouts.ReadIntervalTimeout = MAXDWORD;
-            timeouts.WriteTotalTimeoutConstant = 100;
-            if (!::SetCommTimeouts(m_hEmulatorNetPort, &timeouts))
-            {
-                DWORD dwError = ::GetLastError();
-                ::CloseHandle(m_hEmulatorNetPort);
-                m_hEmulatorNetPort = INVALID_HANDLE_VALUE;
-                AlertWarningFormat(_T("Failed to set the Network COM port timeouts (0x{:08x})."), dwError);
-                return false;
-            }
-
-            // Clear port input buffer
-            ::PurgeComm(m_hEmulatorNetPort, PURGE_RXABORT | PURGE_RXCLEAR);
-
-            // Set callbacks
-            g_pBoard->SetNetworkCallbacks(Emulator_NetworkIn_Callback, Emulator_NetworkOut_Callback);
-        }
-        else
-        {
-            g_pBoard->SetNetworkCallbacks(nullptr, nullptr);  // Reset callbacks
-
-            // Close port
-            if (m_hEmulatorNetPort != INVALID_HANDLE_VALUE)
-            {
-                ::CloseHandle(m_hEmulatorNetPort);
-                m_hEmulatorNetPort = INVALID_HANDLE_VALUE;
-            }
-        }
-    }
-
-    m_okEmulatorNetwork = networkOnOff;
-
-    return true;
-}
-
-bool CALLBACK Emulator_SerialIn_Callback(BYTE* pByte)
-{
-    DWORD dwBytesRead = 0;
-    BOOL result = ::ReadFile(m_hEmulatorComPort, pByte, 1, &dwBytesRead, nullptr);
-
-    return result && (dwBytesRead == 1);
-}
-
-bool CALLBACK Emulator_SerialOut_Callback(BYTE byte)
-{
-    DWORD dwBytesWritten = 0;
-    const BOOL result = ::WriteFile(m_hEmulatorComPort, &byte, 1, &dwBytesWritten, nullptr);
-
-    return result && dwBytesWritten == 1;
-}
-
-bool Emulator_SetSerial(bool serialOnOff, LPCTSTR serialPort)
-{
-    if (m_okEmulatorSerial != serialOnOff)
-    {
-        if (serialOnOff)
-        {
-            // Prepare port name
-            if (serialPort == nullptr) return false;
-            const auto port = std::format(_T("\\\\.\\{}"), serialPort);
-
-            // Open port
-            m_hEmulatorComPort = ::CreateFile(port.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (m_hEmulatorComPort == INVALID_HANDLE_VALUE)
-            {
-                DWORD dwError = ::GetLastError();
-                AlertWarningFormat(_T("Failed to open COM port (0x{:08x})."), dwError);
-                return false;
-            }
-
-            // Set port settings
-            DCB dcb;
-            Settings_GetSerialConfig(&dcb);
-            if (!::SetCommState(m_hEmulatorComPort, &dcb))
-            {
-                DWORD dwError = ::GetLastError();
-                ::CloseHandle(m_hEmulatorComPort);
-                m_hEmulatorComPort = INVALID_HANDLE_VALUE;
-                AlertWarningFormat(_T("Failed to configure the COM port (0x{:08x})."), dwError);
-                return false;
-            }
-
-            // Set timeouts: ReadIntervalTimeout value of MAXDWORD, combined with zero values for both the ReadTotalTimeoutConstant
-            // and ReadTotalTimeoutMultiplier members, specifies that the read operation is to return immediately with the bytes
-            // that have already been received, even if no bytes have been received.
-            COMMTIMEOUTS timeouts{};
-            timeouts.ReadIntervalTimeout = MAXDWORD;
-            timeouts.WriteTotalTimeoutConstant = 100;
-            if (!::SetCommTimeouts(m_hEmulatorComPort, &timeouts))
-            {
-                DWORD dwError = ::GetLastError();
-                ::CloseHandle(m_hEmulatorComPort);
-                m_hEmulatorComPort = INVALID_HANDLE_VALUE;
-                AlertWarningFormat(_T("Failed to set the COM port timeouts (0x{:08x})."), dwError);
-                return false;
-            }
-
-            // Clear port input buffer
-            ::PurgeComm(m_hEmulatorComPort, PURGE_RXABORT | PURGE_RXCLEAR);
-
-            // Set callbacks
-            g_pBoard->SetSerialCallbacks(Emulator_SerialIn_Callback, Emulator_SerialOut_Callback);
-        }
-        else
-        {
-            g_pBoard->SetSerialCallbacks(nullptr, nullptr);  // Reset callbacks
-
-            // Close port
-            if (m_hEmulatorComPort != INVALID_HANDLE_VALUE)
-            {
-                ::CloseHandle(m_hEmulatorComPort);
-                m_hEmulatorComPort = INVALID_HANDLE_VALUE;
-            }
-        }
-    }
-
-    m_okEmulatorSerial = serialOnOff;
-
-    return true;
-}
-
 bool CALLBACK Emulator_ParallelOut_Callback(BYTE byte)
 {
-    return m_parallelOutput && std::fwrite(&byte, 1, 1, m_parallelOutput.get()) == 1;
+    return m_parallelOutput.Write(byte);
 }
 
-void Emulator_SetParallel(bool parallelOnOff)
+static void Emulator_ReportPrinterFailure()
+{
+    if (!m_parallelOutput.TakeError()) return;
+    g_pBoard->SetParallelOutCallback(nullptr);
+    (void)m_parallelOutput.Close();
+    (void)m_parallelOutput.TakeError(); // Report a related close failure only once.
+    m_okEmulatorParallel = false;
+    Settings_SetParallel(FALSE);
+    MainWindow_UpdateMenu();
+    AlertWarning(_T("Printer output failed. Parallel output has been disabled."));
+}
+
+bool Emulator_SetParallel(bool parallelOnOff)
 {
     if (m_okEmulatorParallel == parallelOnOff)
-        return;
+        return true;
 
     if (!parallelOnOff)
     {
         g_pBoard->SetParallelOutCallback(nullptr);
-        m_parallelOutput.reset();
+        (void)m_parallelOutput.Close();
+        m_okEmulatorParallel = false;
+        if (m_parallelOutput.TakeError())
+        {
+            AlertWarning(_T("Failed to write or close the printer output file."));
+            return false;
+        }
     }
     else
     {
-        m_parallelOutput.reset(::_tfopen(_T("printer.log"), _T("wb")));
-        if (!m_parallelOutput)
+        if (!m_parallelOutput.Open("printer.log"))
         {
             AlertWarning(_T("Failed to open the printer output file."));
-            return;
+            return false;
         }
         g_pBoard->SetParallelOutCallback(Emulator_ParallelOut_Callback);
     }
 
     m_okEmulatorParallel = parallelOnOff;
+    return true;
 }
 
-bool Emulator_SystemFrame()
+void Emulator_PrepareFrame()
 {
-    UKNC_PROFILE_SCOPE("Emulator frame");
     SoundGen_SetVolume(Settings_GetSoundVolume());
 
     ScreenView_ScanKeyboard();
     if (Settings_GetMouse())
         ScreenView_UpdateMouse();
 
-    g_pBoard->SetCPUBreakpoints(cpuBreakpoints.Addresses());
-    g_pBoard->SetPPUBreakpoints(ppuBreakpoints.Addresses());
+}
 
-    if (!g_pBoard->SystemFrame())  // Breakpoint hit
-    {
-        Emulator_SetTempCPUBreakpoint(0177777);
-        Emulator_SetTempPPUBreakpoint(0177777);
+bool Emulator_ExecuteFrame()
+{
+    UKNC_PROFILE_SCOPE("Emulator frame");
+    return frame_control::RunFrame(*g_pBoard, cpuBreakpoints, ppuBreakpoints);
+}
+
+bool Emulator_CompleteFrame(bool frameCompleted)
+{
+    TapeView_ServiceFrame();
+    Emulator_ReportPrinterFailure();
+    if (!frameCompleted)
         return false;
-    }
 
     // Calculate frames per second
-    m_nFrameCount++;
-    uint32_t dwCurrentTicks = GetTickCount();
-    uint32_t nTicksElapsed = dwCurrentTicks - m_dwTickCount;
-    if (nTicksElapsed >= 1000)
+    const auto timing = frameTiming.OnFrame(frame_timing::Clock::now());
+    if (timing.speedPercent)
     {
-        double dFramesPerSecond = m_nFrameCount * 1000.0 / nTicksElapsed;
-        double dSpeed = dFramesPerSecond / FRAMERATE * 100;
         TCHAR buffer[16];
-        FormatBuffer(buffer, _T("{:03.0f}%"), dSpeed);
+        FormatBuffer(buffer, _T("{:03.0f}%"), *timing.speedPercent);
         MainWindow_SetStatusbarText(StatusbarPartFPS, buffer);
 
         bool floppyEngine = g_pBoard->IsFloppyEngineOn();
         MainWindow_SetStatusbarText(StatusbarPartFloppyEngine, floppyEngine ? _T("Motor") : nullptr);
 
-        m_nFrameCount = 0;
-        m_dwTickCount = dwCurrentTicks;
     }
 
     // Calculate emulator uptime
-    m_nUptimeFrameCount++;
-    if (m_nUptimeFrameCount >= FRAMERATE)
+    if (timing.uptimeAdvanced)
     {
-        m_dwEmulatorUptime++;
-        m_nUptimeFrameCount = 0;
-
-        int seconds = (int) (m_dwEmulatorUptime % 60);
-        int minutes = (int) (m_dwEmulatorUptime / 60 % 60);
-        int hours   = (int) (m_dwEmulatorUptime / 3600 % 60);
+        int seconds = (int) (frameTiming.Uptime() % 60);
+        int minutes = (int) (frameTiming.Uptime() / 60 % 60);
+        int hours   = (int) (frameTiming.Uptime() / 3600 % 60);
 
         TCHAR buffer[20];
         FormatBuffer(buffer, _T("Uptime: {:02}:{:02}:{:02}"), hours, minutes, seconds);
@@ -722,7 +506,7 @@ bool Emulator_SystemFrame()
 
     // Update "Sound" indicator every 5 frames
     m_nEmulatorSoundChanges += g_pBoard->GetSoundChanges();
-    if (m_nUptimeFrameCount % 5 == 0)
+    if (frameTiming.FramesWithinSecond() % 5 == 0)
     {
         bool soundOn = m_nEmulatorSoundChanges > 0;
         MainWindow_SetStatusbarText(StatusbarPartSound, soundOn ? _T("Sound") : nullptr);
@@ -733,13 +517,13 @@ bool Emulator_SystemFrame()
     if (Option_AutoBoot > 0)
     {
         BYTE digitKeyScan = m_arrDigitKeyScans[Option_AutoBoot];
-        if (m_dwEmulatorUptime == 2 && m_nUptimeFrameCount == 6)
+        if (frameTiming.Uptime() == 2 && frameTiming.FramesWithinSecond() == 6)
             ScreenView_KeyEvent(digitKeyScan, TRUE);  // Press the digit key
-        else if (m_dwEmulatorUptime == 2 && m_nUptimeFrameCount == 10)
+        else if (frameTiming.Uptime() == 2 && frameTiming.FramesWithinSecond() == 10)
             ScreenView_KeyEvent(digitKeyScan, FALSE);  // Release the digit key
-        else if (m_dwEmulatorUptime == 2 && m_nUptimeFrameCount == 16)
+        else if (frameTiming.Uptime() == 2 && frameTiming.FramesWithinSecond() == 16)
             ScreenView_KeyEvent(0153, TRUE);  // Press "Enter"
-        else if (m_dwEmulatorUptime == 2 && m_nUptimeFrameCount == 20)
+        else if (frameTiming.Uptime() == 2 && frameTiming.FramesWithinSecond() == 20)
         {
             ScreenView_KeyEvent(0153, FALSE);  // Release "Enter"
             Option_AutoBoot = 0;  // All done
@@ -751,7 +535,7 @@ bool Emulator_SystemFrame()
 
 uint32_t Emulator_GetUptime()
 {
-    return m_dwEmulatorUptime;
+    return frameTiming.Uptime();
 }
 
 // Update cached values after Run or Step
@@ -794,18 +578,19 @@ uint16_t Emulator_GetChangeRamStatus(int addrtype, uint16_t address)
 
 bool Emulator_LoadROMCartridge(int slot, LPCTSTR sFilePath)
 {
-    // Open file
-    UniqueFile fpFile(::_tfsopen(sFilePath, _T("rb"), _SH_DENYWR));
-    if (!fpFile)
+    if (!sFilePath || !*sFilePath)
     {
         AlertWarning(_T("Failed to load ROM cartridge image."));
         return false;
     }
-
-    // Allocate memory
     std::array<BYTE, 24 * 1024> image{};
-    if (::fread(image.data(), 1, image.size(), fpFile.get()) != image.size())
+    const auto loaded = rom_file::ReadPrefix(std::filesystem::path(sFilePath), image);
+    if (!loaded)
+    {
+        if (loaded.error() == rom_file::Error::open_failed)
+            AlertWarning(_T("Failed to load ROM cartridge image."));
         return false;
+    }
     g_pBoard->LoadROMCartridge(slot, std::span<const uint8_t, 24 * 1024>{image});
 
     //TODO: Save the file name for a future SaveImage() call
@@ -841,13 +626,16 @@ void Emulator_PrepareScreenToText(std::span<uint32_t> pixels, std::span<const ui
 
 bool Emulator_SaveImage(LPCTSTR sFilePath)
 {
-    return snapshot::Save(sFilePath, *g_pBoard, m_dwEmulatorUptime);
+    return snapshot::Save(sFilePath, *g_pBoard, frameTiming.Uptime());
 }
 
 bool Emulator_LoadImage(LPCTSTR sFilePath)
 {
-    return snapshot::Load(sFilePath, *g_pBoard, m_dwEmulatorUptime,
-                          instructionHistory, Emulator_Stop);
+    auto uptime = frameTiming.Uptime();
+    if (!snapshot::Load(sFilePath, *g_pBoard, uptime, instructionHistory, Emulator_Stop))
+        return false;
+    frameTiming.SetUptime(uptime);
+    return true;
 }
 
 //////////////////////////////////////////////////////////////////////

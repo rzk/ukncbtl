@@ -12,11 +12,13 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 /// \brief Floppy controller and drives emulation
 /// \details See defines in header file Emubase.h
 
-#include "stdafx.h"
+#include "util/Trace.h"
 #include <algorithm>
 #include <array>
-#include <sys/stat.h>
-#include <share.h>
+#include <cstddef>
+#include <filesystem>
+#include <fstream>
+#include <memory>
 #include "Emubase.h"
 
 
@@ -78,9 +80,15 @@ CFloppyController::~CFloppyController()
     }
 }
 
+void CFloppyController::Trace(std::wstring text) const
+{
+    if (m_traceCallback) m_traceCallback(m_traceContext, text);
+    else DebugLog(text.c_str());
+}
+
 void CFloppyController::Reset()
 {
-    if (m_okTrace) DebugLog(_T("Floppy RESET\r\n"));
+    if (Tracing()) Trace(L"Floppy RESET\r\n");
 
     if (!FlushChanges()) return;
 
@@ -96,37 +104,63 @@ void CFloppyController::Reset()
     PrepareTrack();
 }
 
-bool CFloppyController::AttachImage(int drive, LPCTSTR sFileName)
+bool CFloppyController::AttachImage(int drive, const wchar_t* sFileName)
 {
-    ASSERT(sFileName != nullptr);
-    if (sFileName == nullptr || !FlushChanges())
-        return false;
+    return sFileName && AttachImage(drive, std::filesystem::path(sFileName));
+}
 
-    // If image attached - detach one first
+bool CFloppyController::AttachImage(int drive, const std::filesystem::path& path, bool readOnly)
+{
+    if (path.empty() || !PrepareAttachment(drive)) return false;
+    auto image = OpenImage(path, readOnly);
+    if (!image) return false;
+    InstallImage(drive, std::move(*image));
+    return true;
+}
+
+bool CFloppyController::PrepareAttachment(int drive)
+{
+    if (drive < 0 || drive >= static_cast<int>(m_drivedata.size()) || !FlushChanges()) return false;
     if (m_drivedata[drive].fpFile != nullptr)
     {
         DetachImage(drive);
         if (m_drivedata[drive].fpFile != nullptr)
             return false;
     }
+    return true;
+}
 
+std::optional<PreparedFloppyImage> CFloppyController::OpenImage(const std::filesystem::path& path, bool readOnly)
+{
+    if (path.empty()) return std::nullopt;
     // Detect if this is a .dsk image or .rtd image, using the file extension
-    m_drivedata[drive].okNetRT11Image = false;
-    LPCTSTR sFileNameExt = _tcsrchr(sFileName, _T('.'));
-    if (sFileNameExt != nullptr && _tcsicmp(sFileNameExt, _T(".rtd")) == 0)
-        m_drivedata[drive].okNetRT11Image = true;
-
-    // Open file
-    m_drivedata[drive].okReadOnly = false;
-    m_drivedata[drive].fpFile.reset(::_tfsopen(sFileName, _T("r+b"), _SH_DENYNO));
-    if (m_drivedata[drive].fpFile == nullptr)
+    auto extension = path.extension().u8string();
+    for (auto& ch : extension)
+        if (ch >= u8'A' && ch <= u8'Z') ch += u8'a' - u8'A';
+    auto file = std::make_unique<std::fstream>();
+    if (!readOnly) file->open(path, std::ios::binary | std::ios::in | std::ios::out);
+    if (readOnly || !*file)
     {
-        m_drivedata[drive].okReadOnly = true;
-        m_drivedata[drive].fpFile.reset(::_tfsopen(sFileName, _T("rb"), _SH_DENYNO));
+        readOnly = true;
+        file = std::make_unique<std::fstream>(path, std::ios::binary | std::ios::in);
     }
-    if (m_drivedata[drive].fpFile == nullptr)
-        return false;
+    if (!*file) return std::nullopt;
+    return PreparedFloppyImage{std::move(file), extension == u8".rtd", readOnly};
+}
 
+bool CFloppyController::AttachPreparedImage(int drive, PreparedFloppyImage image)
+{
+    if (!image.stream || !PrepareAttachment(drive)) return false;
+    InstallImage(drive, std::move(image));
+    return true;
+}
+
+void CFloppyController::InstallImage(int drive, PreparedFloppyImage image)
+{
+    auto& target = m_drivedata[drive];
+    target.fpFile = std::move(image.stream);
+    target.okNetRT11Image = image.netRt11;
+    target.okReadOnly = image.readOnly;
     m_side = m_track = m_drivedata[drive].datatrack = m_drivedata[drive].dataside = 0;
     m_drivedata[drive].dataptr = 0;
     m_datareg = m_writereg = m_shiftreg = 0;
@@ -137,8 +171,6 @@ bool CFloppyController::AttachImage(int drive, LPCTSTR sFileName)
     m_flags = FLOPPY_CMD_CORRECTION500 | FLOPPY_CMD_SIDEUP | FLOPPY_CMD_DIR | FLOPPY_CMD_SKIPSYNC;
 
     PrepareTrack();
-
-    return true;
 }
 
 void CFloppyController::DetachImage(int drive)
@@ -182,7 +214,7 @@ uint16_t CFloppyController::GetState()
 
 void CFloppyController::SetCommand(uint16_t cmd)
 {
-    if (m_okTrace) DebugLogFormat(_T("Floppy COMMAND {:06o}\r\n"), cmd);
+    if (Tracing()) Trace(std::format(L"Floppy COMMAND {:06o}\r\n", cmd));
 
     bool okPrepareTrack = false;  // Is it needed to load the track into the buffer
 
@@ -197,7 +229,8 @@ void CFloppyController::SetCommand(uint16_t cmd)
         return;
     if ((cmd & 02000) != 0 && m_drive != newdrive)
     {
-        DebugLogFormat(_T("Floppy DRIVE {}\r\n"), newdrive);
+        if (Tracing()) Trace(std::format(L"Floppy DRIVE {}\r\n", newdrive));
+        else DebugLogFormat(L"Floppy DRIVE {}\r\n", newdrive);
 
         m_drive = newdrive;
         m_pDrive = &m_drivedata[m_drive];
@@ -225,7 +258,7 @@ void CFloppyController::SetCommand(uint16_t cmd)
 
     if (cmd & FLOPPY_CMD_STEP)  // Move head for one track to center or from center
     {
-        if (m_okTrace) DebugLog(_T("Floppy STEP\r\n"));
+        if (Tracing()) Trace(L"Floppy STEP\r\n");
 
         m_side = (m_flags & FLOPPY_CMD_SIDEUP) ? 1 : 0; // DO WE NEED IT HERE?
 
@@ -266,7 +299,7 @@ void CFloppyController::SetCommand(uint16_t cmd)
 
 uint16_t CFloppyController::GetData()
 {
-    if (m_okTrace) DebugLogFormat(_T("Floppy READ\t\t{:04x}\r\n"), m_datareg);
+    if (Tracing()) Trace(std::format(L"Floppy READ\t\t{:04x}\r\n", m_datareg));
 
     m_status &= ~FLOPPY_STATUS_MOREDATA;
     m_writing = m_searchsync = false;
@@ -393,7 +426,7 @@ void CFloppyController::PrepareTrack()
 {
     if (!FlushChanges()) return;
 
-    if (m_okTrace) DebugLogFormat(_T("Floppy PREP  {} TR {} SD {}\r\n"), m_drive, m_track, m_side);
+    if (Tracing()) Trace(std::format(L"Floppy PREP  {} TR {} SD {}\r\n", m_drive, m_track, m_side));
 
     //TCHAR buffer[512];
 
@@ -412,19 +445,24 @@ void CFloppyController::PrepareTrack()
 
     if (m_pDrive->fpFile != nullptr)
     {
-        bool readFailed = ::fseek(m_pDrive->fpFile.get(), foffset, SEEK_SET) != 0;
+        auto& file = *m_pDrive->fpFile;
+        file.clear();
+        file.seekg(foffset, std::ios::beg);
+        bool readFailed = !file;
         if (!readFailed)
         {
-            (void)::fread(data.data(), 1, data.size(), m_pDrive->fpFile.get());
-            readFailed = ::ferror(m_pDrive->fpFile.get()) != 0;
+            file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
+            readFailed = file.bad() || (file.fail() && !file.eof());
         }
+        // Short reads at EOF are zero-filled and are not device errors.
+        file.clear();
         if (readFailed)
         {
-            ::clearerr(m_pDrive->fpFile.get());
+            ReportFailure(FloppyError::readFailed);
             m_pDrive->okReadOnly = true;
             m_status |= FLOPPY_STATUS_WRITEPROTECT;
             m_status &= ~FLOPPY_STATUS_CHECKSUMOK;
-            DebugLog(_T("Floppy image read failed; the drive is write-protected.\r\n"));
+            DebugLog(L"Floppy image read failed; the drive is write-protected.\r\n");
         }
     }
 
@@ -437,7 +475,7 @@ bool CFloppyController::FlushChanges()
 {
     if (!IsAttached(m_drive) || !m_trackchanged) return true;
 
-    if (m_okTrace) DebugLogFormat(_T("Floppy FLUSH {} TR {} SD {}\r\n"), m_drive, m_pDrive->datatrack, m_pDrive->dataside);
+    if (Tracing()) Trace(std::format(L"Floppy FLUSH {} TR {} SD {}\r\n", m_drive, m_pDrive->datatrack, m_pDrive->dataside));
 
     // Decode track data from m_data
     std::array<uint8_t, 5120> data{};
@@ -450,10 +488,15 @@ bool CFloppyController::FlushChanges()
         if (m_pDrive->okNetRT11Image) foffset += 256;  // Skip .RTD image header
 
         // Check file length
-        if (::fseek(m_pDrive->fpFile.get(), 0, SEEK_END) != 0)
+        auto& file = *m_pDrive->fpFile;
+        file.clear();
+        file.seekp(0, std::ios::end);
+        if (!file)
             goto WriteError;
-        long fileSize = ::ftell(m_pDrive->fpFile.get());
+        auto fileSize = file.tellp();
         if (fileSize < 0)
+            goto WriteError;
+        if (fileSize > UINT32_MAX)
             goto WriteError;
         uint32_t currentFileSize = static_cast<uint32_t>(fileSize);
         while (currentFileSize < (uint32_t)(foffset + 5120))
@@ -461,21 +504,24 @@ bool CFloppyController::FlushChanges()
             std::array<uint8_t, 512> datafill{};
             uint32_t bytesToWrite = ((uint32_t)(foffset + 5120) - currentFileSize) % 512;
             if (bytesToWrite == 0) bytesToWrite = 512;
-            if (::fwrite(datafill.data(), 1, bytesToWrite, m_pDrive->fpFile.get()) != bytesToWrite)
+            if (!file.write(reinterpret_cast<const char*>(datafill.data()), bytesToWrite))
                 goto WriteError;
             currentFileSize += bytesToWrite;
         }
 
         // Save data into the file
-        if (::fseek(m_pDrive->fpFile.get(), foffset, SEEK_SET) != 0 ||
-            ::fwrite(data.data(), 1, data.size(), m_pDrive->fpFile.get()) != data.size() ||
-            ::fflush(m_pDrive->fpFile.get()) != 0)
+        file.seekp(foffset, std::ios::beg);
+        if (!file || !file.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size())))
+            goto WriteError;
+        file.flush();
+        if (!file)
             goto WriteError;
     }
     else
     {
         m_status &= ~FLOPPY_STATUS_CHECKSUMOK;
-        DebugLog(_T("Floppy track cannot be represented in the disk image; changes retained.\r\n"));
+        ReportFailure(FloppyError::invalidTrack);
+        DebugLog(L"Floppy track cannot be represented in the disk image; changes retained.\r\n");
         return false;
     }
 
@@ -485,10 +531,11 @@ bool CFloppyController::FlushChanges()
     return true;
 
 WriteError:
-    ::clearerr(m_pDrive->fpFile.get());
+    ReportFailure(FloppyError::writeFailed);
+    m_pDrive->fpFile->clear();
     m_status |= FLOPPY_STATUS_WRITEPROTECT;
     m_status &= ~FLOPPY_STATUS_CHECKSUMOK;
-    DebugLog(_T("Floppy image write failed; track changes retained.\r\n"));
+    DebugLog(L"Floppy image write failed; track changes retained.\r\n");
     return false;
 
     ////DEBUG: Save raw m_data/m_marker into rawdata.bin

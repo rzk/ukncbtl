@@ -55,13 +55,15 @@ void Emulator_SetSound(bool soundOnOff);
 void Emulator_SetSoundAY(bool soundAYOnOff);
 void Emulator_SetSoundCovox(bool soundCovoxOnOff);
 void Emulator_SetMouse(bool mouseOnOff);
-bool Emulator_SetSerial(bool serialOnOff, LPCTSTR serialPort);
-void Emulator_SetParallel(bool parallelOnOff);
-bool Emulator_SetNetwork(bool networkOnOff, LPCTSTR networkPort);
+bool Emulator_SetParallel(bool parallelOnOff);
 void Emulator_Start();
 void Emulator_Stop();
 void Emulator_Reset();
-bool Emulator_SystemFrame();
+// Prepare and complete on the UI thread. Execute owns the board exclusively;
+// the UI must not touch the board, tape, printer, audio or debugger until it returns.
+void Emulator_PrepareFrame();
+bool Emulator_ExecuteFrame();
+bool Emulator_CompleteFrame(bool frameCompleted);
 uint32_t Emulator_GetUptime();  // UKNC uptime, in seconds
 bool Emulator_IsSound();  // Did sound produced within the last frame?
 void Emulator_SetSpeed(uint16_t realspeed);

@@ -24,10 +24,7 @@ enum BitmapFileFormat
 {
     BitmapFileFormatBmp = 1,
     BitmapFileFormatPng = 2,
-    BitmapFileFormatTiff = 3,
 };
-
-HBITMAP BitmapFile_LoadPngFromResource(LPCTSTR lpName);
 
 // Save the image as .PNG file
 bool BitmapFile_SaveImageFile(

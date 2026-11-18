@@ -1,30 +1,85 @@
 # ukncbtl
 UKNCBTL — UKNC Back to Life! emulator, Windows x86-64 version.
 
-### Building on Windows
+### Portable build during the SDL migration
 
-Install Visual Studio 2026 with the Desktop development with C++ workload and a
-Windows SDK. Use its bundled CMake (4.1 or newer for the Visual Studio 2026
-generator), for example from a Visual Studio Developer PowerShell:
+The experimental SDL3 and Dear ImGui frontend builds on Windows with CMake,
+Ninja and Clang. It includes the emulator's ROM and UI font in the executable.
+The frontend is still being tested and is not yet a verified release. Linux
+and macOS frontend builds and validation remain future work.
+
+From a Windows developer command prompt with Clang and Ninja on `PATH`, a
+Windows SDK, and a compatible C++ standard library and linker, build it with:
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 18 2026" -A x64
-cmake --build build --config Release
+cmake --preset windows-clang
+cmake --build --preset windows-clang
+ctest --preset windows-clang
+cmake --install build/windows-clang --prefix <destination>
 ```
 
-The executable is `build/Release/UKNCBTL.exe`. Use `--config Debug` for a
-debug build, or open the CMake project in Visual Studio.
+Run `build/windows-clang/ukncbtl-sdl.exe` or the installed `bin/ukncbtl-sdl.exe`.
+The `windows-clang-debug` preset provides the same workflow for debug builds.
+SDL3 and Dear ImGui are enabled by default for fresh CMake configurations.
+Existing build directories retain their cached options; reconfigure them with
+`UKNCBTL_BUILD_LEGACY=OFF`, `UKNCBTL_ENABLE_SDL3=ON`, and
+`UKNCBTL_ENABLE_IMGUI=ON`, or use a fresh preset build directory.
+To use a separate configuration, start it with `--settings <path-to-ini>`;
+the parent directory must already exist. The selected file contains that
+instance's preferences and saved media paths.
+The installation includes the application and its license notices. SDL3,
+Dear ImGui and GoogleTest are fetched at pinned versions on first configure;
+`FETCHCONTENT_SOURCE_DIR_SDL3`, `FETCHCONTENT_SOURCE_DIR_IMGUI` and
+`FETCHCONTENT_SOURCE_DIR_GOOGLETEST` can point to offline source checkouts.
+The smoke tests use dummy video and audio drivers and do not replace interactive
+testing of the actual Windows display, audio and file dialogs.
+
+The headless core and tests can also be built without the frontend. The legacy
+application still requires the Windows toolchain documented below.
+
+With a Clang toolchain available on `PATH`, configure and run the headless tests:
+
+```sh
+cmake -S . -B build/portable -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
+cmake --build build/portable
+ctest --test-dir build/portable --output-on-failure
+```
+
+On Windows set both `CMAKE_C_COMPILER` and `CMAKE_CXX_COMPILER` to `clang-cl`
+from an environment that provides the SDK, standard library and linker. Clang's
+`clang` driver must also be on `PATH` to assemble the CPU overflow routines;
+alternatively set `UKNCBTL_CLANG_ASSEMBLER` to its full path. GoogleTest is fetched at its
+pinned commit; offline builds can use `FETCHCONTENT_SOURCE_DIR_GOOGLETEST` as
+described in [testing and performance](docs/performance.md). The portable
+build defaults to enabled tests; `BUILD_TESTING=OFF` configures without test
+targets. Benchmarks, Tracy and ASan remain legacy-only for now. The migration
+checklist is in [docs/sdl-migration-baseline.md](docs/sdl-migration-baseline.md).
+
+The overflow assembly has x86-64 and ARM64 implementations for Windows, Linux
+and macOS. CMake selects a single target architecture; macOS universal builds
+must currently be made as separate architecture builds. Windows x86-64 has
+been executed locally; the other combinations still require native CI or hardware
+verification even though their objects have been cross-assembled.
+
+### Building the legacy Windows reference
+
+From a Windows developer command prompt with the SDK, C++ runtime, Clang and
+Ninja available, configure the optional reference in a separate directory:
+
+```powershell
+cmake -S . -B build/legacy -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
+cmake --build build/legacy
+```
+
+The executable is `build/legacy/UKNCBTL.exe`. Use a separate build directory
+with `-DCMAKE_BUILD_TYPE=Debug` for a debug build.
 All C++ targets require C++23, including the renderer, tests and benchmarks.
 CMake selects the compiler's corresponding standard mode (MSVC may spell this
 `/std:c++latest`). Use a current MSVC toolset with `std::expected`, `std::print`
-and C++23 ranges support. The checked-in historical VS2015 projects are not the
-supported build entry point; configure and build through CMake.
-The emulator requires the x64 target. CMake also supports older
-installed Visual Studio generators; select the matching generator explicitly.
-The build also produces `RenderVfw.dll` beside the executable; keep both files
-together when distributing or moving the program. `cmake --install build
---config Release --prefix <destination>` installs both files. The default renderer
-is included from the upstream renderer project under `third_party/RenderVfw`.
+and C++23 ranges support. The reference requires an x64 target.
+The reference frontend uses the shared built-in screen scaler and does not load
+renderer plugins. `cmake --install build/legacy --prefix <destination>`
+installs the executable.
 The ROM and other resources are embedded in the executable. This modern build
 uses the current Microsoft toolchain and Windows SDK and does not target Windows
 XP.
@@ -32,7 +87,7 @@ XP.
 Run the CMake test suite after building the corresponding configuration:
 
 ```powershell
-ctest --test-dir build -C Release --output-on-failure
+ctest --test-dir build/legacy --output-on-failure
 ```
 
 The suite uses GoogleTest and CTest, including the existing core tests, exhaustive

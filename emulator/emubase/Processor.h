@@ -26,7 +26,7 @@ class CMemoryController;
 class CProcessor
 {
 public:  // Constructor / initialization
-    explicit CProcessor(LPCTSTR name);
+    explicit CProcessor(const wchar_t* name);
     /// \brief Link the processor and memory controller
     void        AttachMemoryController(CMemoryController* ctl) { m_pMemoryController = ctl; }
     void        SetHALTPin(bool value) { m_haltpin = value; }
@@ -34,7 +34,7 @@ public:  // Constructor / initialization
     void        SetACLOPin(bool value);
     void        MemoryError();
     /// \brief Get the processor name, assigned in the constructor
-    LPCTSTR     GetName() const { return m_name.data(); }
+    const wchar_t* GetName() const { return m_name.data(); }
 
 public:
     static void Init();  ///< Initialize static tables
@@ -44,7 +44,7 @@ protected:  // Statics
     static std::unique_ptr<ExecuteMethodRef[]> m_pExecuteMethodMap;
 
 protected:  // Processor state
-    std::array<TCHAR, 5> m_name{};          ///< Processor name (DO NOT use it inside the processor code!!!)
+    std::array<wchar_t, 5> m_name{};        ///< Processor name (DO NOT use it inside the processor code!!!)
     uint16_t    m_internalTick;     ///< How many ticks waiting to the end of current instruction
     uint16_t    m_psw;              ///< Processor Status Word (PSW)
     std::array<uint16_t, 8> m_R{};             ///< Registers (R0..R5, R6=SP, R7=PC)
@@ -89,6 +89,10 @@ protected:
     CMemoryController* m_pMemoryController;
     INSTRUCTIONCALLBACK m_pInstructionCallback;  ///< Called before each instruction execution, nullptr = off
     INTERRUPTCALLBACK m_pInterruptCallback;      ///< Called when an interrupt is taken, nullptr = off
+    INSTRUCTIONCONTEXTCALLBACK m_instructionContextCallback = nullptr;
+    INTERRUPTCONTEXTCALLBACK m_interruptContextCallback = nullptr;
+    void* m_instructionContext = nullptr;
+    void* m_interruptContext = nullptr;
 
 public:
     CMemoryController* GetMemoryController() { return m_pMemoryController; }
@@ -143,9 +147,15 @@ public:  // Processor control
     int         GetInternalTick() const { return m_internalTick; }
     void        ClearInternalTick() { m_internalTick = 0; }
     /// \brief Assign callback for instruction execution, nullptr to remove
-    void        SetInstructionCallback(INSTRUCTIONCALLBACK callback) { m_pInstructionCallback = callback; }
+    void        SetInstructionCallback(INSTRUCTIONCALLBACK callback)
+    { m_pInstructionCallback = callback; m_instructionContextCallback = nullptr; m_instructionContext = nullptr; }
+    void        SetInstructionCallbackWithContext(INSTRUCTIONCONTEXTCALLBACK callback, void* context)
+    { m_pInstructionCallback = nullptr; m_instructionContextCallback = callback; m_instructionContext = callback ? context : nullptr; }
     /// \brief Assign callback for interrupts, nullptr to remove
-    void        SetInterruptCallback(INTERRUPTCALLBACK callback) { m_pInterruptCallback = callback; }
+    void        SetInterruptCallback(INTERRUPTCALLBACK callback)
+    { m_pInterruptCallback = callback; m_interruptContextCallback = nullptr; m_interruptContext = nullptr; }
+    void        SetInterruptCallbackWithContext(INTERRUPTCONTEXTCALLBACK callback, void* context)
+    { m_pInterruptCallback = nullptr; m_interruptContextCallback = callback; m_interruptContext = callback ? context : nullptr; }
 
 public:  // Saving/loading emulator status (pImage addresses up to 32 bytes)
     void        SaveToImage(std::span<uint8_t, 64> image) const;

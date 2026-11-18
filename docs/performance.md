@@ -1,8 +1,9 @@
 # Correctness, benchmarks and profiling
 
 Use GoogleTest for correctness, Google Benchmark for speed measurements, and
-Tracy to locate bottlenecks. All three are integrated with CMake on Windows x64
-and MSVC. Commands below run from the repository root in Developer PowerShell.
+Tracy to locate bottlenecks. Benchmarks and ASan currently require the legacy
+Windows x64/MSVC build; Tracy also supports the SDL frontend. Commands below run from the repository root in a Windows developer
+shell with Ninja, the MSVC compiler and Clang available on `PATH`.
 
 ## Build options and dependencies
 
@@ -12,6 +13,7 @@ and MSVC. Commands below run from the repository root in Developer PowerShell.
 | `UKNCBTL_BUILD_BENCHMARKS` | `OFF` | Headless `EmulatorBenchmarks` executable |
 | `UKNCBTL_ENABLE_TRACY` | `OFF` | Tracy instrumentation in the app and shared core/scaler |
 | `UKNCBTL_ENABLE_ASAN` | `OFF` | MSVC AddressSanitizer for the application, renderer, tests and benchmarks |
+| `UKNCBTL_BUILD_FRAME_BENCHMARK` | `OFF` | Portable, headless frame-overlap, trace, and tape measurements |
 
 CMake fetches GoogleTest 1.17.0, Google Benchmark 1.9.4 and Tracy 0.12.2 by
 pinned commit, as needed. GoogleTest and Benchmark are linked only into their
@@ -19,7 +21,7 @@ respective executables. With Tracy off, profiling macros compile away and no
 Tracy dependency is downloaded or linked. Turning all three options off builds
 the application without fetching any of these dependencies.
 
-The application and fetched libraries use the static MSVC runtime (`/MT`, or
+The legacy application and fetched libraries use the static MSVC runtime (`/MT`, or
 `/MTd` for Debug). CMake's `FETCHCONTENT_SOURCE_DIR_GOOGLETEST`,
 `FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK` and `FETCHCONTENT_SOURCE_DIR_TRACY`
 can point at local checkouts of the pinned revisions for offline builds.
@@ -28,13 +30,13 @@ Existing populated build directories can use `-DFETCHCONTENT_UPDATES_DISCONNECTE
 ## Correctness
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 18 2026" -A x64
-cmake --build build --config Release --parallel
-ctest --test-dir build -C Release --output-on-failure
+cmake -S . -B build/legacy -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
+cmake --build build/legacy --parallel
+ctest --test-dir build/legacy --output-on-failure
 ```
 
-Use `ctest --test-dir build -C Release -N` to list cases and `-R ProcessorTests`
-to select a suite. `build/Release/LegacyCoreTests.exe` also accepts native
+Use `ctest --test-dir build/legacy -N` to list cases and `-R ProcessorTests`
+to select a suite. `build/legacy/LegacyCoreTests.exe` also accepts native
 GoogleTest options such as `--gtest_filter=ProcessorTests.*` and
 `--gtest_output=xml:build/core-results.xml`.
 
@@ -52,9 +54,9 @@ For memory-safety checks, install the MSVC AddressSanitizer component and run
 from Developer PowerShell so the sanitizer runtime DLL is on `PATH`:
 
 ```powershell
-cmake -S . -B build-asan -G "Visual Studio 18 2026" -A x64 -DUKNCBTL_ENABLE_ASAN=ON
-cmake --build build-asan --config RelWithDebInfo
-ctest --test-dir build-asan -C RelWithDebInfo --output-on-failure
+cmake -S . -B build/legacy-asan -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF -DUKNCBTL_ENABLE_ASAN=ON
+cmake --build build/legacy-asan
+ctest --test-dir build/legacy-asan --output-on-failure
 ```
 
 The sanitizer option disables incompatible MSVC runtime-check and incremental
@@ -63,10 +65,47 @@ measurements.
 
 ## Speed measurements
 
+To compare the SDL frame worker with serial video preparation without fetching a
+benchmark library, enable the portable frame workload in a Release build:
+
 ```powershell
-cmake -S . -B build -DUKNCBTL_BUILD_BENCHMARKS=ON -DUKNCBTL_ENABLE_TRACY=OFF
-cmake --build build --config Release --target EmulatorBenchmarks --parallel
-./build/Release/EmulatorBenchmarks.exe --benchmark_min_time=0.5s --benchmark_repetitions=5 --benchmark_out=build/benchmark.json --benchmark_out_format=json
+cmake -S . -B build/windows-clang -DUKNCBTL_BUILD_FRAME_BENCHMARK=ON
+cmake --build build/windows-clang --target FrameOverlapBenchmark --parallel
+./build/windows-clang/FrameOverlapBenchmark.exe
+```
+
+This compares synthetic CPU/PPU execution and direct board video decoding in
+serial with snapshot copying, video decoding and frame execution overlapped.
+Both paths scale the decoded image; neither includes a window, presentation,
+audio, disk or pacing. It alternates order across five repetitions, checks a
+checksum of sampled video pixels, and reports median wall time per
+frame. It is a focused measurement rather than an application FPS estimate.
+
+The same option also enables a trace comparison:
+
+```powershell
+cmake --build build/windows-clang --target TraceBatchBenchmark --parallel
+./build/windows-clang/TraceBatchBenchmark.exe
+```
+
+It runs the same synthetic CPU/PPU workload with CPU instruction tracing, once
+with a flush for every record and once with the batched writer. Each measurement
+includes draining the log; three alternating repetitions are compared, and the
+complete output files must match. Results depend on the host filesystem and do
+not include SDL rendering, audio, or pacing.
+
+For a focused tape recording comparison, build and run `TapeFrameBenchmark` with
+the same option. It compares five 200-frame runs each with no recording,
+direct 44.1 kHz recording and buffered recording. Timings include WAV
+finalization, and the two recording modes must produce identical files at
+the expected sample rate and length. The benchmark excludes playback, SDL
+rendering, audio output and pacing. Storage latency and caching can differ
+substantially from a user's tape workload.
+
+```powershell
+cmake -S . -B build/legacy -DUKNCBTL_BUILD_BENCHMARKS=ON -DUKNCBTL_ENABLE_TRACY=OFF
+cmake --build build/legacy --target EmulatorBenchmarks --parallel
+./build/legacy/EmulatorBenchmarks.exe --benchmark_min_time=0.5s --benchmark_repetitions=5 --benchmark_out=build/legacy/benchmark.json --benchmark_out_format=json
 ```
 
 The benchmark executable has no GUI, ROM, disk image or GoogleTest dependency:
@@ -92,9 +131,9 @@ build configuration, and measure with Tracy disabled. A quick smoke run uses
 Use a separate directory to keep instrumented timings out of benchmark baselines:
 
 ```powershell
-cmake -S . -B build/profile -G "Visual Studio 18 2026" -A x64 -DBUILD_TESTING=OFF -DUKNCBTL_ENABLE_TRACY=ON
-cmake --build build/profile --config RelWithDebInfo --target UKNCBTL --parallel
-./build/profile/RelWithDebInfo/UKNCBTL.exe
+cmake -S . -B build/profile -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF -DUKNCBTL_ENABLE_TRACY=ON
+cmake --build build/profile --target ukncbtl-sdl --parallel
+./build/profile/ukncbtl-sdl.exe
 ```
 
 Open the Tracy **0.12.2** profiler from the [upstream release](https://github.com/wolfpld/tracy/releases/tag/v0.12.2)
@@ -103,9 +142,14 @@ the workload of interest. The client uses on-demand collection and listens only
 on localhost. Capture collection begins when the profiler connects.
 
 Frame markers delimit iterations of the host main loop, including paused
-iterations. Named zones identify `Emulator frame`, `Core frame`, `Video decode`,
-`Prepare screen`, `Screen draw`, `Screen scale`, `Audio submit`,
-`Audio buffer wait` and `Frame pacing wait`. Audio and pacing waits are deliberate
+iterations. SDL zones cover the main loop, events, ImGui frame setup and interface, emulation,
+video decode, screen scaling and drawing, audio submission, rendering, presentation,
+and pacing. `Video memory snapshot` measures the RAM copy before the SDL frame
+worker starts; `Frame worker wait` measures the remaining wait after video and
+presentation overlap the frame. Compare these zones and total frame time when
+evaluating the worker, rather than assuming that the copy pays for itself. The
+legacy frontend also reports `Prepare screen` and `Audio buffer wait`.
+Audio and pacing waits are deliberate
 throttling, so inspect them separately from computation. The screen-scaling zone
 appears only on paths that call the CPU scaler. No per-instruction or per-sample
 zones are emitted, to keep the capture size and instrumentation cost manageable.

@@ -1,5 +1,4 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include "InstructionHistory.h"
 #include <algorithm>
 #include <gtest/gtest.h>
@@ -160,11 +159,11 @@ TEST_F(InstructionHistoryTests, ClearResetsBothWrappedRingsAndAllowsReuse)
 
 TEST(InstructionHistoryNames, RecognizesVectorsWithEverySelHighByte)
 {
-    const std::array<std::pair<uint16_t, const TCHAR*>, 11> names{{
-        {0000, _T("START")}, {0004, _T("BUS")}, {0010, _T("RSVD")},
-        {0014, _T("BPT/TBIT")}, {0020, _T("IOT")}, {0024, _T("ACLO")},
-        {0030, _T("EMT")}, {0034, _T("TRAP")}, {0100, _T("EVNT")},
-        {0170, _T("HALT")}, {0174, _T("HALT BUS")}}};
+    const std::array<std::pair<uint16_t, const wchar_t*>, 11> names{{
+        {0000, L"START"}, {0004, L"BUS"}, {0010, L"RSVD"},
+        {0014, L"BPT/TBIT"}, {0020, L"IOT"}, {0024, L"ACLO"},
+        {0030, L"EMT"}, {0034, L"TRAP"}, {0100, L"EVNT"},
+        {0170, L"HALT"}, {0174, L"HALT BUS"}}};
     for (const auto& [vector, name] : names)
         for (unsigned high = 0; high < 256; ++high)
             EXPECT_STREQ(InstructionHistory::InterruptName(static_cast<uint16_t>((high << 8) | vector)), name)
@@ -177,5 +176,5 @@ TEST(InstructionHistoryNames, OtherLowBytesUseVirqIncludingOddVectors)
     for (uint16_t low = 0; low < 256; ++low)
         if (!std::ranges::contains(known, low))
             for (unsigned high : {0u, 1u, 255u})
-                EXPECT_STREQ(InstructionHistory::InterruptName(static_cast<uint16_t>((high << 8) | low)), _T("VIRQ"));
+                EXPECT_STREQ(InstructionHistory::InterruptName(static_cast<uint16_t>((high << 8) | low)), L"VIRQ");
 }

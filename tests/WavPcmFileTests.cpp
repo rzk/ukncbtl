@@ -1,19 +1,13 @@
-#include "stdafx.h"
 #include <gtest/gtest.h>
 #include "util/WavPcmFile.h"
 #include <array>
 #include <algorithm>
 #include <tuple>
 #include <cstdio>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <vector>
-
-#ifdef _DEBUG
-int AssertFailedLine(const char* file, int line)
-{
-    std::fprintf(stderr, "Assertion failed at %s:%d\n", file, line);
-    std::abort();
-}
-#endif
 
 namespace {
 void Put32(std::vector<uint8_t>& bytes, size_t pos, uint32_t value)
@@ -33,26 +27,28 @@ std::vector<uint8_t> Wave()
     Put32(result, 28, 96000);
     return result;
 }
-bool Write(const TCHAR* path, const std::vector<uint8_t>& bytes)
+bool Write(const std::filesystem::path& path, const std::vector<uint8_t>& bytes)
 {
-    FILE* file = _tfopen(path, _T("wb"));
-    if (!file) return false;
-    const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), file) == bytes.size();
-    return std::fclose(file) == 0 && ok;
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size())) return false;
+    file.close();
+    return !file.fail();
 }
 }
 
 class WavFile : public testing::Test
 {
 protected:
-    TCHAR path[MAX_PATH]{};
+    std::filesystem::path path;
     void SetUp() override
     {
-        TCHAR directory[MAX_PATH]{};
-        ASSERT_NE(0, GetTempPath(MAX_PATH, directory));
-        ASSERT_NE(0, GetTempFileName(directory, L"wav", 0, path));
+        const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        path = std::filesystem::temp_directory_path() / ("ukncbtl-wav-" + suffix);
+        path += std::filesystem::path(u8"-\u65e5\u672c.wav");
+        std::ofstream file(path, std::ios::binary);
+        ASSERT_TRUE(file);
     }
-    void TearDown() override { DeleteFile(path); }
+    void TearDown() override { std::error_code error; std::filesystem::remove(path, error); }
     void Store(const std::vector<uint8_t>& bytes) { ASSERT_TRUE(Write(path, bytes)); }
 };
 TEST_F(WavFile, HighRateEightBitDataStopsAtChunkAndRewinds)
@@ -180,7 +176,7 @@ TEST_F(WavFile, InvalidArgumentsAndOpenFailure)
     EXPECT_EQ(WavError::invalid_argument,WavPcmFile::Create(nullptr,44100).error());
     EXPECT_EQ(WavError::invalid_argument,WavPcmFile::Create(path,0).error());
     EXPECT_EQ(WavError::invalid_argument,WavPcmFile::Create(path,-1).error());
-    ASSERT_TRUE(DeleteFile(path)); EXPECT_EQ(WavError::open_failed,WavPcmFile::Open(path).error());
+    ASSERT_TRUE(std::filesystem::remove(path)); EXPECT_EQ(WavError::open_failed,WavPcmFile::Open(path).error());
 }
 TEST_F(WavFile, RecordingOverwriteAppendAndCloseRoundTrip)
 {
@@ -192,6 +188,31 @@ TEST_F(WavFile, RecordingOverwriteAppendAndCloseRoundTrip)
     auto read = WavPcmFile::Open(path); ASSERT_TRUE(read);
     EXPECT_EQ(44100,read->Frequency()); EXPECT_EQ(3,read->Length());
     EXPECT_EQ(0x82000000u,read->ReadOne()); EXPECT_EQ(0x81000000u,read->ReadOne()); EXPECT_EQ(0xff000000u,read->ReadOne());
+}
+TEST_F(WavFile, SyncProducesReadableSnapshotsAndPreservesWritePosition)
+{
+    auto writer = WavPcmFile::Create(path, 44100); ASSERT_TRUE(writer);
+    for (int count = 0; count < 4; ++count)
+    {
+        ASSERT_TRUE(writer->Sync());
+        EXPECT_EQ(writer->Position(), count);
+        auto reader = WavPcmFile::Open(path); ASSERT_TRUE(reader);
+        EXPECT_EQ(reader->Length(), count);
+        for (int i = 0; i < count; ++i) EXPECT_EQ(reader->ReadOne(), static_cast<uint32_t>(i + 1) << 24);
+        ASSERT_TRUE(reader->Close());
+        ASSERT_TRUE(writer->WriteOne(static_cast<uint32_t>(count + 1) << 24));
+    }
+    ASSERT_TRUE(writer->SetPosition(1));
+    ASSERT_TRUE(writer->Sync());
+    EXPECT_EQ(writer->Position(), 1u);
+    ASSERT_TRUE(writer->WriteOne(0xaa000000));
+    ASSERT_TRUE(writer->Sync());
+    auto reader = WavPcmFile::Open(path); ASSERT_TRUE(reader);
+    EXPECT_EQ(reader->Length(), 4u);
+    EXPECT_EQ(reader->ReadOne(), 0x01000000u);
+    EXPECT_EQ(reader->ReadOne(), 0xaa000000u);
+    EXPECT_EQ(reader->ReadOne(), 0x03000000u);
+    EXPECT_EQ(reader->ReadOne(), 0x04000000u);
 }
 TEST_F(WavFile, DestructorFinalizesAndMoveTransfersOwnership)
 {
@@ -214,6 +235,7 @@ TEST_F(WavFile, ModesClosedOperationsAndRepeatedClose)
     EXPECT_EQ(std::unexpected(WavError::io_error),writer->WriteOne(0));
     EXPECT_EQ(std::unexpected(WavError::io_error),writer->SetPosition(0));
     auto reader = WavPcmFile::Open(path); ASSERT_TRUE(reader);
+    EXPECT_EQ(std::unexpected(WavError::io_error), reader->Sync());
     EXPECT_EQ(std::unexpected(WavError::io_error),reader->WriteOne(0));
     EXPECT_EQ(std::unexpected(WavError::end_of_data),reader->ReadOne());
     ASSERT_TRUE(reader->Close()); EXPECT_EQ(std::unexpected(WavError::io_error),reader->ReadOne());
@@ -225,8 +247,9 @@ TEST_F(WavFile, FinalHeaderAndOddPaddingMatchPhysicalSize)
         auto wav = WavPcmFile::Create(path,44100); ASSERT_TRUE(wav);
         for (int i = 0; i < count; ++i) ASSERT_TRUE(wav->WriteOne(0xab123456));
         ASSERT_TRUE(wav->Close());
-        FILE* file = _tfopen(path,L"rb"); ASSERT_NE(nullptr,file);
-        std::vector<uint8_t> bytes(48); const auto size = std::fread(bytes.data(),1,bytes.size(),file); std::fclose(file);
+        std::ifstream file(path, std::ios::binary); ASSERT_TRUE(file);
+        std::vector<uint8_t> bytes(48); file.read(reinterpret_cast<char*>(bytes.data()), bytes.size());
+        const auto size = static_cast<size_t>(file.gcount());
         EXPECT_EQ(44+count+(count&1),size); EXPECT_EQ(36+count+(count&1),bytes[4]); EXPECT_EQ(count,bytes[40]);
         for (int i = 0; i < count; ++i) EXPECT_EQ(0xab,bytes[44+i]);
         if (count&1) EXPECT_EQ(0,bytes[44+count]);

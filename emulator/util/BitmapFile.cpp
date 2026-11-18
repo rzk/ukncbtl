@@ -1,4 +1,4 @@
-﻿/*  This file is part of UKNCBTL.
+/*  This file is part of UKNCBTL.
     UKNCBTL is free software: you can redistribute it and/or modify it under the terms
 of the GNU Lesser General Public License as published by the Free Software Foundation,
 either version 3 of the License, or (at your option) any later version.
@@ -12,7 +12,11 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 #include "stdafx.h"
 #include "BitmapFile.h"
-
+#include "BmpFile.h"
+#ifdef UKNCBTL_SDL3_PNG
+#include "PngFile.h"
+#else
+#include "ImagePixels.h"
 #include <wincodec.h>
 #include <wincodecsdk.h>
 #include <vector>
@@ -22,18 +26,14 @@ template <typename T> struct ComRelease
 {
     void operator()(T* value) const { if (value != nullptr) value->Release(); }
 };
-#pragma comment(lib, "WindowsCodecs.lib")
-
-
-//////////////////////////////////////////////////////////////////////
-// Globals
-
 static std::unique_ptr<IWICImagingFactory, ComRelease<IWICImagingFactory>> BitmapFile_factory;
 static bool BitmapFile_comInitialized = false;
+#endif
 
 
 void BitmapFile_Init()
 {
+#ifndef UKNCBTL_SDL3_PNG
     if (BitmapFile_factory)
         return;
     const HRESULT initialized = BitmapFile_comInitialized ? S_FALSE : CoInitialize(nullptr);
@@ -44,123 +44,17 @@ void BitmapFile_Init()
     if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
                                    IID_PPV_ARGS(&factory))))
         BitmapFile_factory.reset(factory);
+#endif
 }
 
 void BitmapFile_Done()
 {
+#ifndef UKNCBTL_SDL3_PNG
     BitmapFile_factory.reset();
     if (BitmapFile_comInitialized)
         CoUninitialize();
     BitmapFile_comInitialized = false;
-}
-
-
-//////////////////////////////////////////////////////////////////////
-
-
-HBITMAP CreateHBITMAP(IWICBitmapSource * ipBitmap)
-{
-    // get image attributes and check for valid image
-    UINT width = 0;
-    UINT height = 0;
-    if (FAILED(ipBitmap->GetSize(&width, &height)) || width == 0 || height == 0 ||
-        width > LONG_MAX || height > LONG_MAX || static_cast<uint64_t>(width) * height * 4 > UINT_MAX)
-        return nullptr;
-
-    // prepare structure giving bitmap information (negative height indicates a top-down DIB)
-    BITMAPINFO bminfo{};
-    bminfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bminfo.bmiHeader.biWidth = width;
-    bminfo.bmiHeader.biHeight = -((LONG)height);
-    bminfo.bmiHeader.biPlanes = 1;
-    bminfo.bmiHeader.biBitCount = 32;
-    bminfo.bmiHeader.biCompression = BI_RGB;
-
-    // create a DIB section that can hold the image
-    void * pvImageBits = nullptr;
-    HDC hdcScreen = ::GetDC(nullptr);
-    HBITMAP hbmp = ::CreateDIBSection(hdcScreen, &bminfo, DIB_RGB_COLORS, &pvImageBits, nullptr, 0);
-    ReleaseDC(nullptr, hdcScreen);
-    if (hbmp == nullptr)
-        return nullptr;
-
-    // extract the image into the HBITMAP
-
-    const UINT cbStride = width * 4;
-    const UINT cbImage = cbStride * height;
-    if (FAILED(ipBitmap->CopyPixels(nullptr, cbStride, cbImage, static_cast<BYTE *>(pvImageBits))))
-    {
-        // couldn't extract image; delete HBITMAP
-        ::DeleteObject(hbmp);
-        return nullptr;
-    }
-
-    return hbmp;
-}
-
-HBITMAP BitmapFile_LoadPngFromResource(LPCTSTR lpName)
-{
-    IWICImagingFactory * piFactory = BitmapFile_factory.get();
-    ASSERT(piFactory != nullptr);
-    if (piFactory == nullptr)
-        return nullptr;
-
-    HRESULT hr = S_OK;
-
-    // find the resource
-    HRSRC hrsrc = FindResource(nullptr, lpName, _T("IMAGE"));
-    if (hrsrc == nullptr)
-        return nullptr;
-
-    // load the resource
-    DWORD dwResourceSize = ::SizeofResource(nullptr, hrsrc);
-    HGLOBAL hglbImage = ::LoadResource(nullptr, hrsrc);
-    if (hglbImage == nullptr)
-        return nullptr;
-
-    // lock the resource, getting a pointer to its data
-    LPVOID pvSourceResourceData = ::LockResource(hglbImage);
-    if (pvSourceResourceData == nullptr)
-        return nullptr;
-
-    IWICStream* rawStream = nullptr;
-    hr = piFactory->CreateStream(&rawStream);
-    std::unique_ptr<IWICStream, ComRelease<IWICStream>> pIWICStream(rawStream);
-    if (hr != S_OK)
-        return nullptr;
-
-    hr = pIWICStream->InitializeFromMemory(reinterpret_cast<BYTE*>(pvSourceResourceData), dwResourceSize);
-    if (hr != S_OK)
-        return nullptr;
-
-    IWICBitmapDecoder* rawDecoder = nullptr;
-    hr = piFactory->CreateDecoderFromStream(pIWICStream.get(), nullptr, WICDecodeMetadataCacheOnLoad, &rawDecoder);
-    std::unique_ptr<IWICBitmapDecoder, ComRelease<IWICBitmapDecoder>> pIDecoder(rawDecoder);
-    if (hr != S_OK)
-        return nullptr;
-
-    IWICBitmapFrameDecode* rawFrame = nullptr;
-    hr = pIDecoder->GetFrame(0, &rawFrame);
-    std::unique_ptr<IWICBitmapFrameDecode, ComRelease<IWICBitmapFrameDecode>> pIDecoderFrame(rawFrame);
-    ::FreeResource(hglbImage);
-    if (hr != S_OK)
-        return nullptr;
-
-    // convert the image to 32bpp BGRA format with pre-multiplied alpha
-    //   (it may not be stored in that format natively in the PNG resource,
-    //   but we need this format to create the DIB to use on-screen)
-    IWICBitmapSource* rawBitmap = nullptr;
-    hr = WICConvertBitmapSource(GUID_WICPixelFormat32bppPBGRA, pIDecoderFrame.get(), &rawBitmap);
-    std::unique_ptr<IWICBitmapSource, ComRelease<IWICBitmapSource>> ipBitmap(rawBitmap);
-    if (hr != S_OK)
-        return nullptr;
-
-    // create a HBITMAP containing the image
-    HBITMAP hbmp = CreateHBITMAP(ipBitmap.get());
-    if (hbmp == nullptr)
-        return nullptr;
-
-    return hbmp;
+#endif
 }
 
 
@@ -174,6 +68,12 @@ bool BitmapFile_SaveImageFile(
 {
     ASSERT(sFileName != nullptr);
 
+    if (format == BitmapFileFormatBmp)
+        return sFileName && bmp_file::Save(std::filesystem::path(sFileName), pixels, width, height).has_value();
+
+#ifdef UKNCBTL_SDL3_PNG
+    return sFileName && png_file::Save(std::filesystem::path(sFileName), pixels, width, height).has_value();
+#else
     IWICImagingFactory * piFactory = BitmapFile_factory.get();
     ASSERT(piFactory != nullptr);
     if (piFactory == nullptr || sFileName == nullptr || width <= 0 || height <= 0 ||
@@ -181,20 +81,9 @@ bool BitmapFile_SaveImageFile(
         static_cast<uint64_t>(width) * height > pixels.size())
         return false;
 
-    GUID containerFormatGuid = GUID_ContainerFormatPng;
-    switch (format)
-    {
-    case BitmapFileFormatBmp:
-        containerFormatGuid = GUID_ContainerFormatBmp; break;
-    case BitmapFileFormatTiff:
-        containerFormatGuid = GUID_ContainerFormatTiff; break;
-    default:
-        containerFormatGuid = GUID_ContainerFormatPng;
-    }
-
     WICPixelFormatGUID formatGUID = GUID_WICPixelFormat24bppBGR;
     IWICBitmapEncoder* rawEncoder = nullptr;
-    if (FAILED(piFactory->CreateEncoder(containerFormatGuid, nullptr, &rawEncoder))) return false;
+    if (FAILED(piFactory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &rawEncoder))) return false;
     std::unique_ptr<IWICBitmapEncoder, ComRelease<IWICBitmapEncoder>> encoder(rawEncoder);
     IWICStream* rawStream = nullptr;
     if (FAILED(piFactory->CreateStream(&rawStream))) return false;
@@ -215,19 +104,10 @@ bool BitmapFile_SaveImageFile(
     const UINT cbStride = static_cast<UINT>(width) * 3;
     const UINT cbBufferSize = static_cast<UINT>(height) * cbStride;
     std::vector<BYTE> pixelBuffer(cbBufferSize);
-    for (int line = 0; line < height; line++)
-    {
-        BYTE* pDst = pixelBuffer.data() + static_cast<size_t>(line) * cbStride;
-        for (int x = 0; x < width; x++)
-        {
-            const uint32_t pixel = pixels[static_cast<size_t>(height - line - 1) * width + x];
-            *pDst++ = static_cast<BYTE>(pixel);
-            *pDst++ = static_cast<BYTE>(pixel >> 8);
-            *pDst++ = static_cast<BYTE>(pixel >> 16);
-        }
-    }
+    if (!image_pixels::ToTopDownBgr24(pixels, pixelBuffer, width, height)) return false;
     return SUCCEEDED(frame->WritePixels(height, cbStride, cbBufferSize, pixelBuffer.data())) &&
            SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
+#endif
 }
 
 

@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #pragma once
+#include <array>
 #include <cstdint>
 #include <span>
 
@@ -11,6 +12,19 @@ inline constexpr int Height = 288;
 inline constexpr int HiddenLines = 19;
 inline constexpr int TotalLines = HiddenLines + Height;
 enum class TagKind { Short, Parameters, Palette };
+
+// Immutable frame-boundary copy; safe to decode while the board advances.
+struct MemorySnapshot
+{
+    std::array<std::array<uint8_t, 65536>, 3> planes{};
+    [[nodiscard]] uint8_t GetRAMByte(int plane, uint16_t address) const { return planes[plane][address]; }
+    [[nodiscard]] uint16_t GetRAMWord(int plane, uint16_t address) const
+    {
+        address &= 0xfffe;
+        return static_cast<uint16_t>(planes[plane][address] | (planes[plane][address + 1] << 8));
+    }
+};
+void CaptureMemory(const CMotherboard& board, MemorySnapshot& snapshot);
 
 struct DisplayTag
 {
@@ -32,13 +46,16 @@ class DisplayListCursor
 {
 public:
     DisplayTag Next(const CMotherboard& board);
+    DisplayTag Next(const MemorySnapshot& snapshot);
 private:
+    template<class Memory> DisplayTag NextFrom(const Memory& memory);
     uint16_t address_ = 0000270;
     TagKind kind_ = TagKind::Short;
 };
 
 // Return false without modifying output if either span is too small.
 bool RenderRgb(const CMotherboard& board, std::span<uint32_t> pixels, std::span<const uint32_t> colors);
+bool RenderRgb(const MemorySnapshot& snapshot, std::span<uint32_t> pixels, std::span<const uint32_t> colors);
 // Text preparation ignores palette/cursor and does not expand scaled pixels.
 // Each row's unused tail and any storage beyond the frame remain untouched.
 bool RenderText(const CMotherboard& board, std::span<uint32_t> pixels, std::span<const uint32_t> colors);

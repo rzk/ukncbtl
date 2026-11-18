@@ -310,22 +310,20 @@ WinMM callback timing remain integration concerns. Existing wait-until-completio
 behavior is retained; a driver that never returns buffers can still block shutdown.
 ## Area 13 implementation
 
-`DiskImage.cpp` builds and writes the disk images used by the creation dialog.
+`DiskImageData.cpp` builds and `DiskImageFile.cpp` writes the disk images used by the creation dialog.
 Only the supported 40-/80-track geometries are accepted, producing 409,600 and
 819,200 bytes. The existing initialization blocks remain at offsets 0, 0x03D2
 and 0x0C00. The full image is explicitly zero-initialized and written, avoiding
 reliance on extended-file contents. Invalid arguments are rejected before opening
 or truncating the destination. Extra output-span bytes are preserved.
 
-Fifteen cases verify complete images against the original initialization bytes,
+Thirteen cases verify complete images against the original initialization bytes,
 zero-filled regions, exact sizes, buffer guards, invalid tracks and short spans,
 real file output, overwrite/truncation, Unicode paths, invalid-input preservation,
 locked files and missing parents. An injected file backend covers open/write/close
-failures, successful short writes, handle cleanup, original write-error retention
-when close also fails, and incomplete backend rejection.
+failures, short writes, file cleanup, and write-error retention when close also fails.
 
-Validation: Release application and DiskImageTests build; all 786 Release CTest
-cases pass (15 new). Interactive save dialogs and physical disk-full conditions
+The Release application and disk-image test targets build. Interactive save dialogs and physical disk-full conditions
 were not exercised; write failures are injected. Existing replacement semantics
 are retained, so a failed write may leave a partial destination file.
 ## Area 14 implementation

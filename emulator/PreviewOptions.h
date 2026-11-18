@@ -1,0 +1,31 @@
+/* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
+#pragma once
+#include <array>
+#include <expected>
+#include <filesystem>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+
+namespace preview_options
+{
+struct Options
+{
+    bool help = false, smokeTest = false;
+    int boot = 0;
+    std::optional<bool> run, sound, fullscreen;
+    std::optional<std::filesystem::path> rom;
+    std::optional<std::filesystem::path> tape;
+    std::optional<std::filesystem::path> state;
+    std::optional<std::filesystem::path> settingsFile;
+    std::array<std::optional<std::filesystem::path>, 4> floppies;
+    std::array<std::optional<std::filesystem::path>, 2> cartridges, hardDisks;
+    std::array<bool, 4> floppyReadOnly{};
+    std::array<bool, 2> hardDiskReadOnly{};
+};
+// Arguments are UTF-8 and exclude the executable name.
+[[nodiscard]] std::expected<Options, std::string> Parse(std::span<const std::string_view> arguments);
+// Explicit run/boot choices override preferences; state loading defaults to paused.
+[[nodiscard]] bool StartRunning(const Options& options, bool autostart, bool restoreFailed);
+}

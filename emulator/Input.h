@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <span>
 namespace input
@@ -11,8 +12,10 @@ public:
     uint16_t Pop();
 private:
     std::array<uint16_t, 32> events{};
-    size_t head = 0, count = 0;
+    std::size_t head = 0, count = 0;
 };
+// The legacy frontend supplies Windows virtual-key values; SDL input mapping
+// will use its own adapter before sending UKNC scancodes to the core.
 uint8_t MapKey(uint8_t key, bool latin);
 uint16_t KeyTransition(uint8_t key, uint8_t current, uint8_t& previous, bool latin);
 void NormalizeEnter(std::span<uint8_t, 256> keys, bool& enter, bool& numpad, bool& wasPressed);

@@ -12,6 +12,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 #include "stdafx.h"
 #include "Subtitles.h"
+#include "SubtitleFile.h"
 #include <vector>
 #include <memory>
 
@@ -58,8 +59,6 @@ int m_nDisasmCurrentLineIndex   = -1;  // Line index for PC address
 int m_nDisasmSelectedLineIndex  = -1;  // Line selected by user
 
 bool m_okDisasmSubtitles = false;
-TCHAR* m_strDisasmSubtitles = nullptr;
-static std::unique_ptr<TCHAR[]> m_subtitleTextOwner;
 std::vector<DisasmSubtitleItem> m_SubtitleItems;
 
 const int MAX_DISASMLINECOUNT = 50;
@@ -84,7 +83,6 @@ BOOL DisasmView_OnKeyDown(WPARAM vkey, LPARAM lParam);
 void DisasmView_OnLButtonDown(int mousex, int mousey);
 void DisasmView_OnRButtonDown(int mousex, int mousey);
 void DisasmView_CopyToClipboard(WPARAM command);
-BOOL DisasmView_ParseSubtitles();
 void DisasmView_DoDraw(HDC hdc);
 int  DisasmView_DrawDisassemble(HDC hdc, const CProcessor* pProc, uint16_t current, uint16_t previous);
 
@@ -120,11 +118,6 @@ void DisasmView_Init()
 
 void DisasmView_Done()
 {
-    if (m_strDisasmSubtitles != nullptr)
-    {
-        m_subtitleTextOwner.reset();  m_strDisasmSubtitles = nullptr;
-    }
-
     m_SubtitleItems.clear();
 
     if (m_pDisasmLineItems != nullptr)
@@ -363,7 +356,6 @@ void DisasmView_LoadUnloadSubtitles()
 {
     if (m_okDisasmSubtitles)  // Reset subtitles
     {
-        m_subtitleTextOwner.reset();  m_strDisasmSubtitles = nullptr;
         m_SubtitleItems.clear();
         m_okDisasmSubtitles = FALSE;
         DisasmView_UpdateWindowText();
@@ -379,64 +371,24 @@ void DisasmView_LoadUnloadSubtitles()
             bufFileName);
     if (! okResult) return;
 
-    // Load subtitles text from the file
-    HANDLE hSubFile = CreateFile(bufFileName, GENERIC_READ, FILE_SHARE_READ, nullptr,
-            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hSubFile == INVALID_HANDLE_VALUE)
+    auto loaded = subtitles::LoadFile(std::filesystem::path(bufFileName));
+    if (!loaded)
     {
-        AlertWarning(_T("Failed to load subtitles file."));
-        return;
-    }
-    DWORD dwSubFileSize = ::GetFileSize(hSubFile, nullptr);
-    if (dwSubFileSize > 1024 * 1024)
-    {
-        ::CloseHandle(hSubFile);
-        AlertWarning(_T("Subtitles file is too big (over 1 MB)."));
-        return;
-    }
-
-    if (dwSubFileSize % sizeof(TCHAR) != 0)
-    {
-        ::CloseHandle(hSubFile);
-        AlertWarning(_T("Subtitles file must contain UTF-16 text."));
-        return;
-    }
-    m_subtitleTextOwner = std::make_unique<TCHAR[]>(dwSubFileSize / sizeof(TCHAR) + 1);
-    m_strDisasmSubtitles = m_subtitleTextOwner.get();
-    DWORD dwBytesRead = 0;
-    BOOL readOk = m_strDisasmSubtitles != nullptr &&
-        ::ReadFile(hSubFile, m_strDisasmSubtitles, dwSubFileSize, &dwBytesRead, nullptr);
-    ::CloseHandle(hSubFile);
-    if (!readOk || dwBytesRead != dwSubFileSize)
-    {
-        m_subtitleTextOwner.reset();  m_strDisasmSubtitles = nullptr;
-        AlertWarning(_T("Failed to read subtitles file."));
+        switch (loaded.error())
+        {
+        case subtitles::FileError::open_failed: AlertWarning(_T("Failed to load subtitles file.")); break;
+        case subtitles::FileError::read_failed: AlertWarning(_T("Failed to read subtitles file.")); break;
+        case subtitles::FileError::too_large: AlertWarning(_T("Subtitles file is too big (over 1 MB).")); break;
+        case subtitles::FileError::invalid_encoding: AlertWarning(_T("Subtitles file must contain valid UTF-16LE text.")); break;
+        case subtitles::FileError::parse_failed: AlertWarning(_T("Failed to parse subtitles file.")); break;
+        }
         return;
     }
 
-    // Parse subtitles
-    if (!DisasmView_ParseSubtitles())
-    {
-        m_subtitleTextOwner.reset();  m_strDisasmSubtitles = nullptr;
-        m_SubtitleItems.clear();
-        AlertWarning(_T("Failed to parse subtitles file."));
-        return;
-    }
-
+    m_SubtitleItems = std::move(*loaded);
     m_okDisasmSubtitles = TRUE;
     DisasmView_UpdateWindowText();
     DisasmView_OnUpdate();  // We have to re-build the list of lines to show
-}
-
-// Parsing the "subtitles" text.
-// Input: text in m_strDisasmSubtitles in UTF-16 LE format, ends with a character with code 0.
-// Output: items with memory address, type and owned comment text in m_SubtitleItems.
-BOOL DisasmView_ParseSubtitles()
-{
-    const auto parsed = subtitles::Parse(m_strDisasmSubtitles);
-    if (!parsed) return FALSE;
-    m_SubtitleItems = *parsed;
-    return TRUE;
 }
 
 const DisasmSubtitleItem* DisasmView_FindSubtitle(uint16_t address, int typemask)

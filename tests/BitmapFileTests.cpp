@@ -5,6 +5,8 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <vector>
 #include <wincodec.h>
@@ -52,11 +54,25 @@ class BitmapEdges : public testing::Test {
 protected:
     std::array<TCHAR,MAX_PATH> path{};
     const std::array<uint32_t,4> pixels{0x00ff0000,0x0000ff00,0x000000ff,0x00ffffff};
+#ifdef UKNCBTL_SDL3_PNG
+    bool decoderComInitialized = false;
+#endif
     void SetUp() override {
         std::array<TCHAR,MAX_PATH> directory{}; ASSERT_NE(0,GetTempPath(MAX_PATH,directory.data()));
-        ASSERT_NE(0,GetTempFileName(directory.data(),L"bme",0,path.data())); BitmapFile_Init();
+        ASSERT_NE(0,GetTempFileName(directory.data(),L"bme",0,path.data()));
+#ifdef UKNCBTL_SDL3_PNG
+        decoderComInitialized = SUCCEEDED(CoInitialize(nullptr));
+        ASSERT_TRUE(decoderComInitialized);
+#endif
+        BitmapFile_Init();
     }
-    void TearDown() override { BitmapFile_Done(); DeleteFile(path.data()); }
+    void TearDown() override {
+        BitmapFile_Done();
+#ifdef UKNCBTL_SDL3_PNG
+        if (decoderComInitialized) CoUninitialize();
+#endif
+        DeleteFile(path.data());
+    }
     bool Save(BitmapFileFormat format=BitmapFileFormatPng) { return BitmapFile_SaveImageFile(pixels,path.data(),format,2,2); }
 };
 TEST_F(BitmapEdges, ShortPixelSpanDoesNotOverwriteExistingImage) {
@@ -65,7 +81,7 @@ TEST_F(BitmapEdges, ShortPixelSpanDoesNotOverwriteExistingImage) {
     EXPECT_TRUE(HasExpectedPixels(path.data()));
 }
 TEST_F(BitmapEdges, AllFormatsRoundTripAndReleaseFileForDeletion) {
-    for(auto format : {BitmapFileFormatBmp,BitmapFileFormatPng,BitmapFileFormatTiff}) {
+    for(auto format : {BitmapFileFormatBmp,BitmapFileFormatPng}) {
         ASSERT_TRUE(Save(format)); EXPECT_TRUE(HasExpectedPixels(path.data())); EXPECT_TRUE(DeleteFile(path.data()));
     }
 }
@@ -84,38 +100,48 @@ TEST_F(BitmapEdges, MissingParentFailsAndLaterSaveSucceeds) {
     EXPECT_FALSE(BitmapFile_SaveImageFile(pixels,missing.c_str(),BitmapFileFormatPng,2,2)); EXPECT_TRUE(Save());
 }
 TEST_F(BitmapEdges, UnknownFormatFallsBackToPng) {
-    ASSERT_TRUE(Save(static_cast<BitmapFileFormat>(99))); EXPECT_TRUE(HasExpectedPixels(path.data()));
+    for (auto format : {3, 99}) {
+        ASSERT_TRUE(Save(static_cast<BitmapFileFormat>(format)));
+        std::ifstream file(std::filesystem::path(path.data()), std::ios::binary);
+        std::array<unsigned char, 8> signature{};
+        ASSERT_TRUE(file.read(reinterpret_cast<char*>(signature.data()), signature.size()));
+        constexpr std::array<unsigned char, 8> pngSignature{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a};
+        EXPECT_EQ(signature, pngSignature);
+        EXPECT_TRUE(HasExpectedPixels(path.data()));
+    }
 }
+#ifdef UKNCBTL_SDL3_PNG
+TEST_F(BitmapEdges, PngSaveDoesNotRequireWindowsCodecInitialization) {
+    BitmapFile_Done();
+    ASSERT_TRUE(Save());
+    BitmapFile_Init();
+    EXPECT_TRUE(HasExpectedPixels(path.data()));
+}
+#endif
 TEST_F(BitmapEdges, DoneIsIdempotentAndInitializationCanBeRepeated) {
     BitmapFile_Done(); BitmapFile_Done(); BitmapFile_Init(); ASSERT_TRUE(Save());
     BitmapFile_Done(); BitmapFile_Init(); ASSERT_TRUE(Save());
 }
 TEST_F(BitmapEdges, RepeatedInitBalancesComInitialization) {
     BitmapFile_Init(); BitmapFile_Done();
+#ifdef UKNCBTL_SDL3_PNG
+    CoUninitialize(); // Drop the test decoder's apartment before probing.
+    decoderComInitialized = false;
+#endif
     const HRESULT changed=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
     EXPECT_TRUE(SUCCEEDED(changed)) << std::hex << changed;
     if(SUCCEEDED(changed)) CoUninitialize();
     else if(changed==RPC_E_CHANGED_MODE) CoUninitialize(); // Clean up the leaked reference on regression failure.
+#ifdef UKNCBTL_SDL3_PNG
+    decoderComInitialized = SUCCEEDED(CoInitialize(nullptr)); // Restore it for TearDown.
+    EXPECT_TRUE(decoderComInitialized);
+#endif
 }
 TEST(BitmapLifecycle, ExistingMultithreadedApartmentRemainsOwnedByCaller) {
     const HRESULT initialized=CoInitializeEx(nullptr,COINIT_MULTITHREADED); ASSERT_TRUE(SUCCEEDED(initialized));
-    BitmapFile_Init(); HBITMAP bitmap=BitmapFile_LoadPngFromResource(MAKEINTRESOURCE(201)); EXPECT_NE(nullptr,bitmap); if(bitmap) DeleteObject(bitmap);
+    BitmapFile_Init();
     BitmapFile_Done(); const HRESULT probe=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED); EXPECT_EQ(RPC_E_CHANGED_MODE,probe);
     if(SUCCEEDED(probe)) CoUninitialize(); CoUninitialize();
-}
-TEST_F(BitmapEdges, MissingAndMalformedResourcesFail) {
-    EXPECT_EQ(nullptr,BitmapFile_LoadPngFromResource(MAKEINTRESOURCE(299)));
-    EXPECT_EQ(nullptr,BitmapFile_LoadPngFromResource(MAKEINTRESOURCE(202)));
-}
-TEST_F(BitmapEdges, ResourceBitmapHasExpectedDimensionsAndReleasesGdiObjects) {
-    HBITMAP warm=BitmapFile_LoadPngFromResource(MAKEINTRESOURCE(201)); ASSERT_NE(nullptr,warm); DeleteObject(warm);
-    const DWORD before=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS);
-    for(int i=0;i<20;++i) {
-        HBITMAP bitmap=BitmapFile_LoadPngFromResource(MAKEINTRESOURCE(201)); ASSERT_NE(nullptr,bitmap);
-        BITMAP info{}; EXPECT_NE(0,GetObject(bitmap,sizeof(info),&info)); EXPECT_EQ(659,info.bmWidth); EXPECT_EQ(752,info.bmHeight); EXPECT_EQ(32,info.bmBitsPixel);
-        EXPECT_TRUE(DeleteObject(bitmap));
-    }
-    EXPECT_EQ(before,GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS));
 }
 TEST_F(BitmapEdges, OddWidthAndSinglePixelSaveWithCorrectOrientation) {
     for(auto size : {std::pair{1,1},std::pair{3,5}}) {
@@ -132,48 +158,4 @@ TEST_F(BitmapEdges, OddWidthAndSinglePixelSaveWithCorrectOrientation) {
         for(int y=0;y<height;++y) for(int x=0;x<width;++x) EXPECT_EQ(0xff000000|(input[(height-1-y)*width+x]&0xffffff),output[y*width+x]);
         EXPECT_EQ(0xdeadbeef,input.back());
     }
-}
-
-HBITMAP CreateHBITMAP(IWICBitmapSource*);
-class BitmapSourceStub final : public IWICBitmapSource {
-public:
-    UINT width=1,height=1;
-    HRESULT sizeResult=S_OK,copyResult=S_OK;
-    unsigned copies=0;
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID,void** result) override { *result=nullptr; return E_NOINTERFACE; }
-    ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
-    ULONG STDMETHODCALLTYPE Release() override { return 1; }
-    HRESULT STDMETHODCALLTYPE GetSize(UINT* w,UINT* h) override { *w=width; *h=height; return sizeResult; }
-    HRESULT STDMETHODCALLTYPE GetPixelFormat(WICPixelFormatGUID* format) override { *format=GUID_WICPixelFormat32bppPBGRA; return S_OK; }
-    HRESULT STDMETHODCALLTYPE GetResolution(double* x,double* y) override { *x=*y=96; return S_OK; }
-    HRESULT STDMETHODCALLTYPE CopyPalette(IWICPalette*) override { return E_NOTIMPL; }
-    HRESULT STDMETHODCALLTYPE CopyPixels(const WICRect*,UINT stride,UINT size,BYTE* data) override {
-        ++copies; EXPECT_EQ(width*4,stride); EXPECT_EQ(width*height*4,size);
-        if(SUCCEEDED(copyResult)) for(UINT i=0;i<size;++i) data[i]=static_cast<BYTE>(i);
-        return copyResult;
-    }
-};
-TEST(BitmapConversion, InvalidSourceDimensionsNeverAllocateOrCopy) {
-    BitmapSourceStub source;
-    for(auto size : {std::pair{0u,1u},std::pair{1u,0u},std::pair{UINT_MAX,1u},std::pair{1u,UINT_MAX},std::pair{65536u,65536u}}) {
-        source.width=size.first; source.height=size.second; EXPECT_EQ(nullptr,CreateHBITMAP(&source));
-    }
-    source.width=source.height=1; source.sizeResult=E_FAIL; EXPECT_EQ(nullptr,CreateHBITMAP(&source)); EXPECT_EQ(0,source.copies);
-}
-TEST(BitmapConversion, CopyFailureDeletesAllocatedBitmap) {
-    BitmapSourceStub source; HBITMAP warm=CreateHBITMAP(&source); ASSERT_NE(nullptr,warm); DeleteObject(warm);
-    const DWORD before=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS); source.copyResult=E_FAIL;
-    for(int i=0;i<20;++i) EXPECT_EQ(nullptr,CreateHBITMAP(&source));
-    EXPECT_EQ(before,GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS));
-}
-TEST(BitmapConversion, SuccessfulCopyProducesTopDownDibWithExactBytes) {
-    BitmapSourceStub source; source.width=3; source.height=2; HBITMAP bitmap=CreateHBITMAP(&source); ASSERT_NE(nullptr,bitmap);
-    DIBSECTION section{}; EXPECT_NE(0,GetObject(bitmap,sizeof(section),&section)); EXPECT_EQ(2,section.dsBm.bmHeight);
-    if(section.dsBm.bmBits) for(int i=0;i<24;++i) EXPECT_EQ(i,static_cast<const BYTE*>(section.dsBm.bmBits)[i]);
-    // GetObject reports an absolute height. Request top-down pixels to verify orientation.
-    BITMAPINFO info{}; info.bmiHeader=section.dsBmih; info.bmiHeader.biHeight=-2;
-    std::array<BYTE,24> topDown{}; HDC dc=GetDC(nullptr);
-    EXPECT_EQ(2,GetDIBits(dc,bitmap,0,2,topDown.data(),&info,DIB_RGB_COLORS)); ReleaseDC(nullptr,dc);
-    for(int i=0;i<24;++i) if(i%4!=3) EXPECT_EQ(i,topDown[i]);
-    EXPECT_EQ(1,source.copies); EXPECT_TRUE(DeleteObject(bitmap));
 }

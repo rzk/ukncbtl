@@ -1,5 +1,4 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include "BreakpointSet.h"
 #include <gtest/gtest.h>
 
@@ -31,6 +30,31 @@ TEST_F(BreakpointTests, StartsEmptyAndSentinelTerminated)
     EXPECT_FALSE(points.Contains(0));
     EXPECT_FALSE(points.Contains(none));
     ExpectTerminated(points);
+}
+
+TEST_F(BreakpointTests, PermanentSnapshotOmitsTemporaryInAnyPosition)
+{
+    points.SetTemporary(02000);
+    ASSERT_TRUE(points.Add(0));
+    ASSERT_TRUE(points.Add(01000));
+    const auto saved = points.PermanentAddresses();
+    EXPECT_EQ(saved[0], 0);
+    EXPECT_EQ(saved[1], 01000);
+    for (std::size_t i = 2; i < saved.size(); ++i) EXPECT_EQ(saved[i], none);
+    points.SetTemporary(01000); // Existing permanent target must remain permanent.
+    EXPECT_EQ(points.PermanentAddresses(), saved);
+    points.Clear();
+    for (const auto address : points.PermanentAddresses()) EXPECT_EQ(address, none);
+}
+
+TEST_F(BreakpointTests, PermanentSnapshotKeepsFullCapacityWhenTemporaryIsFirst)
+{
+    points.SetTemporary(02000);
+    for (int index = static_cast<int>(BreakpointSet::Capacity) - 2; index >= 0; --index)
+        ASSERT_TRUE(points.Add(static_cast<std::uint16_t>(index * 2)));
+    const auto saved = points.PermanentAddresses();
+    for (std::size_t index = 0; index < saved.size(); ++index)
+        EXPECT_EQ(saved[index], index * 2);
 }
 
 TEST_F(BreakpointTests, AddsBoundaryAddressesAndRejectsDuplicatesAndSentinel)

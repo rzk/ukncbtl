@@ -1,0 +1,5 @@
+The screen scaling algorithms are adapted from RenderVfw in
+https://github.com/nzeemin/ukncbtl-renders, commit
+bdb3d4069d8da78b46bbf1d68d73b32575eb3810, licensed under the GNU Lesser
+General Public License version 3 or later. The license is included as
+UKNCBTL-LICENSE. The original renderer plugin is no longer included.

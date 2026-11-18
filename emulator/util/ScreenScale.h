@@ -3,14 +3,13 @@
 
 #include <cstdint>
 #include <span>
-#include <tchar.h>
 
 namespace screen_scale {
 struct Mode
 {
     int width;
     int height;
-    const TCHAR* description;
+    const wchar_t* description;
 };
 
 [[nodiscard]] std::span<const Mode> Modes();

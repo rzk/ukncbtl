@@ -1,12 +1,21 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include "VideoDecoder.h"
 #include "emubase/Board.h"
 #include "util/Profiler.h"
 #include <array>
+#include <cstddef>
 
 namespace video {
-DisplayTag DisplayListCursor::Next(const CMotherboard& board)
+void CaptureMemory(const CMotherboard& board, MemorySnapshot& snapshot)
+{
+    UKNC_PROFILE_SCOPE("Video memory snapshot");
+    for (int plane = 0; plane < 3; ++plane)
+        for (unsigned address = 0; address < 65536; ++address)
+            snapshot.planes[plane][address] = board.GetRAMByte(plane, static_cast<uint16_t>(address));
+}
+
+template<class Memory>
+DisplayTag DisplayListCursor::NextFrom(const Memory& board)
 {
     DisplayTag tag{address_, kind_};
     if (kind_ != TagKind::Short)
@@ -23,8 +32,11 @@ DisplayTag DisplayListCursor::Next(const CMotherboard& board)
     kind_ = tag.NextKind();
     return tag;
 }
+DisplayTag DisplayListCursor::Next(const CMotherboard& board) { return NextFrom(board); }
+DisplayTag DisplayListCursor::Next(const MemorySnapshot& snapshot) { return NextFrom(snapshot); }
 
-bool RenderRgb(const CMotherboard& board, std::span<uint32_t> pixels, std::span<const uint32_t> colors)
+template<class Memory>
+bool RenderRgbFrom(const Memory& board, std::span<uint32_t> pixels, std::span<const uint32_t> colors)
 {
     UKNC_PROFILE_SCOPE("Video decode");
     if (pixels.size() < Width * Height || colors.size() < 128) return false;
@@ -59,7 +71,7 @@ bool RenderRgb(const CMotherboard& board, std::span<uint32_t> pixels, std::span<
         if (line < HiddenLines) continue;
 
         uint16_t address = tag.pixels;
-        auto row = pixels.subspan(static_cast<size_t>(line - HiddenLines) * Width, Width);
+        auto row = pixels.subspan(static_cast<std::size_t>(line - HiddenLines) * Width, Width);
         int x = 0;
         for (int position = 0; x < Width; ++position, ++address)
         {
@@ -78,6 +90,11 @@ bool RenderRgb(const CMotherboard& board, std::span<uint32_t> pixels, std::span<
     return true;
 }
 
+bool RenderRgb(const CMotherboard& board, std::span<uint32_t> pixels, std::span<const uint32_t> colors)
+{ return RenderRgbFrom(board, pixels, colors); }
+bool RenderRgb(const MemorySnapshot& snapshot, std::span<uint32_t> pixels, std::span<const uint32_t> colors)
+{ return RenderRgbFrom(snapshot, pixels, colors); }
+
 bool RenderText(const CMotherboard& board, std::span<uint32_t> pixels, std::span<const uint32_t> colors)
 {
     if (pixels.size() < Width * Height || colors.size() < 8) return false;
@@ -89,7 +106,7 @@ bool RenderText(const CMotherboard& board, std::span<uint32_t> pixels, std::span
         if (tag.kind == TagKind::Parameters) scale = tag.Scale();
         if (line < HiddenLines) continue;
         uint16_t address = tag.pixels;
-        auto row = pixels.subspan(static_cast<size_t>(line - HiddenLines) * Width, Width);
+        auto row = pixels.subspan(static_cast<std::size_t>(line - HiddenLines) * Width, Width);
         for (int x = 0; x < Width / scale; x += 8, ++address)
         {
             const auto plane0 = board.GetRAMByte(0, address);

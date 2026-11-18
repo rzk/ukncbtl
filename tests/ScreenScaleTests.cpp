@@ -1,5 +1,4 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include <gtest/gtest.h>
 #include "util/ScreenScale.h"
 #include <algorithm>

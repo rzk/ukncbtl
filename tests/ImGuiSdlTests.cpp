@@ -1,0 +1,139 @@
+/* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
+#include "SdlScreenRenderer.h"
+#include "UiFont.h"
+#include "UiAppearance.h"
+#include <SDL3/SDL.h>
+#include <gtest/gtest.h>
+#include <imgui.h>
+#include <imgui_impl_sdl3.h>
+#include <imgui_impl_sdlrenderer3.h>
+#include <memory>
+
+namespace
+{
+class ImGuiSdlTest : public testing::Test
+{
+protected:
+    std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)> window{nullptr, SDL_DestroyWindow};
+    std::unique_ptr<SDL_Renderer, decltype(&SDL_DestroyRenderer)> renderer{nullptr, SDL_DestroyRenderer};
+    bool platformReady = false;
+    bool rendererReady = false;
+    void SetUp() override
+    {
+        ASSERT_TRUE(SDL_SetHintWithPriority(SDL_HINT_VIDEO_DRIVER, "dummy", SDL_HINT_OVERRIDE));
+        ASSERT_TRUE(SDL_Init(SDL_INIT_VIDEO)) << SDL_GetError();
+        window.reset(SDL_CreateWindow("ImGui test", 64, 64, SDL_WINDOW_HIDDEN));
+        ASSERT_TRUE(window) << SDL_GetError();
+        renderer.reset(SDL_CreateRenderer(window.get(), "software"));
+        ASSERT_TRUE(renderer) << SDL_GetError();
+        IMGUI_CHECKVERSION();
+        ASSERT_NE(ImGui::CreateContext(), nullptr);
+        ASSERT_TRUE(ui_font::Install());
+        ImGui::GetIO().IniFilename = nullptr;
+        platformReady = ImGui_ImplSDL3_InitForSDLRenderer(window.get(), renderer.get());
+        ASSERT_TRUE(platformReady);
+        rendererReady = ImGui_ImplSDLRenderer3_Init(renderer.get());
+        ASSERT_TRUE(rendererReady);
+    }
+    void TearDown() override
+    {
+        if (rendererReady) ImGui_ImplSDLRenderer3_Shutdown();
+        if (platformReady) ImGui_ImplSDL3_Shutdown();
+        if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
+        renderer.reset();
+        window.reset();
+        SDL_Quit();
+    }
+};
+
+TEST_F(ImGuiSdlTest, DrawsUiOverEmulatorFrameAndHandlesKeyboardEvents)
+{
+    SDL_Event event{};
+    event.type = SDL_EVENT_KEY_DOWN;
+    event.key.windowID = SDL_GetWindowID(window.get());
+    event.key.scancode = SDL_SCANCODE_A;
+    event.key.key = SDLK_A;
+    event.key.down = true;
+    ASSERT_TRUE(ImGui_ImplSDL3_ProcessEvent(&event));
+
+    ImGui_ImplSDLRenderer3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    EXPECT_TRUE(ImGui::IsKeyDown(ImGuiKey_A));
+    ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(8, 8), ImVec2(24, 24), IM_COL32(255, 0, 0, 255));
+    ImGui::Render();
+    ASSERT_GT(ImGui::GetDrawData()->TotalVtxCount, 0);
+
+    ASSERT_TRUE(SDL_SetRenderDrawColor(renderer.get(), 0, 0, 0, 255));
+    ASSERT_TRUE(SDL_RenderClear(renderer.get()));
+    sdl_screen::Renderer screen(*renderer);
+    ASSERT_TRUE(screen.Draw({1, 1, {0x000000ff}}, SDL_FRect{0, 0, 64, 64}));
+    ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer.get());
+    const std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> output(
+        SDL_RenderReadPixels(renderer.get(), nullptr), SDL_DestroySurface);
+    ASSERT_TRUE(output) << SDL_GetError();
+    Uint8 r = 0, g = 0, b = 0, a = 0;
+    ASSERT_TRUE(SDL_ReadSurfacePixel(output.get(), 12, 12, &r, &g, &b, &a));
+    EXPECT_EQ(r, 255); EXPECT_EQ(g, 0); EXPECT_EQ(b, 0);
+    ASSERT_TRUE(SDL_ReadSurfacePixel(output.get(), 40, 40, &r, &g, &b, &a));
+    EXPECT_EQ(r, 0); EXPECT_EQ(g, 0); EXPECT_EQ(b, 255);
+}
+
+TEST_F(ImGuiSdlTest, BundledFontProvidesCyrillicGlyphs)
+{
+    ImGui_ImplSDLRenderer3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    EXPECT_TRUE(ImGui::GetFont()->IsGlyphInFont(0x041f));
+    EXPECT_TRUE(ImGui::GetFont()->IsGlyphInFont(0x044f));
+    ImGui::TextUnformatted("\xd0\x9f\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82");
+    ImGui::Render();
+}
+
+TEST_F(ImGuiSdlTest, AppearanceScalingIsRepeatableAndRejectsInvalidSettings)
+{
+    ASSERT_TRUE(ui_appearance::Apply(0, 100));
+    const auto base = ImGui::GetStyle().WindowPadding;
+    ASSERT_TRUE(ui_appearance::Apply(1, 150));
+    EXPECT_FLOAT_EQ(ImGui::GetStyle().FontScaleMain, 1.5f);
+    EXPECT_GT(ImGui::GetStyle().WindowPadding.x, base.x);
+    ASSERT_TRUE(ui_appearance::Apply(1, 150));
+    const auto scaled = ImGui::GetStyle().WindowPadding;
+    EXPECT_FALSE(ui_appearance::Apply(9, 150));
+    EXPECT_FALSE(ui_appearance::Apply(1, 201));
+    EXPECT_EQ(ImGui::GetStyle().WindowPadding.x, scaled.x);
+    ASSERT_TRUE(ui_appearance::Apply(0, 100));
+    EXPECT_EQ(ImGui::GetStyle().WindowPadding.x, base.x);
+    EXPECT_FLOAT_EQ(ImGui::GetStyle().FontScaleMain, 1.0f);
+}
+
+TEST_F(ImGuiSdlTest, ToolWindowPlacementCanBeSerialized)
+{
+    ImGui_ImplSDLRenderer3_NewFrame(); ImGui_ImplSDL3_NewFrame(); ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(8, 9), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(50, 45), ImGuiCond_Always);
+    ImGui::Begin("Debugger"); ImGui::TextUnformatted("test"); ImGui::End();
+    ImGui::Render();
+    std::size_t size = 0;
+    const char* data = ImGui::SaveIniSettingsToMemory(&size);
+    ASSERT_NE(data, nullptr);
+    const std::string text(data, size);
+    EXPECT_NE(text.find("[Window][Debugger]"), std::string::npos);
+    EXPECT_NE(text.find("Pos=8,9"), std::string::npos);
+}
+
+TEST_F(ImGuiSdlTest, ToolWindowPlacementRestoresBeforeFirstFrame)
+{
+    constexpr char saved[] = "[Window][Restored tool]\nPos=8,9\nSize=50,45\nCollapsed=0\n\n";
+    ImGui::LoadIniSettingsFromMemory(saved, sizeof(saved) - 1);
+    ImGui_ImplSDLRenderer3_NewFrame(); ImGui_ImplSDL3_NewFrame(); ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(32, 32), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Restored tool");
+    EXPECT_FLOAT_EQ(ImGui::GetWindowPos().x, 8);
+    EXPECT_FLOAT_EQ(ImGui::GetWindowPos().y, 9);
+    EXPECT_FLOAT_EQ(ImGui::GetWindowSize().x, 50);
+    EXPECT_FLOAT_EQ(ImGui::GetWindowSize().y, 45);
+    ImGui::End(); ImGui::Render();
+}
+}

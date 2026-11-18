@@ -1,4 +1,4 @@
-﻿/*  This file is part of UKNCBTL.
+/*  This file is part of UKNCBTL.
     UKNCBTL is free software: you can redistribute it and/or modify it under the terms
 of the GNU Lesser General Public License as published by the Free Software Foundation,
 either version 3 of the License, or (at your option) any later version.
@@ -15,8 +15,11 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <vector>
 #include <algorithm>
 #include <climits>
-#include <optional>
 #include "util/SettingsCodec.h"
+#include "util/CachedSetting.h"
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+#include "util/SettingsStore.h"
+#endif
 
 //////////////////////////////////////////////////////////////////////
 
@@ -25,8 +28,6 @@ const TCHAR m_Settings_IniAppName[] = _T("UKNCBTL");
 static std::basic_string<TCHAR> m_Settings_IniPath;
 static void Settings_ResetCaches();
 
-DCB  m_Settings_SerialConfig;
-DCB  m_Settings_NetComConfig;
 
 //////////////////////////////////////////////////////////////////////
 // Options
@@ -52,43 +53,6 @@ void Settings_Init(LPCTSTR iniPath)
         if (extension != std::basic_string<TCHAR>::npos) m_Settings_IniPath.resize(extension);
         m_Settings_IniPath += _T(".ini");
     }
-    // Set m_Settings_SerialConfig defaults
-    m_Settings_SerialConfig = {};
-    m_Settings_SerialConfig.DCBlength = sizeof(DCB);
-    m_Settings_SerialConfig.BaudRate = 9600;
-    m_Settings_SerialConfig.ByteSize = 8;
-    m_Settings_SerialConfig.fBinary = 1;
-    m_Settings_SerialConfig.fParity = 0;
-    m_Settings_SerialConfig.fOutxCtsFlow = m_Settings_SerialConfig.fOutxDsrFlow = 0;
-    m_Settings_SerialConfig.fDtrControl = DTR_CONTROL_ENABLE;
-    m_Settings_SerialConfig.fDsrSensitivity = 0;
-    m_Settings_SerialConfig.fTXContinueOnXoff = 0;
-    m_Settings_SerialConfig.fOutX = m_Settings_SerialConfig.fInX = 0;
-    m_Settings_SerialConfig.fErrorChar = 0;
-    m_Settings_SerialConfig.fNull = 0;
-    m_Settings_SerialConfig.fRtsControl = RTS_CONTROL_HANDSHAKE;
-    m_Settings_SerialConfig.fAbortOnError = 0;
-    m_Settings_SerialConfig.Parity = NOPARITY;
-    m_Settings_SerialConfig.StopBits = TWOSTOPBITS;
-
-    // Set m_Settings_NetComConfig defaults
-    m_Settings_NetComConfig = {};
-    m_Settings_NetComConfig.DCBlength = sizeof(DCB);
-    m_Settings_NetComConfig.BaudRate = 57600;
-    m_Settings_NetComConfig.ByteSize = 8;
-    m_Settings_NetComConfig.fBinary = 1;
-    m_Settings_NetComConfig.fParity = 1;
-    m_Settings_NetComConfig.fOutxCtsFlow = m_Settings_NetComConfig.fOutxDsrFlow = 0;
-    m_Settings_NetComConfig.fDtrControl = DTR_CONTROL_DISABLE;
-    m_Settings_NetComConfig.fDsrSensitivity = 0;
-    m_Settings_NetComConfig.fTXContinueOnXoff = 0;
-    m_Settings_NetComConfig.fOutX = m_Settings_NetComConfig.fInX = 0;
-    m_Settings_NetComConfig.fErrorChar = 0;
-    m_Settings_NetComConfig.fNull = 0;
-    m_Settings_NetComConfig.fRtsControl = RTS_CONTROL_DISABLE;
-    m_Settings_NetComConfig.fAbortOnError = 0;
-    m_Settings_NetComConfig.Parity = ODDPARITY;
-    m_Settings_NetComConfig.StopBits = TWOSTOPBITS;
 }
 void Settings_Done()
 {
@@ -96,13 +60,28 @@ void Settings_Done()
 
 BOOL Settings_SaveStringValue(LPCTSTR sName, LPCTSTR sValue)
 {
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    if (!sName) return FALSE;
+    const SettingsStore store{m_Settings_IniPath};
+    return (sValue ? store.Set(sName, sValue) : store.Remove(sName)).has_value();
+#else
     BOOL result = WritePrivateProfileString(
             m_Settings_IniAppName, sName, sValue, m_Settings_IniPath.c_str());
     return result;
+#endif
 }
 BOOL Settings_LoadStringValue(LPCTSTR sName, LPTSTR sBuffer, int nBufferLengthChars)
 {
     if (!sBuffer || nBufferLengthChars <= 0) return FALSE;
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    sBuffer[0] = _T('\0');
+    if (!sName) return FALSE;
+    const auto value = SettingsStore{m_Settings_IniPath}.Get(sName);
+    if (!value || !*value || (*value)->size() >= static_cast<size_t>(nBufferLengthChars)) return FALSE;
+    std::copy((*value)->begin(), (*value)->end(), sBuffer);
+    sBuffer[(*value)->size()] = _T('\0');
+    return TRUE;
+#else
     // Probe one character beyond the destination so an exact fit is distinct
     // from a truncated value. Never expose a valid-looking truncated prefix.
     std::vector<TCHAR> text(static_cast<size_t>(nBufferLengthChars) + 1, 0);
@@ -116,93 +95,118 @@ BOOL Settings_LoadStringValue(LPCTSTR sName, LPTSTR sBuffer, int nBufferLengthCh
     }
     sBuffer[0] = _T('\0');
     return FALSE;
+#endif
 }
 
 BOOL Settings_SaveDwordValue(LPCTSTR sName, DWORD dwValue)
 {
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    return sName && SettingsStore{m_Settings_IniPath}.SetDword(sName, dwValue).has_value();
+#else
     TCHAR buffer[12];
     FormatBuffer(buffer, _T("{}"), dwValue);
 
     return Settings_SaveStringValue(sName, buffer);
+#endif
 }
 BOOL Settings_LoadDwordValue(LPCTSTR sName, DWORD* dwValue)
 {
     if (!dwValue) return FALSE;
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    if (!sName) return FALSE;
+    const auto value = SettingsStore{m_Settings_IniPath}.GetDword(sName);
+    if (!value || !*value) return FALSE;
+    *dwValue = **value;
+    return TRUE;
+#else
     TCHAR buffer[64];
     if (!Settings_LoadStringValue(sName, buffer, 64)) return FALSE;
     const auto value = settings_codec::DecodeDword(buffer);
     if (!value) return FALSE;
     *dwValue = *value;
     return TRUE;
+#endif
 }
 BOOL Settings_SaveColorValue(LPCTSTR sName, COLORREF color)
 {
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    return sName && SettingsStore{m_Settings_IniPath}.SetColor(sName, color).has_value();
+#else
     const auto text = settings_codec::EncodeColor(color);
     return Settings_SaveStringValue(sName, text.c_str());
+#endif
 }
 BOOL Settings_LoadColorValue(LPCTSTR sName, COLORREF* pColor)
 {
     if (!pColor) return FALSE;
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    if (!sName) return FALSE;
+    const auto color = SettingsStore{m_Settings_IniPath}.GetColor(sName);
+    if (!color || !*color) return FALSE;
+    *pColor = **color;
+    return TRUE;
+#else
     TCHAR buffer[64];
     if (!Settings_LoadStringValue(sName, buffer, 64)) return FALSE;
     const auto color = settings_codec::DecodeColor(buffer);
     if (!color) return FALSE;
     *pColor = *color;
     return TRUE;
+#endif
 }
 
 BOOL Settings_SaveBinaryValue(LPCTSTR sName, const void* pData, int size)
 {
     if (size < 0 || (size > 0 && !pData)) return FALSE;
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    if (!sName) return FALSE;
+    return SettingsStore{m_Settings_IniPath}.SetBinary(sName,
+        std::span{static_cast<const uint8_t*>(pData), static_cast<size_t>(size)}).has_value();
+#else
     const auto text = settings_codec::EncodeBinary(
         std::span{static_cast<const uint8_t*>(pData), static_cast<size_t>(size)});
     return Settings_SaveStringValue(sName, text.c_str());
+#endif
 }
 
 BOOL Settings_LoadBinaryValue(LPCTSTR sName, void* pData, int size)
 {
     if (size < 0 || (size > 0 && !pData) || size > (INT_MAX - 2) / 2) return FALSE;
+#ifdef UKNCBTL_PORTABLE_SETTINGS
+    if (!sName) return FALSE;
+    const auto result = SettingsStore{m_Settings_IniPath}.GetBinary(sName,
+        std::span{static_cast<uint8_t*>(pData), static_cast<size_t>(size)});
+    return result && *result;
+#else
     // One extra character detects a value longer than the requested object.
     std::vector<TCHAR> buffer(static_cast<size_t>(size) * 2 + 2, 0);
     if (!Settings_LoadStringValue(sName, buffer.data(), static_cast<int>(buffer.size()))) return FALSE;
     return settings_codec::DecodeBinary(buffer.data(),
         std::span{static_cast<uint8_t*>(pData), static_cast<size_t>(size)});
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////
 
 
-template <typename T>
-class CachedDwordSetting
+struct WindowsDwordStore
 {
-public:
-    CachedDwordSetting(LPCTSTR name, T defaultValue)
-        : name_(name), defaultValue_(defaultValue) {}
-
-    T Get()
+    static bool Load(const wchar_t* name, std::uint32_t& value)
     {
-        if (!value_)
-        {
-            DWORD stored = static_cast<DWORD>(defaultValue_);
-            Settings_LoadDwordValue(name_, &stored);
-            value_ = static_cast<T>(stored);
-        }
-        return *value_;
+        DWORD stored = value;
+        if (!Settings_LoadDwordValue(name, &stored)) return false;
+        value = stored;
+        return true;
     }
 
-    void Set(T value)
+    static void Save(const wchar_t* name, std::uint32_t value)
     {
-        value_ = value;
-        Settings_SaveDwordValue(name_, static_cast<DWORD>(value));
+        Settings_SaveDwordValue(name, value);
     }
-
-    void Reset() { value_.reset(); }
-
-private:
-    LPCTSTR name_;
-    T defaultValue_;
-    std::optional<T> value_;
 };
+
+template <typename T>
+using CachedDwordSetting = CachedSetting<T, WindowsDwordStore>;
 
 BOOL Settings_GetWindowRect(RECT * pRect)
 {
@@ -227,21 +231,6 @@ BOOL Settings_GetWindowMaximized() { return settingWindowMaximized.Get(); }
 static CachedDwordSetting<BOOL> settingWindowFullscreen{_T("WindowFullscreen"), FALSE};
 void Settings_SetWindowFullscreen(BOOL value) { settingWindowFullscreen.Set(value); }
 BOOL Settings_GetWindowFullscreen() { return settingWindowFullscreen.Get(); }
-
-void Settings_GetRender(std::span<TCHAR> buffer)
-{
-    if (!Settings_LoadStringValue(_T("Render"), buffer.data(), static_cast<int>((std::min)(buffer.size(), size_t{32}))))
-    {
-        constexpr auto fallback = _T("RenderVfw.dll");
-        const auto length = std::char_traits<TCHAR>::length(fallback);
-        if (buffer.size() > length)
-            std::copy_n(fallback, length + 1, buffer.begin());
-    }
-}
-void Settings_SetRender(LPCTSTR sValue)
-{
-    Settings_SaveStringValue(_T("Render"), sValue);
-}
 
 void Settings_GetFloppyFilePath(int slot, std::span<TCHAR> buffer)
 {
@@ -394,87 +383,13 @@ static CachedDwordSetting<BOOL> settingInstrHistory{_T("InstrHistory"), FALSE};
 void Settings_SetInstrHistory(BOOL value) { settingInstrHistory.Set(value); }
 BOOL Settings_GetInstrHistory() { return settingInstrHistory.Get(); }
 
-static CachedDwordSetting<BOOL> settingSerial{_T("Serial"), FALSE};
-void Settings_SetSerial(BOOL value) { settingSerial.Set(value); }
-BOOL Settings_GetSerial() { return settingSerial.Get(); }
-
 static CachedDwordSetting<BOOL> settingParallel{_T("Parallel"), FALSE};
 void Settings_SetParallel(BOOL value) { settingParallel.Set(value); }
 BOOL Settings_GetParallel() { return settingParallel.Get(); }
 
-void Settings_GetSerialPort(std::span<TCHAR> buffer)
-{
-    Settings_LoadStringValue(_T("SerialPort"), buffer.data(), static_cast<int>((std::min)(buffer.size(), size_t{10})));
-}
-void Settings_SetSerialPort(LPCTSTR sValue)
-{
-    Settings_SaveStringValue(_T("SerialPort"), sValue);
-}
-
-BOOL m_Settings_SerialConfig_Valid = FALSE;
-void Settings_GetSerialConfig(DCB * pDcb)
-{
-    if (!m_Settings_SerialConfig_Valid)
-    {
-        DCB dcb;
-        if (Settings_LoadBinaryValue(_T("SerialConfig"), &dcb, sizeof(DCB)))
-        {
-            m_Settings_SerialConfig = dcb;
-        }
-        //NOTE: else -- use defaults from m_Settings_SerialConfig
-
-        m_Settings_SerialConfig_Valid = TRUE;
-    }
-
-    *pDcb = m_Settings_SerialConfig;
-}
-void Settings_SetSerialConfig(const DCB * pDcb)
-{
-    m_Settings_SerialConfig = *pDcb;
-    Settings_SaveBinaryValue(_T("SerialConfig"), pDcb, sizeof(DCB));
-    m_Settings_SerialConfig_Valid = TRUE;
-}
-
-static CachedDwordSetting<BOOL> settingNetwork{_T("Network"), FALSE};
-void Settings_SetNetwork(BOOL value) { settingNetwork.Set(value); }
-BOOL Settings_GetNetwork() { return settingNetwork.Get(); }
-
 static CachedDwordSetting<int> settingNetStation{_T("NetStation"), 0};
 void Settings_SetNetStation(int value) { settingNetStation.Set(value); }
 int Settings_GetNetStation() { return settingNetStation.Get(); }
-
-void Settings_GetNetComPort(std::span<TCHAR> buffer)
-{
-    Settings_LoadStringValue(_T("NetComPort"), buffer.data(), static_cast<int>((std::min)(buffer.size(), size_t{10})));
-}
-void Settings_SetNetComPort(LPCTSTR sValue)
-{
-    Settings_SaveStringValue(_T("NetComPort"), sValue);
-}
-
-BOOL m_Settings_NetComConfig_Valid = FALSE;
-void Settings_GetNetComConfig(DCB * pDcb)
-{
-    if (!m_Settings_NetComConfig_Valid)
-    {
-        DCB dcb;
-        if (Settings_LoadBinaryValue(_T("NetComConfig"), &dcb, sizeof(DCB)))
-        {
-            m_Settings_NetComConfig = dcb;
-        }
-        //NOTE: else -- use defaults from m_Settings_NetComConfig
-
-        m_Settings_NetComConfig_Valid = TRUE;
-    }
-
-    *pDcb = m_Settings_NetComConfig;
-}
-void Settings_SetNetComConfig(const DCB * pDcb)
-{
-    m_Settings_NetComConfig = *pDcb;
-    Settings_SaveBinaryValue(_T("NetComConfig"), pDcb, sizeof(DCB));
-    m_Settings_NetComConfig_Valid = TRUE;
-}
 
 static CachedDwordSetting<WORD> settingSpriteAddress{_T("SpriteAddress"), 0};
 void Settings_SetSpriteAddress(WORD value) { settingSpriteAddress.Set(value); }
@@ -600,14 +515,10 @@ static void Settings_ResetCaches()
     settingKeyboard.Reset();
     settingTape.Reset();
     settingInstrHistory.Reset();
-    settingSerial.Reset();
     settingParallel.Reset();
-    settingNetwork.Reset();
     settingNetStation.Reset();
     settingSpriteAddress.Reset();
     settingSpriteWidth.Reset();
     settingSpriteMode.Reset();
-    m_Settings_SerialConfig_Valid = FALSE;
-    m_Settings_NetComConfig_Valid = FALSE;
     for (auto& color : ColorDescriptors) color.valid = FALSE;
 }

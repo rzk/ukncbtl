@@ -10,11 +10,11 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 /// \file Processor.cpp  KM1801VM2 processor class implementation
 
-#include "stdafx.h"
 #include <algorithm>
+#include <cassert>
+#include <cstddef>
 #include "ImageSerialization.h"
 #include "Processor.h"
-#include "Emubase.h"
 
 
 // Timings ///////////////////////////////////////////////////////////
@@ -132,7 +132,7 @@ std::unique_ptr<CProcessor::ExecuteMethodRef[]> CProcessor::m_pExecuteMethodMap;
 
 void CProcessor::Init()
 {
-    ASSERT(m_pExecuteMethodMap == nullptr);
+    assert(m_pExecuteMethodMap == nullptr);
     m_pExecuteMethodMap = std::make_unique<ExecuteMethodRef[]>(65536);
     const auto RegisterMethodOpc = [](uint16_t opcode, ExecuteMethodRef method)
     {
@@ -140,7 +140,7 @@ void CProcessor::Init()
     };
     const auto RegisterMethodRef = [](uint16_t first, uint16_t last, ExecuteMethodRef method)
     {
-        std::ranges::fill(std::span{m_pExecuteMethodMap.get(), size_t{65536}}.subspan(
+        std::ranges::fill(std::span{m_pExecuteMethodMap.get(), std::size_t{65536}}.subspan(
             first, static_cast<size_t>(last) - first + 1), method);
     };
 
@@ -260,9 +260,11 @@ void CProcessor::Done()
 //////////////////////////////////////////////////////////////////////
 
 
-CProcessor::CProcessor (LPCTSTR name)
+CProcessor::CProcessor (const wchar_t* name)
 {
-    _tcsncpy_s(m_name.data(), m_name.size(), name != nullptr ? name : _T(""), _TRUNCATE);
+    if (name != nullptr)
+        for (size_t i = 0; i + 1 < m_name.size() && name[i] != L'\0'; ++i)
+            m_name[i] = name[i];
     m_R.fill({});
     m_psw = m_savepsw = 0777;
     m_savepc = 0177777;
@@ -462,8 +464,11 @@ bool CProcessor::InterruptProcessing ()
             }
 
             // The interrupt is taken when the new PC/PSW were loaded; on a bus error (m_RPLYrq) it was not
-            if (m_pInterruptCallback != nullptr && !m_RPLYrq)
-                m_pInterruptCallback(this, oldPc, intrVector);
+            if (!m_RPLYrq)
+            {
+                if (m_interruptContextCallback) m_interruptContextCallback(m_interruptContext, this, oldPc, intrVector);
+                else if (m_pInterruptCallback) m_pInterruptCallback(this, oldPc, intrVector);
+            }
 
             return true;
         }
@@ -551,7 +556,7 @@ void CProcessor::FetchInstruction()
 {
     // Read the next instruction
     uint16_t pc = GetPC();
-    ASSERT((pc & 1) == 0); // it have to be word aligned
+    assert((pc & 1) == 0); // it have to be word aligned
 
     m_instruction = GetWordExec(pc);
     SetPC(GetPC() + 2);
@@ -559,8 +564,8 @@ void CProcessor::FetchInstruction()
 
 void CProcessor::TranslateInstruction()
 {
-    if (m_pInstructionCallback != nullptr)
-        m_pInstructionCallback(this, m_instructionpc, m_instruction);
+    if (m_instructionContextCallback) m_instructionContextCallback(m_instructionContext, this, m_instructionpc, m_instruction);
+    else if (m_pInstructionCallback) m_pInstructionCallback(this, m_instructionpc, m_instruction);
 
     // Prepare values to help decode the command
     m_regdest  = GetDigit(m_instruction, 0);
