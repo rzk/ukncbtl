@@ -3,6 +3,7 @@
 #include "emubase/Emubase.h"
 #include "SoundGen.h"
 #include "SoundBackend.h"
+#include "FrameWorker.h"
 #include <deque>
 #include <vector>
 
@@ -177,6 +178,26 @@ TEST_F(SoundOutput, RepeatedWrapsReuseHeadersAfterUnprepare)
     for (int i = 8; i < 25; ++i) EXPECT_EQ(fake.headers[i % 8], fake.headers[i]);
     for (int i = 0; i < 25; ++i) EXPECT_EQ(i, fake.payloads[i][0]);
     SoundGen_Finalize(); EXPECT_EQ(25, fake.unprepares); EXPECT_EQ(1, fake.closes);
+}
+TEST_F(SoundOutput, WorkerSubmitsBlocksAndMainThreadControlsBetweenFrames)
+{
+    SoundGen_Initialize(0);
+    FrameWorker worker([&] { FeedBlock(0x1234, 0xabcd); return true; });
+    for (int i = 0; i < 20; ++i)
+    {
+        ASSERT_TRUE(worker.Start());
+        ASSERT_TRUE(worker.Wait());
+        SoundGen_SetVolume(static_cast<WORD>(i));
+    }
+    ASSERT_EQ(fake.payloads.size(), 20u);
+    for (const auto& payload : fake.payloads)
+    {
+        ASSERT_EQ(payload.size(), BUFSIZE);
+        EXPECT_EQ(payload[0], 0x34); EXPECT_EQ(payload[1], 0x12);
+        EXPECT_EQ(payload[2], 0xcd); EXPECT_EQ(payload[3], 0xab);
+    }
+    SoundGen_Finalize();
+    EXPECT_EQ(fake.closes, 1);
 }
 TEST_F(SoundOutput, FullQueueWaitsForCompletionAndFinalizeDrains)
 {

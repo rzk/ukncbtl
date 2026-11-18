@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "ScreenshotFile.h"
+#include "AsyncScreenshot.h"
 #include "ScreenshotClipboard.h"
 #include "VideoDecoder.h"
 #include <SDL3/SDL.h>
@@ -77,6 +78,63 @@ TEST_F(ScreenshotFileTest, SavesBmpAndPngWithExpectedPixels)
         ASSERT_TRUE(SDL_ReadSurfacePixel(decoded.get(), 0, 1, &r, &g, &b, &a));
         EXPECT_EQ(r, 255); EXPECT_EQ(g, 0); EXPECT_EQ(b, 0); EXPECT_EQ(a, 255);
     }
+}
+
+TEST_F(ScreenshotFileTest, AsyncSaveOwnsImageAndReservesOneJobUntilCollected)
+{
+    const auto path = directory / std::filesystem::path(u8"\u65e5\u672c.BMP");
+    screenshot_file::AsyncSave save;
+    auto copy = image;
+    ASSERT_TRUE(save.Start(path, std::move(copy)));
+    EXPECT_TRUE(save.Pending());
+    EXPECT_EQ(save.Path(), path);
+    EXPECT_FALSE(save.Start(path, image));
+    const auto result = save.Finish();
+    ASSERT_TRUE(result.has_value());
+    EXPECT_TRUE(*result);
+    EXPECT_FALSE(save.Pending());
+    EXPECT_FALSE(save.Finish().has_value());
+    const auto bytes = Read(path);
+    ASSERT_GT(bytes.size(), 2u);
+    EXPECT_EQ(bytes[0], 'B'); EXPECT_EQ(bytes[1], 'M');
+}
+
+TEST_F(ScreenshotFileTest, AsyncSaveReportsFailureAndCanBeReused)
+{
+    const auto path = directory / std::filesystem::path(u8"\u65e5\u672c.BMP");
+    screenshot_file::AsyncSave save;
+    ASSERT_TRUE(save.Start(path, screenshot_image::Image{2, 2, {0}}));
+    const auto failed = save.Finish();
+    ASSERT_TRUE(failed.has_value()); EXPECT_FALSE(*failed);
+    ASSERT_TRUE(save.Start(path, image));
+    const auto succeeded = save.Finish();
+    ASSERT_TRUE(succeeded.has_value()); EXPECT_TRUE(*succeeded);
+}
+
+TEST_F(ScreenshotFileTest, AsyncSaveScalesOwnedPixelsAndPreservesDestinationOnFailure)
+{
+    const auto path = directory / std::filesystem::path(u8"\u65e5\u672c.BMP");
+    std::vector<std::uint32_t> pixels(video::Width * video::Height, 0x123456);
+    pixels.front() = 0xabcdef;
+    const auto expected = screenshot_image::Prepare(pixels, 3);
+    ASSERT_TRUE(expected);
+    screenshot_file::AsyncSave save;
+    ASSERT_TRUE(save.StartScaled(path, pixels, 3));
+    pixels.assign(pixels.size(), 0);
+    ASSERT_EQ(save.Finish(), std::optional<bool>(true));
+    const auto asynchronous = Read(path);
+    ASSERT_TRUE(screenshot_file::Save(path, *expected));
+    EXPECT_EQ(Read(path), asynchronous);
+    ASSERT_TRUE(save.StartScaled(path, {}, 3));
+    ASSERT_EQ(save.Finish(), std::optional<bool>(false));
+    EXPECT_EQ(Read(path), asynchronous);
+}
+
+TEST_F(ScreenshotFileTest, AsyncSaveDestructorWaitsForPendingWrite)
+{
+    const auto path = directory / std::filesystem::path(u8"\u65e5\u672c.BMP");
+    { screenshot_file::AsyncSave save; ASSERT_TRUE(save.Start(path, image)); }
+    EXPECT_GT(Read(path).size(), 2u);
 }
 
 TEST_F(ScreenshotFileTest, ReportsEncoderErrorsWithoutOverwritingForInvalidPixels)

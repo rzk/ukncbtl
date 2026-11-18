@@ -1,6 +1,8 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "EmbeddedRom.h"
 #include "PreviewRoms.h"
+#include "AsyncRoms.h"
+#include "FrameWorker.h"
 #include "PreviewSnapshot.h"
 #include "emubase/Emubase.h"
 #include <gtest/gtest.h>
@@ -101,6 +103,67 @@ TEST_F(PreviewRomsTest, InsertsBothCartridgesAndPreservesOccupiedSlots)
     EXPECT_FALSE(roms.Eject(2));
     EXPECT_FALSE(roms.Insert(0, {}));
     EXPECT_FALSE(roms.Conflicts(cartridge));
+}
+
+TEST_F(PreviewRomsTest, AsyncSystemReadDoesNotChangeBoardUntilInstalled)
+{
+    preview_roms::Roms roms(*board);
+    board->Reset();
+    board->GetCPU()->SetDCLOPin(true);
+    board->GetPPU()->SetDCLOPin(true);
+    FrameWorker worker([&] { return board->SystemFrame(); });
+    preview_roms::AsyncLoad load;
+    ASSERT_TRUE(load.Start(system, -1));
+    EXPECT_TRUE(load.Pending());
+    EXPECT_EQ(load.Path(), system);
+    EXPECT_FALSE(load.Start(cartridge, 0));
+    ASSERT_TRUE(worker.Start());
+    auto result = load.Finish();
+    ASSERT_TRUE(worker.Wait());
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(result->image);
+    EXPECT_FALSE(result->cancelled);
+    EXPECT_EQ(roms.Source(), preview_roms::SystemSource::embedded);
+    roms.InstallSystem(result->path, std::get<preview_roms::SystemImage>(*result->image));
+    EXPECT_EQ(roms.Source(), preview_roms::SystemSource::file);
+    EXPECT_EQ(board->GetROMByte(0), 0x42);
+    EXPECT_EQ(board->GetROMByte(32767), 0);
+}
+
+TEST_F(PreviewRomsTest, AsyncCartridgeRechecksSlotAndSupportsCancellationAndRetry)
+{
+    preview_roms::Roms roms(*board);
+    preview_roms::AsyncLoad load;
+    EXPECT_FALSE(load.Start(cartridge, 2));
+    ASSERT_TRUE(load.Start(cartridge, 0));
+    auto first = load.Finish();
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(first->image);
+    ASSERT_TRUE(roms.Insert(0, cartridge));
+    const auto occupied = roms.InstallCartridge(0, first->path, std::get<preview_roms::CartridgeImage>(*first->image));
+    ASSERT_FALSE(occupied);
+    EXPECT_EQ(occupied.error(), preview_roms::Error::occupied);
+    ASSERT_TRUE(roms.Eject(0));
+    ASSERT_TRUE(load.Start(shortFile, 0));
+    auto failed = load.Finish();
+    ASSERT_TRUE(failed);
+    ASSERT_FALSE(failed->image);
+    EXPECT_EQ(failed->image.error(), preview_roms::Error::read_failed);
+    EXPECT_FALSE(roms.Inserted(0));
+    ASSERT_TRUE(load.Start(cartridge, 0));
+    load.Cancel();
+    EXPECT_TRUE(load.Cancelled());
+    EXPECT_EQ(load.Path(), cartridge);
+    auto cancelled = load.Finish();
+    ASSERT_TRUE(cancelled);
+    EXPECT_TRUE(cancelled->cancelled);
+    EXPECT_FALSE(roms.Inserted(0));
+    ASSERT_TRUE(load.Start(cartridge, 1));
+    auto retry = load.Finish();
+    ASSERT_TRUE(retry);
+    ASSERT_TRUE(retry->image);
+    ASSERT_TRUE(roms.InstallCartridge(retry->slot, retry->path, std::get<preview_roms::CartridgeImage>(*retry->image)));
+    EXPECT_EQ(board->GetROMCartByte(2, 0), 0xa5);
 }
 
 TEST_F(PreviewRomsTest, SnapshotRestorationChangesSystemSourceButKeepsCartridges)

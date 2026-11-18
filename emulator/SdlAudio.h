@@ -19,7 +19,8 @@ inline constexpr int FrameBytes = SamplesPerFrame * Channels * 2;
 inline constexpr int MaxQueuedBytes = FrameBytes * 10;
 
 // The board and stream are borrowed and must outlive this adapter. It owns the
-// board's sound callback until destruction. Call from the emulation thread.
+// board's sound callback until destruction. Board frames may run on a worker,
+// but calls on this adapter and destruction must be serialized with each frame.
 class Output
 {
 public:

@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "DiskImageData.h"
 #include "DiskImageFile.h"
+#include "AsyncDiskImage.h"
 #include <gtest/gtest.h>
 #include <chrono>
 #include <cstdint>
@@ -45,6 +46,43 @@ TEST_F(PortableDiskImageFile, WritesExactImagesAtUnicodePathAndTruncatesOnOverwr
         ASSERT_TRUE(disk_image::Build(tracks, expected));
         EXPECT_EQ(Read(), expected);
     }
+}
+
+TEST_F(PortableDiskImageFile, AsyncCreateReservesPathAndFinishesWithExactImage)
+{
+    disk_image::AsyncCreate create;
+    EXPECT_FALSE(create.Start({}, 80));
+    ASSERT_TRUE(create.Start(path, 80));
+    EXPECT_TRUE(create.Pending());
+    EXPECT_EQ(create.Path(), path);
+    EXPECT_FALSE(create.Start(path, 40));
+    EXPECT_EQ(create.Finish(), std::optional<bool>(true));
+    EXPECT_FALSE(create.Pending());
+    EXPECT_TRUE(create.Path().empty());
+    std::vector<std::uint8_t> expected(disk_image::Size(80));
+    ASSERT_TRUE(disk_image::Build(80, expected));
+    EXPECT_EQ(Read(), expected);
+}
+
+TEST_F(PortableDiskImageFile, AsyncCreateFailurePreservesFileAndAllowsRetry)
+{
+    ASSERT_TRUE(disk_image::CreatePortable(path, 40));
+    const auto before = Read();
+    disk_image::AsyncCreate create;
+    ASSERT_TRUE(create.Start(path, 41));
+    EXPECT_EQ(create.Finish(), std::optional<bool>(false));
+    EXPECT_EQ(Read(), before);
+    ASSERT_TRUE(create.Start(directory / "missing" / "disk.dsk", 80));
+    EXPECT_EQ(create.Finish(), std::optional<bool>(false));
+    ASSERT_TRUE(create.Start(path, 80));
+    EXPECT_EQ(create.Finish(), std::optional<bool>(true));
+    EXPECT_EQ(Read().size(), disk_image::Size(80));
+}
+
+TEST_F(PortableDiskImageFile, AsyncCreateDestructorCompletesOutstandingWrite)
+{
+    { disk_image::AsyncCreate create; ASSERT_TRUE(create.Start(path, 40)); }
+    EXPECT_EQ(Read().size(), disk_image::Size(40));
 }
 
 TEST_F(PortableDiskImageFile, InvalidArgumentsDoNotAlterExistingFile)

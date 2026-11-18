@@ -456,16 +456,25 @@ bool Emulator_SetParallel(bool parallelOnOff)
     return true;
 }
 
-bool Emulator_SystemFrame()
+void Emulator_PrepareFrame()
 {
-    UKNC_PROFILE_SCOPE("Emulator frame");
     SoundGen_SetVolume(Settings_GetSoundVolume());
 
     ScreenView_ScanKeyboard();
     if (Settings_GetMouse())
         ScreenView_UpdateMouse();
 
-    const bool frameCompleted = frame_control::RunFrame(*g_pBoard, cpuBreakpoints, ppuBreakpoints);
+}
+
+bool Emulator_ExecuteFrame()
+{
+    UKNC_PROFILE_SCOPE("Emulator frame");
+    return frame_control::RunFrame(*g_pBoard, cpuBreakpoints, ppuBreakpoints);
+}
+
+bool Emulator_CompleteFrame(bool frameCompleted)
+{
+    TapeView_ServiceFrame();
     Emulator_ReportPrinterFailure();
     if (!frameCompleted)
         return false;

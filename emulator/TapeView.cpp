@@ -50,6 +50,12 @@ tape::State m_tapeState;
 TCHAR m_szTapeFile[MAX_PATH];
 std::optional<WavPcmFile> m_tapeFile;
 DWORD m_dwTapePositionShown = 0;  // What we show (in seconds) in the m_hwndTapeCurrent control
+// Frame callbacks update these only while the board is owned by the frame.
+// The UI thread consumes them after the frame has returned.
+static bool m_tapeFrameChanged = false;
+static bool m_tapeFrameStopped = false;
+enum class TapeFrameError { none, read, write };
+static TapeFrameError m_tapeFrameError = TapeFrameError::none;
 
 void TapeView_CreateTape(LPCTSTR lpszFile);
 void TapeView_OpenTape(LPCTSTR lpszFile);
@@ -340,6 +346,34 @@ void TapeView_StopTape()
     SetWindowText(m_hwndTapePlay, m_tapeState.Recording() ? g_sRecord : g_sPlay);
 }
 
+// Called inside a frame: detach immediately to avoid further I/O in this frame,
+// but defer window operations until the UI thread owns the board again.
+static void TapeView_StopFromFrame()
+{
+    if (!m_tapeState.Stop()) return;
+    if (m_tapeState.Recording()) g_pBoard->SetTapeWriteCallback(nullptr, 0);
+    else g_pBoard->SetTapeReadCallback(nullptr, 0);
+    m_tapeFrameStopped = true;
+}
+
+void TapeView_ServiceFrame()
+{
+    if (m_tapeFrameStopped)
+        SetWindowText(m_hwndTapePlay, m_tapeState.Recording() ? g_sRecord : g_sPlay);
+    if (m_tapeFrameChanged)
+    {
+        InvalidateRect(m_hwndTapeGraph, nullptr, FALSE);
+        if (m_tapeFile && tape::UpdatePosition(m_tapeFile->Position(), m_dwTapePositionShown,
+            m_tapeFile->Frequency(), m_tapeState.Playing()))
+            TapeView_UpdatePosition();
+    }
+    const auto error = m_tapeFrameError;
+    m_tapeFrameChanged = m_tapeFrameStopped = false;
+    m_tapeFrameError = TapeFrameError::none;
+    if (error == TapeFrameError::read) AlertWarning(_T("Failed to read the WAV file."));
+    else if (error == TapeFrameError::write) AlertWarning(_T("Failed to write the WAV file."));
+}
+
 void TapeView_UpdatePosition()
 {
     DWORD wavPos = m_tapeFile ? m_tapeFile->Position() : 0;
@@ -423,26 +457,10 @@ bool CALLBACK TapeView_TapeReadCallback(unsigned int samples)
     if (samples == 0 || !m_tapeFile) return false;
 
     const auto batch = tape::Read(*m_tapeFile, samples, m_TapeBuffer);
-    if (batch.stop) TapeView_StopTape();
-    if (batch.error) AlertWarning(_T("Failed to read the WAV file."));
-    const bool result = batch.bit;
-
-    InvalidateRect(m_hwndTapeGraph, nullptr, FALSE);
-
-    DWORD wavLength = m_tapeFile->Length();
-    DWORD wavPos = m_tapeFile->Position();
-    if (wavPos >= wavLength)  // End of tape
-        TapeView_StopTape();
-
-    int wavFreq = m_tapeFile->Frequency();
-    if (tape::UpdatePosition(wavPos, m_dwTapePositionShown, wavFreq, m_tapeState.Playing()))
-    {
-        TapeView_UpdatePosition();
-    }
-
-//    DebugPrintFormat(_T("Tape: {}\r\n"), result);
-
-    return result;
+    m_tapeFrameChanged = true;
+    if (batch.stop) TapeView_StopFromFrame();
+    if (batch.error) m_tapeFrameError = TapeFrameError::read;
+    return batch.bit;
 }
 
 void CALLBACK TapeView_TapeWriteCallback(int value, UINT samples)
@@ -452,16 +470,9 @@ void CALLBACK TapeView_TapeWriteCallback(int value, UINT samples)
     if (samples == 0) return;
 
     const auto batch = tape::Write(*m_tapeFile, static_cast<uint32_t>(value), samples, m_TapeBuffer);
-    if (batch.stop) TapeView_StopTape();
-    if (batch.error) AlertWarning(_T("Failed to write the WAV file."));
-    InvalidateRect(m_hwndTapeGraph, nullptr, FALSE);
-
-    DWORD wavPos = m_tapeFile->Position();
-    int wavFreq = m_tapeFile->Frequency();
-    if (tape::UpdatePosition(wavPos, m_dwTapePositionShown, wavFreq, m_tapeState.Playing()))
-    {
-        TapeView_UpdatePosition();
-    }
+    m_tapeFrameChanged = true;
+    if (batch.stop) TapeView_StopFromFrame();
+    if (batch.error) m_tapeFrameError = TapeFrameError::write;
 }
 
 

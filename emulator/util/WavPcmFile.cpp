@@ -192,14 +192,26 @@ std::expected<uint32_t, WavError> WavPcmFile::ReadOne()
 
 std::expected<void, WavError> WavPcmFile::WriteOne(uint32_t value)
 {
-    if (!file_ || !writing_) return std::unexpected(WavError::io_error);
-    const uint64_t nextSize = (static_cast<uint64_t>(position_) + 1) * blockAlign_;
-    if (static_cast<uint64_t>(dataOffset_) + nextSize + 1 > INT32_MAX)
-        return std::unexpected(WavError::invalid_position);
     const auto sample = static_cast<uint8_t>(value >> 24);
-    if (!file_->write(reinterpret_cast<const char*>(&sample), 1)) return std::unexpected(WavError::io_error);
-    ++position_;
-    dataSize_ = (std::max)(dataSize_, static_cast<uint32_t>(nextSize));
+    return WriteSamples(std::span{&sample, 1});
+}
+
+uint32_t WavPcmFile::RecordingLimit() const
+{
+    return writing_ ? (INT32_MAX - dataOffset_ - 1) / blockAlign_ : 0;
+}
+
+std::expected<void, WavError> WavPcmFile::WriteSamples(std::span<const uint8_t> samples)
+{
+    if (!file_ || !writing_) return std::unexpected(WavError::io_error);
+    if (samples.empty()) return {};
+    const auto limit = RecordingLimit();
+    if (position_ > limit || samples.size() > limit - position_)
+        return std::unexpected(WavError::invalid_position);
+    if (!file_->write(reinterpret_cast<const char*>(samples.data()), static_cast<std::streamsize>(samples.size())))
+        return std::unexpected(WavError::io_error);
+    position_ += static_cast<uint32_t>(samples.size());
+    dataSize_ = (std::max)(dataSize_, position_ * blockAlign_);
     return {};
 }
 

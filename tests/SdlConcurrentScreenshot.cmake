@@ -1,0 +1,17 @@
+file(MAKE_DIRECTORY "${TEST_DIR}")
+set(screenshot "${TEST_DIR}/worker-日本.png")
+file(REMOVE "${screenshot}")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  "UKNCBTL_TEST_SCREENSHOT_PATH=${screenshot}" "${APP}" --smoke-test --sound
+  RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 25)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "SDL concurrent screenshot smoke test failed (${result}): ${error}")
+endif()
+if(NOT EXISTS "${screenshot}")
+  message(FATAL_ERROR "Screenshot was not saved before shutdown")
+endif()
+file(READ "${screenshot}" header OFFSET 0 LIMIT 24 HEX)
+if(NOT header MATCHES "^89504e470d0a1a0a0000000d494844520000028000000240")
+  message(FATAL_ERROR "Screenshot is not a 640x576 PNG: ${header}")
+endif()
+file(REMOVE "${screenshot}")

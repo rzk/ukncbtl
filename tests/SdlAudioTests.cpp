@@ -1,9 +1,14 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "SdlAudio.h"
+#include "FrameWorker.h"
+#include "AsyncScreenshot.h"
+#include "VideoDecoder.h"
 #include "emubase/Emubase.h"
 #include <SDL3/SDL.h>
 #include <gtest/gtest.h>
 #include <array>
+#include <chrono>
+#include <filesystem>
 #include <memory>
 #include <utility>
 
@@ -70,6 +75,60 @@ TEST_F(SdlAudioTest, BoundsBacklogAndResetDiscardsSamples)
     EXPECT_EQ(SDL_GetAudioStreamQueued(stream.get()), 0);
     ASSERT_TRUE(output.SubmitFrame());
     EXPECT_EQ(SDL_GetAudioStreamQueued(stream.get()), 0);
+}
+
+TEST_F(SdlAudioTest, WorkerFramesHandOffCompleteAudioBatches)
+{
+    sdl_audio::Output output(*board, *stream);
+    board->SetSound(0200);
+    FrameWorker worker([&] { return board->SystemFrame(); });
+    for (int frame = 0; frame < 24; ++frame)
+    {
+        ASSERT_TRUE(worker.Start());
+        ASSERT_TRUE(worker.Wait());
+        ASSERT_TRUE(output.SubmitFrame());
+        EXPECT_EQ(SDL_GetAudioStreamQueued(stream.get()), sdl_audio::FrameBytes);
+        ASSERT_TRUE(SDL_FlushAudioStream(stream.get()));
+        std::array<std::uint8_t, sdl_audio::FrameBytes> bytes{};
+        ASSERT_EQ(SDL_GetAudioStreamData(stream.get(), bytes.data(), static_cast<int>(bytes.size())), bytes.size());
+        for (std::size_t i = 0; i < bytes.size(); i += 4)
+        {
+            EXPECT_EQ(bytes[i], 0xff); EXPECT_EQ(bytes[i + 1], 0x7f);
+            EXPECT_EQ(bytes[i + 2], 0xff); EXPECT_EQ(bytes[i + 3], 0x7f);
+        }
+        ASSERT_TRUE(output.Reset());
+    }
+}
+
+TEST_F(SdlAudioTest, FrameAudioAndScreenshotWorkersCanRunTogether)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-concurrent-screenshot-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".png");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code error; std::filesystem::remove(path, error); } } cleanup{path};
+    sdl_audio::Output output(*board, *stream);
+    board->SetSound(0200);
+    screenshot_file::AsyncSave screenshot;
+    std::vector<std::uint32_t> pixels(video::Width * video::Height, 0x123456);
+    ASSERT_TRUE(screenshot.StartScaled(path, std::move(pixels), 3));
+    FrameWorker worker([&] { return board->SystemFrame(); });
+    for (int frame = 0; frame < 12; ++frame)
+    {
+        ASSERT_TRUE(worker.Start());
+        ASSERT_TRUE(worker.Wait());
+        ASSERT_TRUE(output.SubmitFrame());
+        EXPECT_EQ(SDL_GetAudioStreamQueued(stream.get()), sdl_audio::FrameBytes);
+        ASSERT_TRUE(output.Reset());
+    }
+    ASSERT_EQ(screenshot.Finish(), std::optional<bool>(true));
+    const auto utf8 = path.u8string();
+    const std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> image(
+        SDL_LoadPNG(reinterpret_cast<const char*>(utf8.c_str())), SDL_DestroySurface);
+    ASSERT_TRUE(image) << SDL_GetError();
+    EXPECT_EQ(image->w, 640);
+    EXPECT_EQ(image->h, 576);
+    Uint8 red = 0, green = 0, blue = 0, alpha = 0;
+    ASSERT_TRUE(SDL_ReadSurfacePixel(image.get(), 0, 0, &red, &green, &blue, &alpha));
+    EXPECT_EQ(red, 0x12); EXPECT_EQ(green, 0x34); EXPECT_EQ(blue, 0x56); EXPECT_EQ(alpha, 0xff);
 }
 
 TEST_F(SdlAudioTest, LegacyAndContextCallbacksReplaceEachOther)

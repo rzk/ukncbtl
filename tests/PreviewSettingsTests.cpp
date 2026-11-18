@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PreviewSettings.h"
+#include "AsyncSettingsImport.h"
 #include <gtest/gtest.h>
 #include <chrono>
 #include <filesystem>
@@ -24,6 +25,7 @@ protected:
     {
         std::error_code error;
         std::filesystem::remove(path, error);
+        std::filesystem::remove(directory / "imported.ini", error);
         std::filesystem::remove(directory, error);
     }
     void Write(const std::string& bytes)
@@ -66,6 +68,57 @@ TEST_F(PreviewSettingsTest, MissingFileUsesDefaultsWithoutCreatingIt)
     EXPECT_EQ(settings->cpuBreakpoints, preview_settings::EmptyBreakpoints());
     EXPECT_EQ(settings->ppuBreakpoints, preview_settings::EmptyBreakpoints());
     EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST_F(PreviewSettingsTest, AsyncImportOwnsSnapshotAndPreservesSourceAndDestinationEntries)
+{
+    const std::string source = "[UKNCBTL]\nSound=0\n";
+    Write(source);
+    const auto destination = directory / "imported.ini";
+    { std::ofstream file(destination); file << "[Custom]\nKeep=yes\n"; }
+    preview_settings::Settings current;
+    current.volume = 32;
+    preview_settings::AsyncImport import;
+    ASSERT_TRUE(import.Start(path, destination, preview_settings::ImportEncoding::unicode, current, false));
+    current.volume = 80;
+    EXPECT_EQ(import.Path(), path);
+    EXPECT_FALSE(import.Start(path, destination, preview_settings::ImportEncoding::unicode, current, false));
+    const auto result = import.Finish();
+    ASSERT_TRUE(result && *result);
+    EXPECT_TRUE(import.Path().empty());
+    const auto saved = preview_settings::Load(destination);
+    ASSERT_TRUE(saved);
+    EXPECT_FALSE(saved->sound);
+    EXPECT_EQ(saved->volume, 32);
+    const auto ini = IniFile::Open(destination);
+    ASSERT_TRUE(ini);
+    EXPECT_EQ(ini->Document().Get(L"Custom", L"Keep"), L"yes");
+    EXPECT_EQ(Read(), source);
+}
+
+TEST_F(PreviewSettingsTest, AsyncImportRejectsAliasesAndFailedImportsCanBeRetried)
+{
+    const auto destination = directory / "imported.ini";
+    const std::string original = "[SDLPreview]\nSound=1\n";
+    { std::ofstream file(destination, std::ios::binary); file << original; }
+    Write("[Other]\nUnrecognized=1\n");
+    preview_settings::AsyncImport import;
+    EXPECT_FALSE(import.Start(path, directory / "." / path.filename(), preview_settings::ImportEncoding::unicode, {}, false));
+    ASSERT_TRUE(import.Start(path, destination, preview_settings::ImportEncoding::unicode, {}, false));
+    const auto failed = import.Finish();
+    ASSERT_TRUE(failed && !*failed);
+    EXPECT_EQ(failed->error(), IniFileError::invalid_entry);
+    {
+        std::ifstream file(destination, std::ios::binary);
+        EXPECT_EQ(std::string(std::istreambuf_iterator<char>(file), {}), original);
+    }
+    Write("[UKNCBTL]\nSound=0\n");
+    ASSERT_TRUE(import.Start(path, directory / "missing" / "settings.ini", preview_settings::ImportEncoding::unicode, {}, false));
+    const auto badDestination = import.Finish();
+    ASSERT_TRUE(badDestination && !*badDestination);
+    ASSERT_TRUE(import.Start(path, destination, preview_settings::ImportEncoding::unicode, {}, false));
+    const auto retry = import.Finish();
+    ASSERT_TRUE(retry && *retry);
 }
 
 TEST_F(PreviewSettingsTest, ImportsCompatibleLegacyValuesAndKeepsUnrelatedSettings)

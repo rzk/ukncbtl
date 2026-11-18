@@ -329,7 +329,11 @@ void ScreenView_OnDraw(HDC hdc)
 void ScreenView_RedrawScreen()
 {
     ScreenView_PrepareScreen();
+    ScreenView_DrawPreparedScreen();
+}
 
+void ScreenView_DrawPreparedScreen()
+{
     HDC hdc = GetDC(g_hwndScreen);
     ScreenView_OnDraw(hdc);
     VERIFY(::ReleaseDC(g_hwndScreen, hdc));

@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "DisplayListDump.h"
+#include "AsyncDebuggerExport.h"
 #include "emubase/Emubase.h"
 #include <gtest/gtest.h>
 #include <algorithm>
@@ -84,5 +85,52 @@ TEST_F(DisplayListDumpTest, SavesToUnicodePathAndReportsOpenFailure)
     const auto failed = display_list_dump::Save(directory / "missing" / "list.txt", *board);
     ASSERT_FALSE(failed);
     EXPECT_EQ(failed.error(), display_list_dump::FileError::open_failed);
+}
+
+TEST_F(DisplayListDumpTest, AsyncDisplayExportOwnsVideoSnapshot)
+{
+    std::ostringstream expected;
+    ASSERT_TRUE(display_list_dump::Write(expected, *board));
+    auto snapshot = std::make_unique<video::MemorySnapshot>();
+    video::CaptureMemory(*board, *snapshot);
+    debugger_export::AsyncSave save;
+    ASSERT_TRUE(save.Start(path, std::move(snapshot)));
+    EXPECT_TRUE(save.Pending());
+    EXPECT_EQ(save.Path(), path);
+    EXPECT_FALSE(save.Start(path, std::string("replacement")));
+    board->SetRAMWord(0, 0000270, 0);
+    EXPECT_EQ(save.Finish(), std::optional<bool>(true));
+    EXPECT_FALSE(save.Pending());
+    std::ifstream file(path);
+    const std::string actual{std::istreambuf_iterator<char>(file), {}};
+    EXPECT_EQ(actual, expected.str());
+}
+
+TEST_F(DisplayListDumpTest, AsyncMemoryAndConsoleExportsAndFailureRecovery)
+{
+    debugger_export::AsyncSave save;
+    std::vector<std::uint16_t> words{012345, 067012};
+    ASSERT_TRUE(save.Start(path, words));
+    words[0] = 0;
+    EXPECT_EQ(save.Finish(), std::optional<bool>(true));
+    std::ifstream memory(path, std::ios::binary);
+    const std::string bytes{std::istreambuf_iterator<char>(memory), {}};
+    EXPECT_EQ(bytes, std::string("\xe5\x14\x0a\x6e", 4));
+    memory.close();
+    ASSERT_TRUE(save.Start(directory / "missing" / "log.txt", std::string("log")));
+    EXPECT_EQ(save.Finish(), std::optional<bool>(false));
+    ASSERT_TRUE(save.Start(path, std::string("console\n")));
+    EXPECT_EQ(save.Finish(), std::optional<bool>(true));
+    std::ifstream log(path, std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(log), {}};
+    EXPECT_EQ(text, "console\n");
+}
+
+TEST_F(DisplayListDumpTest, AsyncExportDestructorWaitsForWriter)
+{
+    { debugger_export::AsyncSave save; ASSERT_TRUE(save.Start(path, std::string("complete"))); }
+    std::ifstream file(path, std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(file), {}};
+    EXPECT_EQ(text, "complete");
 }
 }

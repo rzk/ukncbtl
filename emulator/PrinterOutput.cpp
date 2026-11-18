@@ -19,6 +19,15 @@ bool PrinterOutput::Write(std::uint8_t value)
     return ok;
 }
 
+bool PrinterOutput::Write(std::span<const std::uint8_t> bytes)
+{
+    if (!file_.is_open()) { error_ = true; return false; }
+    file_.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    const bool ok = static_cast<bool>(file_);
+    error_ |= !ok;
+    return ok;
+}
+
 bool PrinterOutput::Flush()
 {
     if (!file_.is_open()) { error_ = true; return false; }

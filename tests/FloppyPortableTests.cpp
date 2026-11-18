@@ -36,7 +36,10 @@ TEST(FloppyPortable, FailedFlushRetainsDirtyTrackAndReportsUntilRetried)
     const auto goodTrack = disk.Raw();
     disk.Raw().fill(0);
     disk.Dirty();
-    EXPECT_FALSE(disk.Flush());
+    auto prepared = CFloppyController::OpenImage(path, true);
+    ASSERT_TRUE(prepared);
+    EXPECT_FALSE(disk.AttachPreparedImage(1, std::move(*prepared)));
+    EXPECT_FALSE(disk.IsAttached(1));
     EXPECT_TRUE(disk.Changed());
     EXPECT_TRUE(disk.IsAttached(0));
     const auto invalid = disk.TakeFailure();
@@ -115,7 +118,9 @@ TEST(FloppyPortable, UnicodeRtdImagePreservesHeaderAndWritesTrack)
     FloppyProbe disk;
     ASSERT_FALSE(disk.AttachImage(0, std::filesystem::path{}));
     ASSERT_FALSE(disk.AttachImage(-1, path));
-    ASSERT_TRUE(disk.AttachImage(0, path));
+    auto prepared = CFloppyController::OpenImage(path, false);
+    ASSERT_TRUE(prepared);
+    ASSERT_TRUE(disk.AttachPreparedImage(0, std::move(*prepared)));
     disk.SetCommand(02003 | FLOPPY_CMD_ENGINESTART);
     ASSERT_EQ(disk.Raw()[96], 0x35);
     disk.Raw()[96] = 0x7a;

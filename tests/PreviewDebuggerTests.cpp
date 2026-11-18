@@ -1,5 +1,9 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PreviewDebugger.h"
+#include "FrameWorker.h"
+#ifdef UKNCBTL_TRACE_TEST_HOOKS
+#include "TraceTestHooks.h"
+#endif
 #include "emubase/Emubase.h"
 #include "util/IniEncoding.h"
 #include <gtest/gtest.h>
@@ -8,10 +12,100 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <future>
+#include <stdexcept>
+#include <thread>
 
 void DebugLog(const wchar_t*) {}
 namespace
 {
+TEST(FrameWorker, SerializesFramesAndReturnsResults)
+{
+    std::promise<void> entered, release;
+    auto signal = release.get_future().share();
+    int calls = 0;
+    const auto owner = std::this_thread::get_id();
+    std::thread::id executing;
+    FrameWorker worker([&] {
+        executing = std::this_thread::get_id();
+        if (++calls == 1) { entered.set_value(); signal.wait(); }
+        return calls == 1;
+    });
+    ASSERT_TRUE(worker.Start());
+    entered.get_future().wait();
+    EXPECT_FALSE(worker.Start());
+    EXPECT_FALSE(worker.WaitFor(std::chrono::milliseconds(0)));
+    release.set_value();
+    EXPECT_TRUE(worker.WaitFor(std::chrono::seconds(5)));
+    EXPECT_TRUE(worker.Wait());
+    EXPECT_NE(executing, owner);
+    ASSERT_TRUE(worker.Start());
+    EXPECT_FALSE(worker.Wait());
+    EXPECT_EQ(calls, 2);
+    EXPECT_THROW((void)worker.Wait(), std::logic_error);
+    EXPECT_THROW((void)worker.WaitFor(std::chrono::milliseconds(0)), std::logic_error);
+}
+
+TEST(FrameWorker, PropagatesFailureAndAllowsAnotherFrame)
+{
+    int calls = 0;
+    FrameWorker worker([&]() -> bool { if (++calls == 1) throw std::runtime_error("frame"); return true; });
+    ASSERT_TRUE(worker.Start());
+    EXPECT_THROW((void)worker.Wait(), std::runtime_error);
+    ASSERT_TRUE(worker.Start());
+    EXPECT_TRUE(worker.Wait());
+}
+
+TEST(FrameWorker, ConvertsFrameFailuresAndStopsToDistinctOutcomes)
+{
+    int calls = 0;
+    FrameWorker worker([&]() -> bool {
+        if (++calls == 1) throw std::runtime_error("frame");
+        return calls == 3;
+    });
+    ASSERT_TRUE(worker.Start());
+    EXPECT_EQ(worker.WaitOutcome(), FrameWorker::Outcome::failed);
+    ASSERT_TRUE(worker.Start());
+    EXPECT_EQ(worker.WaitOutcome(), FrameWorker::Outcome::stopped);
+    ASSERT_TRUE(worker.Start());
+    EXPECT_EQ(worker.WaitOutcome(), FrameWorker::Outcome::completed);
+}
+
+TEST(FrameWorker, FrameFailureRequiresExplicitRecovery)
+{
+    FrameFailureLatch latch;
+    EXPECT_FALSE(latch.Failed());
+    latch.Observe(FrameWorker::Outcome::stopped);
+    EXPECT_FALSE(latch.Failed());
+    latch.Observe(FrameWorker::Outcome::failed);
+    EXPECT_TRUE(latch.Failed());
+    latch.Observe(FrameWorker::Outcome::completed);
+    latch.Observe(FrameWorker::Outcome::stopped);
+    EXPECT_TRUE(latch.Failed());
+    latch.Recovered();
+    EXPECT_FALSE(latch.Failed());
+}
+
+TEST(FrameWorker, DestructorCompletesOutstandingFrame)
+{
+    int calls = 0;
+    { FrameWorker worker([&] { ++calls; return true; }); ASSERT_TRUE(worker.Start()); }
+    EXPECT_EQ(calls, 1);
+}
+
+TEST(FrameWorker, RepeatedHandoffsPublishStateInBothDirections)
+{
+    int input = 0, output = 0;
+    FrameWorker worker([&] { output = input * 2; return true; });
+    for (int i = 1; i <= 1000; ++i)
+    {
+        input = i;
+        ASSERT_TRUE(worker.Start());
+        ASSERT_TRUE(worker.Wait());
+        ASSERT_EQ(output, i * 2);
+    }
+}
+
 unsigned legacyInstructions = 0;
 void LegacyInstruction(const CProcessor*, std::uint16_t, std::uint16_t) { ++legacyInstructions; }
 
@@ -327,6 +421,59 @@ TEST_F(PreviewDebuggerTest, PpuBreakpointStopsTheSelectedProcessor)
     EXPECT_EQ(ppu->GetReg(0), 1);
 }
 
+TEST_F(PreviewDebuggerTest, WorkerFrameStopsAtPpuBreakpoint)
+{
+    board->GetCPU()->SetDCLOPin(true);
+    auto* ppu = board->GetPPU();
+    ppu->SetACLOPin(true); ppu->SetDCLOPin(false); ppu->SetACLOPin(false); ppu->InterruptProcessing();
+    ppu->SetPSW(0200); ppu->SetPC(01000); ppu->SetSP(0400); ppu->ClearInternalTick();
+    ppu->GetMemoryController()->SetWord(01000, false, 0005200);
+    preview_debugger::Session debugger(*board);
+    ASSERT_TRUE(debugger.Breakpoints(preview_debugger::Processor::ppu).Add(01002));
+    debugger.PrepareRun();
+    FrameWorker worker([&] { return debugger.RunFrame(); });
+    ASSERT_TRUE(worker.Start());
+    EXPECT_FALSE(worker.Wait());
+    EXPECT_EQ(ppu->GetPC(), 01002);
+    EXPECT_EQ(ppu->GetReg(0), 1);
+}
+
+TEST_F(PreviewDebuggerTest, WorkerFramePublishesHistoryAtBreakpoint)
+{
+    preview_debugger::Session debugger(*board);
+    debugger.SetHistoryEnabled(true);
+    ASSERT_TRUE(debugger.Breakpoints(preview_debugger::Processor::cpu).Add(01002));
+    debugger.PrepareRun();
+    FrameWorker worker([&] { return debugger.RunFrame(); });
+    ASSERT_TRUE(worker.Start());
+    ASSERT_FALSE(worker.Wait());
+    const auto& history = debugger.History();
+    ASSERT_EQ(history.Length(true), 1);
+    EXPECT_EQ(history.Get(true, 0).pc, 01000);
+    EXPECT_EQ(history.Get(true, 0).words[0], 0005200);
+    debugger.SetHistoryEnabled(false);
+}
+
+TEST_F(PreviewDebuggerTest, WorkerFramesMatchSynchronousExecution)
+{
+    std::vector<std::uint8_t> initial(UKNCIMAGE_SIZE), expected(UKNCIMAGE_SIZE), actual(UKNCIMAGE_SIZE);
+    board->SaveToImage(std::span<std::uint8_t, UKNCIMAGE_SIZE>(initial.data(), initial.size()));
+    CMotherboard other;
+    other.Reset();
+    other.LoadFromImage(std::span<const std::uint8_t, UKNCIMAGE_SIZE>(initial.data(), initial.size()));
+    preview_debugger::Session direct(*board), threaded(other);
+    FrameWorker worker([&] { return threaded.RunFrame(); });
+    for (int i = 0; i < 8; ++i)
+    {
+        const bool directResult = direct.RunFrame();
+        ASSERT_TRUE(worker.Start());
+        ASSERT_EQ(worker.Wait(), directResult);
+    }
+    board->SaveToImage(std::span<std::uint8_t, UKNCIMAGE_SIZE>(expected.data(), expected.size()));
+    other.SaveToImage(std::span<std::uint8_t, UKNCIMAGE_SIZE>(actual.data(), actual.size()));
+    EXPECT_EQ(actual, expected);
+}
+
 TEST_F(PreviewDebuggerTest, StoppingStepOverCancelsOnlyTemporaryBreakpoint)
 {
     preview_debugger::Session debugger(*board);
@@ -442,6 +589,226 @@ TEST_F(PreviewDebuggerTest, TraceAndHistoryCanBeEnabledAndDisabledIndependently)
     EXPECT_FALSE(debugger.TraceConflicts(path));
     EXPECT_FALSE(debugger.TakeTraceError());
 }
+
+TEST_F(PreviewDebuggerTest, WorkerFramesFlushLargeTraceInOrderOnStop)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-worker-trace-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code error; std::filesystem::remove(path, error); } } cleanup{path};
+    auto* cpu = board->GetCPU();
+    cpu->SetPSW(0340);
+    cpu->SetPC(01000);
+    cpu->GetMemoryController()->SetWord(01000, false, 0000777); // BR to itself.
+    std::vector<std::uint8_t> image(UKNCIMAGE_SIZE);
+    board->SaveToImage(std::span<std::uint8_t, UKNCIMAGE_SIZE>(image.data(), image.size()));
+    CMotherboard reference;
+    reference.Reset();
+    reference.LoadFromImage(std::span<const std::uint8_t, UKNCIMAGE_SIZE>(image.data(), image.size()));
+    struct Count { const CProcessor* cpu; std::size_t instructions = 0; } count{reference.GetCPU()};
+    reference.SetInstructionCallbackWithContext([](void* context, const CProcessor* processor, std::uint16_t, std::uint16_t) {
+        auto& state = *static_cast<Count*>(context);
+        if (processor == state.cpu) ++state.instructions;
+    }, &count);
+    for (int i = 0; i < 3; ++i) ASSERT_TRUE(reference.SystemFrame());
+    preview_debugger::Session debugger(*board);
+    ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+    FrameWorker worker([&] { return debugger.RunFrame(); });
+    for (int i = 0; i < 3; ++i)
+    {
+        ASSERT_TRUE(worker.Start());
+        ASSERT_TRUE(worker.Wait());
+    }
+    debugger.StopTrace();
+    EXPECT_FALSE(debugger.TakeTraceError());
+    std::ifstream file(path, std::ios::binary);
+    ASSERT_TRUE(file);
+    const std::string contents{std::istreambuf_iterator<char>(file), {}};
+    EXPECT_GT(contents.size(), 256u * 1024u);
+    ASSERT_FALSE(contents.empty());
+    EXPECT_EQ(contents.back(), '\n');
+    std::size_t lines = 0;
+    for (std::size_t start = 0; start < contents.size();)
+    {
+        ASSERT_EQ(contents.compare(start, 11, "CPU\t001000\t"), 0);
+        const auto end = contents.find('\n', start);
+        ASSERT_NE(end, std::string::npos);
+        start = end + 1;
+        ++lines;
+    }
+    EXPECT_GT(lines, 1000u);
+    EXPECT_EQ(lines, count.instructions);
+}
+
+TEST_F(PreviewDebuggerTest, ClearTraceWaitsForWorkerFrameBeforeTruncating)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-worker-clear-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    preview_debugger::Session debugger(*board);
+    ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+    ASSERT_TRUE(debugger.Breakpoints(preview_debugger::Processor::cpu).Add(01002));
+    debugger.PrepareRun();
+    FrameWorker worker([&] { return debugger.RunFrame(); });
+    ASSERT_TRUE(worker.Start());
+    ASSERT_FALSE(worker.Wait());
+    ASSERT_TRUE(debugger.ClearTrace());
+    EXPECT_EQ(std::filesystem::file_size(path), 0u);
+    board->GetCPU()->SetPC(01000);
+    debugger.Step();
+    debugger.StopTrace();
+    std::ifstream file(path, std::ios::binary);
+    const std::string contents{std::istreambuf_iterator<char>(file), {}};
+    const auto first = contents.find("CPU\t001000\tINC");
+    ASSERT_NE(first, std::string::npos);
+    EXPECT_EQ(contents.find("CPU\t001000\tINC", first + 1), std::string::npos);
+}
+
+TEST_F(PreviewDebuggerTest, DestructionDrainsOutstandingWorkerTrace)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-worker-close-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    {
+        preview_debugger::Session debugger(*board);
+        ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+        ASSERT_TRUE(debugger.Breakpoints(preview_debugger::Processor::cpu).Add(01002));
+        debugger.PrepareRun();
+        FrameWorker worker([&] { return debugger.RunFrame(); });
+        ASSERT_TRUE(worker.Start());
+        ASSERT_FALSE(worker.Wait());
+    }
+    std::ifstream file(path, std::ios::binary);
+    const std::string contents{std::istreambuf_iterator<char>(file), {}};
+    EXPECT_NE(contents.find("CPU\t001000\tINC"), std::string::npos);
+}
+
+TEST_F(PreviewDebuggerTest, RepeatedTraceSessionsDrainAndRestartCleanly)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-worker-restart-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    preview_debugger::Session debugger(*board);
+    ASSERT_TRUE(debugger.Breakpoints(preview_debugger::Processor::cpu).Add(01002));
+    FrameWorker worker([&] { return debugger.RunFrame(); });
+    for (int i = 0; i < 10; ++i)
+    {
+        board->GetCPU()->SetPC(01000);
+        debugger.PrepareRun();
+        ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+        ASSERT_TRUE(worker.Start());
+        ASSERT_FALSE(worker.Wait());
+        debugger.StopTrace();
+        EXPECT_FALSE(debugger.TakeTraceError());
+        std::ifstream file(path, std::ios::binary);
+        const std::string contents{std::istreambuf_iterator<char>(file), {}};
+        const auto first = contents.find("CPU\t001000\tINC");
+        ASSERT_NE(first, std::string::npos);
+        EXPECT_EQ(contents.find("CPU\t001000\tINC", first + 1), std::string::npos);
+    }
+}
+
+#ifdef UKNCBTL_TRACE_TEST_HOOKS
+TEST_F(PreviewDebuggerTest, StoppingFailedTracePreservesErrorBeforeRestart)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-worker-stop-failure-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            preview_debugger::testing::FailWorkerTraceWrites(false);
+            std::error_code ec; std::filesystem::remove(path, ec);
+        }
+    } cleanup{path};
+    preview_debugger::Session debugger(*board);
+    ASSERT_TRUE(debugger.Breakpoints(preview_debugger::Processor::cpu).Add(01002));
+    debugger.PrepareRun();
+    ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+    preview_debugger::testing::FailWorkerTraceWrites(true);
+    FrameWorker worker([&] { return debugger.RunFrame(); });
+    ASSERT_TRUE(worker.Start());
+    ASSERT_FALSE(worker.Wait());
+    debugger.StopTrace();
+    preview_debugger::testing::FailWorkerTraceWrites(false);
+    EXPECT_FALSE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+    EXPECT_TRUE(debugger.TakeTraceError());
+    EXPECT_FALSE(debugger.TakeTraceError());
+    ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+    debugger.StopTrace();
+    EXPECT_FALSE(debugger.TakeTraceError());
+}
+
+TEST_F(PreviewDebuggerTest, WorkerTraceFailureIsReportedOnceAndCanBeRetried)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-worker-failure-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    preview_debugger::Session debugger(*board);
+    debugger.SetHistoryEnabled(true);
+    ASSERT_TRUE(debugger.Breakpoints(preview_debugger::Processor::cpu).Add(01002));
+    debugger.PrepareRun();
+    ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+    preview_debugger::testing::FailWorkerTraceWrites(true);
+    FrameWorker worker([&] { return debugger.RunFrame(); });
+    ASSERT_TRUE(worker.Start());
+    ASSERT_FALSE(worker.Wait());
+    bool reported = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!(reported = debugger.TakeTraceError()) && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ASSERT_TRUE(reported);
+    EXPECT_EQ(debugger.TraceMask(), 0);
+    EXPECT_EQ(debugger.TracePath(), nullptr);
+    EXPECT_FALSE(debugger.TakeTraceError());
+    EXPECT_EQ(debugger.History().Length(true), 1);
+
+    preview_debugger::testing::FailWorkerTraceWrites(false);
+    board->GetCPU()->SetPC(01000);
+    debugger.PrepareRun();
+    ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+    ASSERT_TRUE(worker.Start());
+    ASSERT_FALSE(worker.Wait());
+    debugger.StopTrace();
+    EXPECT_FALSE(debugger.TakeTraceError());
+    std::ifstream file(path, std::ios::binary);
+    const std::string contents{std::istreambuf_iterator<char>(file), {}};
+    EXPECT_NE(contents.find("CPU\t001000\tINC"), std::string::npos);
+}
+
+TEST_F(PreviewDebuggerTest, FrameExceptionDrainsBufferedTraceAndAllowsRetry)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("ukncbtl-trace-frame-error-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{path};
+    const auto read = [&] {
+        std::ifstream file(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(file), {});
+    };
+    preview_debugger::Session debugger(*board);
+    ASSERT_TRUE(debugger.Breakpoints(preview_debugger::Processor::cpu).Add(01004));
+    debugger.PrepareRun();
+    ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+    preview_debugger::testing::ThrowOnTraceRecord(2);
+    FrameWorker worker([&] { return debugger.RunFrame(); });
+    ASSERT_TRUE(worker.Start());
+    EXPECT_EQ(worker.WaitOutcome(), FrameWorker::Outcome::failed);
+    preview_debugger::testing::ThrowOnTraceRecord(0);
+    debugger.StopTrace();
+    EXPECT_FALSE(debugger.TakeTraceError());
+    const auto partial = read();
+    EXPECT_NE(partial.find("CPU\t001000\tINC"), std::string::npos);
+    EXPECT_EQ(partial.find("CPU\t001002\t"), std::string::npos);
+
+    board->GetCPU()->SetPC(01000);
+    debugger.PrepareRun();
+    ASSERT_TRUE(debugger.StartTrace(path, preview_debugger::TraceInstructionsCpu));
+    ASSERT_TRUE(worker.Start());
+    EXPECT_EQ(worker.WaitOutcome(), FrameWorker::Outcome::stopped);
+    debugger.StopTrace();
+    const auto complete = read();
+    EXPECT_NE(complete.find("CPU\t001000\tINC"), std::string::npos);
+    EXPECT_NE(complete.find("CPU\t001002\t"), std::string::npos);
+}
+#endif
 
 TEST_F(PreviewDebuggerTest, TraceCapturesFloppyAndRespectsMaskChanges)
 {

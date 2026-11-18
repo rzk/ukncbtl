@@ -42,14 +42,25 @@ void preview_roms::Roms::UseEmbedded()
 
 std::expected<void, preview_roms::Error> preview_roms::Roms::LoadSystem(const std::filesystem::path& path)
 {
-    auto savedPath = path;
-    std::array<std::uint8_t, 32768> image{};
+    auto image = ReadSystem(path);
+    if (!image) return std::unexpected(image.error());
+    InstallSystem(path, *image);
+    return {};
+}
+
+std::expected<preview_roms::SystemImage, preview_roms::Error> preview_roms::ReadSystem(const std::filesystem::path& path)
+{
+    SystemImage image{};
     const auto loaded = rom_file::ReadPrefix(path, std::span{image}.first(embedded_rom::Size));
     if (!loaded) return std::unexpected(Convert(loaded.error()));
+    return image;
+}
+
+void preview_roms::Roms::InstallSystem(std::filesystem::path path, const SystemImage& image)
+{
     board_.LoadROM(image);
-    systemPath_ = std::move(savedPath);
+    systemPath_ = std::move(path);
     source_ = SystemSource::file;
-    return {};
 }
 
 void preview_roms::Roms::MarkRestoredFromSnapshot()
@@ -77,12 +88,25 @@ std::expected<void, preview_roms::Error> preview_roms::Roms::Insert(int slot, co
 {
     if (slot < 0 || slot >= 2) return std::unexpected(Error::invalid_slot);
     if (Inserted(slot)) return std::unexpected(Error::occupied);
-    auto savedPath = path;
-    std::array<std::uint8_t, 24 * 1024> image{};
+    auto image = ReadCartridge(path);
+    if (!image) return std::unexpected(image.error());
+    return InstallCartridge(slot, path, *image);
+}
+
+std::expected<preview_roms::CartridgeImage, preview_roms::Error> preview_roms::ReadCartridge(const std::filesystem::path& path)
+{
+    CartridgeImage image{};
     const auto loaded = rom_file::ReadPrefix(path, image);
     if (!loaded) return std::unexpected(Convert(loaded.error()));
+    return image;
+}
+
+std::expected<void, preview_roms::Error> preview_roms::Roms::InstallCartridge(int slot, std::filesystem::path path, const CartridgeImage& image)
+{
+    if (slot < 0 || slot >= 2) return std::unexpected(Error::invalid_slot);
+    if (Inserted(slot)) return std::unexpected(Error::occupied);
     board_.LoadROMCartridge(slot + 1, image);
-    cartridgePaths_[slot] = std::move(savedPath);
+    cartridgePaths_[slot] = std::move(path);
     return {};
 }
 

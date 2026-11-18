@@ -78,6 +78,13 @@ public:
     void Reset();       ///< Reset the device
 };
 
+struct PreparedFloppyImage
+{
+    std::unique_ptr<std::fstream> stream;
+    bool netRt11;
+    bool readOnly;
+};
+
 /// \brief UKNC floppy controller (MZ standard)
 /// \sa CFloppyDrive
 class CFloppyController
@@ -114,6 +121,8 @@ public:
     /// \brief Attach the image to the drive -- insert disk
     bool AttachImage(int drive, const wchar_t* sFileName);
     bool AttachImage(int drive, const std::filesystem::path& path, bool readOnly = false);
+    [[nodiscard]] static std::optional<PreparedFloppyImage> OpenImage(const std::filesystem::path& path, bool readOnly);
+    [[nodiscard]] bool AttachPreparedImage(int drive, PreparedFloppyImage image);
     /// \brief Detach image from the drive -- remove disk
     void DetachImage(int drive);
     [[nodiscard]] bool Flush() { return FlushChanges(); }
@@ -135,6 +144,8 @@ public:
     { m_traceCallback = callback; m_traceContext = callback ? context : nullptr; }
 
 private:
+    [[nodiscard]] bool PrepareAttachment(int drive);
+    void InstallImage(int drive, PreparedFloppyImage image);
     [[nodiscard]] bool Tracing() const { return m_okTrace || m_traceCallback; }
     void Trace(std::wstring text) const;
     void ReportFailure(FloppyError error)

@@ -1,5 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PreviewSnapshot.h"
+#include "AsyncSnapshot.h"
+#include "FrameWorker.h"
 #include "emubase/Emubase.h"
 #include <gtest/gtest.h>
 #include <chrono>
@@ -70,6 +72,162 @@ TEST_F(PreviewSnapshotTest, RestoresBoardAndUptimeAfterStopping)
     EXPECT_EQ(session.Uptime(), 2u);
     session.ResetTracking();
     EXPECT_EQ(session.Uptime(), 0u);
+}
+
+TEST_F(PreviewSnapshotTest, WorkerCanResumeAfterStateLoadBetweenFrames)
+{
+    board->GetCPU()->SetDCLOPin(true);
+    board->GetPPU()->SetDCLOPin(true);
+    board->GetCPU()->SetReg(0, 012345);
+    preview_snapshot::Session session(*board);
+    ASSERT_TRUE(session.Save(path));
+    FrameWorker worker([&] { return board->SystemFrame(); });
+    ASSERT_TRUE(worker.Start());
+    ASSERT_TRUE(worker.Wait());
+    session.FrameCompleted();
+    board->GetCPU()->SetReg(0, 0777);
+    int stops = 0;
+    EXPECT_FALSE(session.Load(invalid, [&] { ++stops; }));
+    EXPECT_EQ(stops, 0);
+    ASSERT_TRUE(session.Load(path, [&] { ++stops; }));
+    EXPECT_EQ(stops, 1);
+    EXPECT_EQ(board->GetCPU()->GetReg(0), 012345);
+    ASSERT_TRUE(worker.Start());
+    ASSERT_TRUE(worker.Wait());
+    session.FrameCompleted();
+    EXPECT_TRUE(session.Save(path));
+}
+
+TEST_F(PreviewSnapshotTest, AsyncSaveOwnsCapturedStateWhileWorkerAdvances)
+{
+    board->GetCPU()->SetDCLOPin(true);
+    board->GetPPU()->SetDCLOPin(true);
+    board->GetCPU()->SetReg(0, 012345);
+    preview_snapshot::Session session(*board);
+    preview_snapshot::AsyncSave save;
+    ASSERT_TRUE(save.Start(path, session.Capture()));
+    EXPECT_TRUE(save.Pending());
+    EXPECT_EQ(save.Path(), path);
+    EXPECT_FALSE(save.Start(path, session.Capture()));
+    board->GetCPU()->SetReg(0, 0777);
+    FrameWorker worker([&] { return board->SystemFrame(); });
+    ASSERT_TRUE(worker.Start());
+    ASSERT_TRUE(worker.Wait());
+    ASSERT_EQ(save.Finish(), std::optional<bool>(true));
+    EXPECT_FALSE(save.Pending());
+    ASSERT_TRUE(session.Load(path, [] {}));
+    EXPECT_EQ(board->GetCPU()->GetReg(0), 012345);
+}
+
+TEST_F(PreviewSnapshotTest, AsyncSaveFailurePreservesExistingStateAndAllowsRetry)
+{
+    preview_snapshot::Session session(*board);
+    board->GetCPU()->SetReg(0, 0111);
+    ASSERT_TRUE(session.Save(path));
+    preview_snapshot::AsyncSave save;
+    ASSERT_TRUE(save.Start(path, {}));
+    ASSERT_EQ(save.Finish(), std::optional<bool>(false));
+    board->GetCPU()->SetReg(0, 0222);
+    ASSERT_TRUE(session.Load(path, [] {}));
+    EXPECT_EQ(board->GetCPU()->GetReg(0), 0111);
+    board->GetCPU()->SetReg(0, 0333);
+    ASSERT_TRUE(save.Start(path, session.Capture()));
+    ASSERT_EQ(save.Finish(), std::optional<bool>(true));
+    ASSERT_TRUE(session.Load(path, [] {}));
+    EXPECT_EQ(board->GetCPU()->GetReg(0), 0333);
+}
+
+TEST_F(PreviewSnapshotTest, AsyncSaveDestructorCompletesOutstandingWrite)
+{
+    preview_snapshot::Session session(*board);
+    board->GetCPU()->SetReg(0, 012345);
+    { preview_snapshot::AsyncSave save; ASSERT_TRUE(save.Start(path, session.Capture())); }
+    board->GetCPU()->SetReg(0, 0);
+    ASSERT_TRUE(session.Load(path, [] {}));
+    EXPECT_EQ(board->GetCPU()->GetReg(0), 012345);
+}
+
+TEST_F(PreviewSnapshotTest, AsyncLoadReadsOwnedImageWhileFrameWorkerRuns)
+{
+    board->GetCPU()->SetDCLOPin(true);
+    board->GetPPU()->SetDCLOPin(true);
+    board->GetCPU()->SetReg(0, 012345);
+    preview_snapshot::Session session(*board);
+    ASSERT_TRUE(session.Save(path));
+    preview_snapshot::AsyncLoad load;
+    ASSERT_TRUE(load.Start(path));
+    EXPECT_TRUE(load.Pending());
+    EXPECT_EQ(load.Path(), path);
+    EXPECT_FALSE(load.Start(path));
+    FrameWorker worker([&] { return board->SystemFrame(); });
+    ASSERT_TRUE(worker.Start());
+    auto loaded = load.Finish();
+    ASSERT_TRUE(worker.Wait());
+    ASSERT_TRUE(loaded);
+    ASSERT_FALSE(loaded->cancelled);
+    ASSERT_TRUE(loaded->image);
+    EXPECT_FALSE(load.Pending());
+    board->GetCPU()->SetReg(0, 0777);
+    ASSERT_TRUE(session.Save(path)); // The collected bytes do not depend on the file anymore.
+    int stops = 0;
+    ASSERT_TRUE(session.Restore(*loaded->image, [&] { ++stops; }));
+    EXPECT_EQ(stops, 1);
+    EXPECT_EQ(board->GetCPU()->GetReg(0), 012345);
+}
+
+TEST_F(PreviewSnapshotTest, AsyncLoadRejectsInvalidImageAndCanRetry)
+{
+    preview_snapshot::Session session(*board);
+    board->GetCPU()->SetReg(0, 0777);
+    { std::ofstream output(invalid, std::ios::binary); output << "bad"; }
+    preview_snapshot::AsyncLoad load;
+    EXPECT_FALSE(load.Start({}));
+    ASSERT_TRUE(load.Start(invalid));
+    auto invalidResult = load.Finish();
+    ASSERT_TRUE(invalidResult);
+    EXPECT_FALSE(invalidResult->cancelled);
+    EXPECT_FALSE(invalidResult->image);
+    EXPECT_EQ(board->GetCPU()->GetReg(0), 0777);
+    ASSERT_TRUE(session.Save(path));
+    ASSERT_TRUE(load.Start(path));
+    auto validResult = load.Finish();
+    ASSERT_TRUE(validResult);
+    ASSERT_FALSE(validResult->cancelled);
+    ASSERT_TRUE(validResult->image);
+    int stops = 0;
+    ASSERT_TRUE(session.Restore(*validResult->image, [&] { ++stops; }));
+    EXPECT_EQ(stops, 1);
+}
+
+TEST_F(PreviewSnapshotTest, CancelledAsyncLoadDiscardsResultAndRetainsReservationUntilCollected)
+{
+    preview_snapshot::Session session(*board);
+    board->GetCPU()->SetReg(0, 012345);
+    ASSERT_TRUE(session.Save(path));
+    preview_snapshot::AsyncLoad load;
+    load.Cancel();
+    EXPECT_FALSE(load.Cancelled());
+    ASSERT_TRUE(load.Start(path));
+    load.Cancel();
+    EXPECT_TRUE(load.Pending());
+    EXPECT_TRUE(load.Cancelled());
+    EXPECT_EQ(load.Path(), path);
+    EXPECT_FALSE(load.Start(path));
+    const auto cancelled = load.Finish();
+    ASSERT_TRUE(cancelled);
+    EXPECT_TRUE(cancelled->cancelled);
+    EXPECT_FALSE(cancelled->image);
+    EXPECT_FALSE(load.Pending());
+    EXPECT_FALSE(load.Cancelled());
+    EXPECT_TRUE(load.Path().empty());
+    ASSERT_TRUE(load.Start(path));
+    const auto retry = load.Finish();
+    ASSERT_TRUE(retry);
+    EXPECT_FALSE(retry->cancelled);
+    ASSERT_TRUE(retry->image);
+    board->GetCPU()->SetReg(0, 0777);
+    ASSERT_TRUE(session.Restore(*retry->image, [] {}));
+    EXPECT_EQ(board->GetCPU()->GetReg(0), 012345);
 }
 
 TEST_F(PreviewSnapshotTest, InvalidLoadDoesNotStopOrChangeMachine)

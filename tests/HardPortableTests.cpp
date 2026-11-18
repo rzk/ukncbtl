@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "emubase/Emubase.h"
+#include "FrameWorker.h"
 #include <gtest/gtest.h>
 #include <array>
 #include <chrono>
@@ -121,6 +122,44 @@ TEST(HardPortable, ReportsHostFailuresOnceAndKeepsThemAcrossDetach)
             for (int i = 0; i < 768; ++i) disk.Periodic();
             EXPECT_NE(disk.ReadPort(0x1f7) & 0x01, 0);
             if (slot == 1) board.DetachHardImage(slot + 1);
+            const auto failure = board.TakeHardDiskFailure();
+            ASSERT_TRUE(failure);
+            EXPECT_EQ(failure->slot, slot);
+            EXPECT_EQ(failure->error, writing ? HardDiskError::writeFailed : HardDiskError::readFailed);
+            EXPECT_FALSE(board.TakeHardDiskFailure());
+        }
+}
+
+TEST(HardPortable, WorkerFramesPublishHostReadAndWriteFailuresOnce)
+{
+    const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto path = std::filesystem::temp_directory_path() / ("ukncbtl-worker-hard-error-" + suffix + ".img");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code error; std::filesystem::remove(path, error); } } cleanup{path};
+    std::vector<uint8_t> image(64 * 512, 0);
+    image[0] = 8; image[1] = 2;
+    { std::ofstream output(path, std::ios::binary); ASSERT_TRUE(output.write(reinterpret_cast<const char*>(image.data()), image.size())); }
+    CProcessor::Init();
+    struct ProcessorCleanup { ~ProcessorCleanup() { CProcessor::Done(); } } processorCleanup;
+    for (int slot = 0; slot < 2; ++slot)
+        for (const bool writing : {false, true})
+        {
+            TestBoard board;
+            board.Reset();
+            board.GetCPU()->SetDCLOPin(true);
+            board.GetPPU()->SetDCLOPin(true);
+            auto& disk = board.InstallDrive(slot);
+            ASSERT_TRUE(disk.AttachImage(path));
+            disk.Reset();
+            FrameWorker worker([&] { return board.SystemFrame(); });
+            ASSERT_TRUE(worker.Start());
+            ASSERT_TRUE(worker.Wait());
+            disk.WritePort(0x1f4, 0); disk.WritePort(0x1f5, 0);
+            disk.WritePort(0x1f6, 0); disk.WritePort(0x1f3, 2); disk.WritePort(0x1f2, 1);
+            disk.WritePort(0x1f7, writing ? 0x30 : 0x20);
+            if (writing) for (int i = 0; i < 256; ++i) disk.WritePort(0x1f0, 0x1234);
+            disk.CloseHostStream();
+            ASSERT_TRUE(worker.Start());
+            ASSERT_TRUE(worker.Wait());
             const auto failure = board.TakeHardDiskFailure();
             ASSERT_TRUE(failure);
             EXPECT_EQ(failure->slot, slot);

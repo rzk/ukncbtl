@@ -13,6 +13,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include "stdafx.h"
 #include "util/Profiler.h"
 #include "FramePacing.h"
+#include "FrameWorker.h"
 #include <chrono>
 #include <crtdbg.h>
 #include <CommCtrl.h>
@@ -101,6 +102,9 @@ int APIENTRY _tWinMain(
 
     // Main message loop
     MSG msg;
+    {
+    // Join before DoneInstance tears down the board and callback dependencies.
+    FrameWorker frameWorker(Emulator_ExecuteFrame);
     for (;;)
     {
         UKNC_PROFILE_FRAME();
@@ -110,7 +114,12 @@ int APIENTRY _tWinMain(
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         else
         {
-            if (!Emulator_SystemFrame())  // Breakpoint hit
+            Emulator_PrepareFrame();
+            ScreenView_PrepareScreen();
+            if (!frameWorker.Start()) std::terminate();
+            ScreenView_DrawPreparedScreen();
+            const bool frameCompleted = frameWorker.Wait();
+            if (!Emulator_CompleteFrame(frameCompleted))  // Breakpoint hit
             {
                 Emulator_Stop();
                 // Turn on debugger if not yet
@@ -119,8 +128,6 @@ int APIENTRY _tWinMain(
                 else
                     ::FlashWindow(g_hwnd, TRUE);
             }
-
-            ScreenView_RedrawScreen();
         }
 
         // Process all queue
@@ -156,6 +163,8 @@ int APIENTRY _tWinMain(
 #endif
     }
 endprog:
+    ;
+    }
 
     ::timeEndPeriod(caps.wPeriodMin);
     DoneInstance();

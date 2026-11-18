@@ -1,10 +1,17 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "MediaSlots.h"
+#include "AsyncDiskMount.h"
+#include "AsyncSettingsImport.h"
 #include "AutoBoot.h"
 #include "DiskImageFile.h"
+#include "AsyncDiskImage.h"
+#include "AsyncDebuggerExport.h"
+#include "AsyncSubtitles.h"
+#include "AsyncRoms.h"
 #include "DisplayListDump.h"
 #include "MouseInput.h"
 #include "FramePacing.h"
+#include "FrameWorker.h"
 #include "PreviewRoms.h"
 #include "PreviewPrinter.h"
 #include "PreviewOptions.h"
@@ -13,11 +20,19 @@
 #include "PreviewSettings.h"
 #include "PreviewMediaRestore.h"
 #include "PreviewSnapshot.h"
+#include "AsyncSnapshot.h"
 #include "PreviewSprite.h"
 #include "PreviewTape.h"
 #include "ScreenshotImage.h"
-#include "ScreenshotClipboard.h"
+#include "AsyncClipboard.h"
 #include "ScreenshotFile.h"
+#include "AsyncScreenshot.h"
+#ifdef UKNCBTL_TEST_HOOKS
+#include "TraceTestHooks.h"
+#include "PrinterTestHooks.h"
+#include "ClipboardTestHooks.h"
+#include "emubase/Memory.h"
+#endif
 #include "ScreenTextCapture.h"
 #include "SdlAudio.h"
 #include "SdlDisplay.h"
@@ -43,6 +58,7 @@
 #include <imgui_impl_sdlrenderer3.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cwchar>
@@ -52,6 +68,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -79,6 +96,28 @@ struct ImGuiRuntime
     }
 };
 
+struct ImGuiClipboard
+{
+    ImGuiPlatformIO& io = ImGui::GetPlatformIO();
+    decltype(io.Platform_SetClipboardTextFn) previousSetter = io.Platform_SetClipboardTextFn;
+    void* previousUserData = io.Platform_ClipboardUserData;
+
+    explicit ImGuiClipboard(screenshot_clipboard::AsyncCopy& clipboard)
+    {
+        io.Platform_ClipboardUserData = &clipboard;
+        io.Platform_SetClipboardTextFn = [](ImGuiContext*, const char* text) {
+            auto& copy = *static_cast<screenshot_clipboard::AsyncCopy*>(ImGui::GetPlatformIO().Platform_ClipboardUserData);
+            (void)copy.SetText(text);
+        };
+    }
+
+    ~ImGuiClipboard()
+    {
+        io.Platform_SetClipboardTextFn = previousSetter;
+        io.Platform_ClipboardUserData = previousUserData;
+    }
+};
+
 int ConsoleHistoryCallback(ImGuiInputTextCallbackData* data)
 {
     auto& console = *static_cast<preview_console::Console*>(data->UserData);
@@ -91,6 +130,12 @@ int ConsoleHistoryCallback(ImGuiInputTextCallbackData* data)
 int Run(const preview_options::Options& options)
 {
     const bool smokeTest = options.smokeTest;
+#ifdef UKNCBTL_TEST_HOOKS
+    const bool testFrameAndPrinterFailure = smokeTest && SDL_getenv("UKNCBTL_TEST_FRAME_AND_PRINTER_FAILURE") != nullptr;
+    const char* testSettingsImportPath = smokeTest ? SDL_getenv("UKNCBTL_TEST_SETTINGS_IMPORT_PATH") : nullptr;
+    const bool testSettingsImportExit = testSettingsImportPath && SDL_getenv("UKNCBTL_TEST_SETTINGS_IMPORT_EXIT") != nullptr;
+    const bool testSettingsImportFailure = testSettingsImportPath && SDL_getenv("UKNCBTL_TEST_SETTINGS_IMPORT_FAILURE") != nullptr;
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO)) { SDL_Log("SDL initialization failed: %s", SDL_GetError()); return 1; }
     SdlRuntime sdl;
     preview_settings::Settings settings;
@@ -121,6 +166,16 @@ int Run(const preview_options::Options& options)
         else startupError = "Could not locate preview settings. Changes will not be saved.";
     }
     else { settings.keyboard = true; settings.spriteViewer = true; settings.tapeVisible = true; settings.mediaVisible = true; } // Exercise preview windows in the smoke test.
+#ifdef UKNCBTL_TEST_HOOKS
+    if (testSettingsImportPath)
+    {
+        if (!options.settingsFile) return 1;
+        settingsPath = protectedSettingsPath = *options.settingsFile;
+        auto loaded = preview_settings::Load(*settingsPath);
+        if (!loaded) return 1;
+        settings = std::move(*loaded);
+    }
+#endif
     const std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)> window(
         SDL_CreateWindow("UKNCBTL - SDL preview", settings.windowWidth, settings.windowHeight,
             SDL_WINDOW_RESIZABLE | (smokeTest ? SDL_WINDOW_HIDDEN : 0)), SDL_DestroyWindow);
@@ -213,6 +268,12 @@ int Run(const preview_options::Options& options)
     const auto fileDialog = std::make_shared<sdl_file_dialog::State>();
     std::string actionError = startupError;
     bool showActionError = !startupError.empty();
+    const auto reportActionError = [&](std::string_view message) {
+        if (showActionError && !actionError.empty()) actionError += "\n";
+        else actionError.clear();
+        actionError += message;
+        showActionError = true;
+    };
     const auto closeTape = [&] {
         const bool closed = tape.Close();
         commandTape = false;
@@ -237,6 +298,7 @@ int Run(const preview_options::Options& options)
     if (smokeTest && !audio.IsOpen()) return 1;
     bool soundEnabled = initialSound;
     std::vector<std::uint32_t> pixels(video::Width * video::Height);
+    video::MemorySnapshot videoMemory;
     sdl_screen::Renderer screen(*renderer);
     sdl_sprite::Texture spriteTexture(*renderer);
     sdl_keyboard::Keyboard keyboard;
@@ -267,9 +329,14 @@ int Run(const preview_options::Options& options)
         keyMerge.Reset();
         for (const auto event : keyDelivery.Reset()) board.KeyboardEvent(event.scan, event.pressed);
     };
+    preview_snapshot::AsyncLoad snapshotLoad;
+    preview_roms::AsyncLoad romLoad;
+    FrameFailureLatch frameFailure;
     const auto resetMachine = [&] {
         if (!media.FlushFloppy())
         { actionError = "Could not flush floppy changes; reset was canceled."; showActionError = true; return false; }
+        snapshotLoad.Cancel();
+        if (romLoad.Pending() && romLoad.Slot() == -1) romLoad.Cancel();
         releaseKeys();
         releaseMouse();
         debugger.Stop();
@@ -278,6 +345,7 @@ int Run(const preview_options::Options& options)
         board.SetMouse(settings.mouse);
         printer.Synchronize();
         snapshots.ResetTracking();
+        frameFailure.Recovered();
         if (audio.IsOpen() && !audio.Reset())
         {
             SDL_Log("Audio reset failed: %s", SDL_GetError());
@@ -285,8 +353,44 @@ int Run(const preview_options::Options& options)
         }
         return true;
     };
+    screenshot_file::AsyncSave screenshotSave;
+    screenshot_clipboard::AsyncCopy clipboardCopy;
+    ImGuiClipboard imguiClipboard(clipboardCopy);
+    preview_snapshot::AsyncSave snapshotSave;
+    disk_image::AsyncCreate diskCreate;
+    debugger_export::AsyncSave debuggerExport;
+    subtitles::AsyncLoad subtitleLoad;
+    preview_tape::AsyncPrepare tapePrepare;
+    media_slots::AsyncDiskMount diskMount;
+    preview_settings::AsyncImport settingsImport;
+    bool screenshotErrorUnacknowledged = false;
+    bool snapshotErrorUnacknowledged = false;
+    bool traceErrorUnacknowledged = false;
+    bool diskErrorUnacknowledged = false;
+    bool exportErrorUnacknowledged = false;
+    bool printerErrorUnacknowledged = false;
+    bool tapeCreateErrorUnacknowledged = false;
+    bool settingsImportErrorUnacknowledged = false;
+    constexpr std::string_view settingsImportError = "Could not import settings. Check the source, encoding and settings file.";
+    const auto reportSettingsImportError = [&] {
+        settingsImportErrorUnacknowledged = true;
+        reportActionError(settingsImportError);
+    };
+    constexpr std::string_view tapeCreateError = "Could not create the WAV file.";
+    constexpr std::string_view printerError = "Printer output failed and was stopped.";
+    const auto reportPrinterError = [&] {
+        printerErrorUnacknowledged = true;
+        reportActionError(printerError);
+    };
+    const auto conflictsWithOutputOrPendingFile = [&](const std::filesystem::path& path) {
+        const auto reserved = [&](const auto&... operations) {
+            return ((operations.Pending() && preview_settings::SameFile(path, operations.Path())) || ...);
+        };
+        return reserved(screenshotSave, snapshotSave, snapshotLoad, diskCreate, debuggerExport, subtitleLoad, romLoad, tapePrepare, diskMount, settingsImport) ||
+            isSettingsFile(path) || printer.Conflicts(path) || tape.Conflicts(path) || debugger.TraceConflicts(path);
+    };
     const auto conflicts = [&](const std::filesystem::path& path) {
-        return isSettingsFile(path) || media.Conflicts(path) || roms.Conflicts(path) || printer.Conflicts(path) || tape.Conflicts(path) || debugger.TraceConflicts(path);
+        return conflictsWithOutputOrPendingFile(path) || media.Conflicts(path) || roms.Conflicts(path);
     };
     if (options.state)
     {
@@ -302,9 +406,20 @@ int Run(const preview_options::Options& options)
     const auto pauseMachine = [&] {
         running = false;
         releaseKeys(); releaseMouse(); debugger.Stop();
-        if (!printer.Flush()) { actionError = "Printer output failed and was stopped."; showActionError = true; }
+        bool printerOk = printer.Flush();
+#ifdef UKNCBTL_TEST_HOOKS
+        if (testFrameAndPrinterFailure) printerOk = false;
+#endif
+        if (!printerOk) reportPrinterError();
     };
     const auto startMachine = [&](frame_pacing::Clock::time_point now) {
+        if (frameFailure.Failed())
+        {
+            debugger.Stop();
+            actionError = "Emulation stopped after a frame error. Reset the machine before running again.";
+            showActionError = true;
+            return;
+        }
         debugger.PrepareRun(); running = true; scheduler.Restart(now);
     };
     bool done = false;
@@ -341,9 +456,236 @@ int Run(const preview_options::Options& options)
     std::optional<std::string> droppedFile;
     bool showDropChooser = false, dropReadOnly = false;
     if (smokeTest) { droppedFile = "smoke-test.dsk"; showDropChooser = true; }
+    // Declared after all frame dependencies so an early return joins the worker first.
+#ifdef UKNCBTL_TEST_HOOKS
+    const bool testFrameFailure = (smokeTest && SDL_getenv("UKNCBTL_TEST_FRAME_FAILURE") != nullptr) || testFrameAndPrinterFailure;
+    const bool testScreenshotFailureExit = smokeTest && SDL_getenv("UKNCBTL_TEST_SCREENSHOT_FAILURE_EXIT") != nullptr;
+    const bool testScreenshotErrorMerge = smokeTest && SDL_getenv("UKNCBTL_TEST_SCREENSHOT_ERROR_MERGE") != nullptr;
+    const bool testSnapshotFailureExit = smokeTest && SDL_getenv("UKNCBTL_TEST_SNAPSHOT_FAILURE_EXIT") != nullptr;
+    const bool testDiskFailureExit = smokeTest && SDL_getenv("UKNCBTL_TEST_DISK_FAILURE_EXIT") != nullptr;
+    const bool testSnapshotLoadCancel = smokeTest && SDL_getenv("UKNCBTL_TEST_SNAPSHOT_LOAD_CANCEL") != nullptr;
+    const bool testExportFailureExit = smokeTest && SDL_getenv("UKNCBTL_TEST_EXPORT_FAILURE_EXIT") != nullptr;
+    const bool testSubtitleCancel = smokeTest && SDL_getenv("UKNCBTL_TEST_SUBTITLE_CANCEL") != nullptr;
+    const bool testSubtitleFailure = smokeTest && SDL_getenv("UKNCBTL_TEST_SUBTITLE_FAILURE") != nullptr;
+    const bool testRomCancel = smokeTest && SDL_getenv("UKNCBTL_TEST_ROM_CANCEL") != nullptr;
+    const bool testRomFailure = smokeTest && SDL_getenv("UKNCBTL_TEST_ROM_FAILURE") != nullptr;
+    const bool testSlowFrame = smokeTest && SDL_getenv("UKNCBTL_TEST_SLOW_FRAME") != nullptr;
+    const bool testEarlyFrameExit = smokeTest && SDL_getenv("UKNCBTL_TEST_EARLY_FRAME_EXIT") != nullptr;
+    const bool testScreenshotConflict = smokeTest && SDL_getenv("UKNCBTL_TEST_SCREENSHOT_CONFLICT") != nullptr;
+    const bool testCopyScreenshot = smokeTest && SDL_getenv("UKNCBTL_TEST_COPY_SCREENSHOT") != nullptr;
+    const bool testClipboardSupersede = testCopyScreenshot && SDL_getenv("UKNCBTL_TEST_CLIPBOARD_SUPERSEDE") != nullptr;
+    const bool testImGuiClipboard = testClipboardSupersede && SDL_getenv("UKNCBTL_TEST_IMGUI_CLIPBOARD") != nullptr;
+    const bool testClipboardExit = testCopyScreenshot && SDL_getenv("UKNCBTL_TEST_CLIPBOARD_EXIT") != nullptr;
+    constexpr auto clipboardTestText = "Newer screen text";
+    const bool testTraceFailure = smokeTest && SDL_getenv("UKNCBTL_TEST_TRACE_FAILURE") != nullptr;
+    const bool testTraceFailureExit = smokeTest && SDL_getenv("UKNCBTL_TEST_TRACE_FAILURE_EXIT") != nullptr;
+    const bool testTraceRecordFailure = smokeTest && SDL_getenv("UKNCBTL_TEST_TRACE_RECORD_FAILURE") != nullptr;
+    const char* testPrinterPath = smokeTest ? SDL_getenv("UKNCBTL_TEST_PRINTER_PATH") : nullptr;
+    const bool testPrinterFailureExit = smokeTest && SDL_getenv("UKNCBTL_TEST_PRINTER_FAILURE_EXIT") != nullptr;
+    unsigned printerTestFrames = 0;
+    const char* testScreenshotPath = smokeTest ? SDL_getenv("UKNCBTL_TEST_SCREENSHOT_PATH") : nullptr;
+    const char* testSnapshotPath = smokeTest ? SDL_getenv("UKNCBTL_TEST_SNAPSHOT_PATH") : nullptr;
+    const char* testSnapshotLoadPath = smokeTest ? SDL_getenv("UKNCBTL_TEST_SNAPSHOT_LOAD_PATH") : nullptr;
+    const char* testDiskPath = smokeTest ? SDL_getenv("UKNCBTL_TEST_DISK_PATH") : nullptr;
+    const char* testExportPath = smokeTest ? SDL_getenv("UKNCBTL_TEST_EXPORT_PATH") : nullptr;
+    const char* testExportKind = smokeTest ? SDL_getenv("UKNCBTL_TEST_EXPORT_KIND") : nullptr;
+    const char* testSubtitlePath = smokeTest ? SDL_getenv("UKNCBTL_TEST_SUBTITLE_PATH") : nullptr;
+    const char* testRomPath = smokeTest ? SDL_getenv("UKNCBTL_TEST_ROM_PATH") : nullptr;
+    const char* testTapePath = smokeTest ? SDL_getenv("UKNCBTL_TEST_TAPE_PATH") : nullptr;
+    const bool testTapeOpenFailure = smokeTest && SDL_getenv("UKNCBTL_TEST_TAPE_OPEN_FAILURE") != nullptr;
+    const bool testTapeCreate = smokeTest && SDL_getenv("UKNCBTL_TEST_TAPE_CREATE") != nullptr;
+    const bool testTapeCreateExit = testTapeCreate && SDL_getenv("UKNCBTL_TEST_TAPE_CREATE_EXIT") != nullptr;
+    const char* testHardMountPath = smokeTest ? SDL_getenv("UKNCBTL_TEST_HARD_MOUNT_PATH") : nullptr;
+    const char* testFloppyMountPath = smokeTest ? SDL_getenv("UKNCBTL_TEST_FLOPPY_MOUNT_PATH") : nullptr;
+    const char* testDiskMountPath = testFloppyMountPath ? testFloppyMountPath : testHardMountPath;
+    const bool testHardMountFailure = smokeTest && SDL_getenv("UKNCBTL_TEST_HARD_MOUNT_FAILURE") != nullptr;
+    const bool testRomCartridge = smokeTest && SDL_getenv("UKNCBTL_TEST_ROM_CARTRIDGE") != nullptr;
+    const char* testTracePath = smokeTest ? SDL_getenv("UKNCBTL_TEST_TRACE_PATH") : nullptr;
+    bool injectedFrameFailure = false, verifiedFrameRecovery = false;
+    bool requestedTestScreenshot = false, verifiedScreenshotReservation = false;
+    bool requestedTestClipboard = false, verifiedTestClipboard = false;
+    bool appliedTestClipboardText = false;
+    bool verifiedScreenshotConflict = false;
+    bool verifiedScreenshotErrorMerge = false;
+    bool verifiedSnapshotReservation = false;
+    bool verifiedSnapshotLoad = false;
+    bool verifiedDiskReservation = false;
+    bool verifiedExportReservation = false;
+    bool verifiedSubtitleLoad = false;
+    bool verifiedRomLoad = false;
+    bool verifiedTapeOpen = false;
+    bool verifiedDiskMount = false;
+    bool verifiedSettingsImport = false;
+    bool verifiedTraceRecovery = false;
+    unsigned framesAfterTraceRecovery = 0;
+    bool injectedSlowFrame = false, pumpedDuringSlowFrame = false, receivedSlowEvent = false;
+    std::atomic<bool> releaseSlowFrame{false};
+    const Uint32 testSlowEventType = testSlowFrame ? SDL_RegisterEvents(1) : 0;
+    if (testSlowFrame && !testSlowEventType) return 1;
+    if (testScreenshotConflict && !testScreenshotPath) return 1;
+    if ((testTraceFailure || testTraceFailureExit || testTraceRecordFailure) && !testTracePath) return 1;
+    if (testPrinterFailureExit && !testPrinterPath) return 1;
+    if (testSnapshotLoadCancel && !testSnapshotLoadPath) return 1;
+    if ((testExportPath == nullptr) != (testExportKind == nullptr)) return 1;
+    if ((testSubtitleCancel || testSubtitleFailure) && !testSubtitlePath) return 1;
+    if ((testRomCancel || testRomFailure || testRomCartridge) && !testRomPath) return 1;
+    if ((testScreenshotFailureExit || testScreenshotErrorMerge) &&
+        !screenshotSave.Start({}, screenshot_image::Image{0, 0, {}})) return 1;
+    if (testSnapshotFailureExit && !testSnapshotPath && !snapshotSave.Start({}, {})) return 1;
+    if (testSnapshotPath)
+    {
+        if (!fileDialog->Begin()) return 1;
+        fileDialog->Complete({media_slots::Kind::floppy, -1, sdl_file_dialog::Status::selected,
+            testSnapshotPath, sdl_file_dialog::Purpose::snapshotSave});
+    }
+    if (testSnapshotLoadPath)
+    {
+        if (!fileDialog->Begin()) return 1;
+        fileDialog->Complete({media_slots::Kind::floppy, -1, sdl_file_dialog::Status::selected,
+            testSnapshotLoadPath, sdl_file_dialog::Purpose::snapshotLoad});
+    }
+    if (testDiskPath)
+    {
+        if (!fileDialog->Begin()) return 1;
+        fileDialog->Complete({media_slots::Kind::floppy, 80, sdl_file_dialog::Status::selected,
+            testDiskPath, sdl_file_dialog::Purpose::createDisk});
+    }
+    if (testExportPath)
+    {
+        const std::string_view kind(testExportKind);
+        if (kind != "memory" && kind != "display" && kind != "console") return 1;
+        const auto purpose = kind == "memory" ? sdl_file_dialog::Purpose::memoryDump :
+            kind == "display" ? sdl_file_dialog::Purpose::displayListDump : sdl_file_dialog::Purpose::consoleLog;
+        if (!fileDialog->Begin()) return 1;
+        fileDialog->Complete({media_slots::Kind::floppy, 0, sdl_file_dialog::Status::selected,
+            testExportPath, purpose, -1, 0, 0100});
+    }
+    if (testSubtitlePath)
+    {
+        if (!fileDialog->Begin()) return 1;
+        fileDialog->Complete({media_slots::Kind::floppy, -1, sdl_file_dialog::Status::selected,
+            testSubtitlePath, sdl_file_dialog::Purpose::subtitles});
+    }
+    if (testRomPath)
+    {
+        if (!fileDialog->Begin()) return 1;
+        fileDialog->Complete({media_slots::Kind::floppy, testRomCartridge ? 0 : -1, sdl_file_dialog::Status::selected,
+            testRomPath, testRomCartridge ? sdl_file_dialog::Purpose::cartridge : sdl_file_dialog::Purpose::systemRom});
+    }
+    if (testTapePath)
+    {
+        if (!fileDialog->Begin()) return 1;
+        fileDialog->Complete({media_slots::Kind::floppy, -1, sdl_file_dialog::Status::selected,
+            testTapePath, testTapeCreate ? sdl_file_dialog::Purpose::tapeCreate : sdl_file_dialog::Purpose::tapeOpen});
+    }
+    if (testDiskMountPath)
+    {
+        if (!fileDialog->Begin()) return 1;
+        const auto kind = testFloppyMountPath ? media_slots::Kind::floppy : media_slots::Kind::hardDisk;
+        fileDialog->Complete({kind, 0, sdl_file_dialog::Status::selected,
+            testDiskMountPath, sdl_file_dialog::Purpose::disk, -1, 0, 0, true});
+    }
+    if (testSettingsImportPath)
+    {
+        if (!fileDialog->Begin()) return 1;
+        fileDialog->Complete({media_slots::Kind::floppy, 0, sdl_file_dialog::Status::selected,
+            testSettingsImportPath, sdl_file_dialog::Purpose::legacySettings});
+    }
+    if (testTracePath)
+    {
+        const std::u8string path(reinterpret_cast<const char8_t*>(testTracePath));
+        if (!debugger.StartTrace(std::filesystem::path(path),
+            preview_debugger::TraceInstructionsCpu | preview_debugger::TraceInstructionsPpu)) return 1;
+        if (testTraceFailure || testTraceFailureExit) preview_debugger::testing::FailWorkerTraceWrites(true);
+        if (testTraceRecordFailure) preview_debugger::testing::ThrowOnTraceRecord(2);
+    }
+    if (testPrinterPath)
+    {
+        const std::u8string path(reinterpret_cast<const char8_t*>(testPrinterPath));
+        if (!printer.Start(std::filesystem::path(path))) return 1;
+        board.GetCPU()->SetDCLOPin(true);
+        board.GetPPU()->SetDCLOPin(true);
+        preview_printer::testing::FailWorkerWrites(testPrinterFailureExit);
+    }
+#endif
+    FrameWorker frameWorker([&] {
+        UKNC_PROFILE_SCOPE("Emulator frame");
+#ifdef UKNCBTL_TEST_HOOKS
+        if (testFrameFailure && !injectedFrameFailure)
+        { injectedFrameFailure = true; throw std::runtime_error("Injected frame failure"); }
+        if (testPrinterPath && printerTestFrames < 2)
+        {
+            auto* ports = board.GetPPUMemoryController();
+            if (printerTestFrames++ == 0) ports->SetWord(0177102, false, 0x80);
+            else
+            {
+                ports->SetWord(0177100, false, 0x42);
+                ports->SetWord(0177102, false, 0);
+            }
+        }
+        if (testSlowFrame && !injectedSlowFrame)
+        {
+            injectedSlowFrame = true;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (!releaseSlowFrame.load() && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+#endif
+        return debugger.RunFrame();
+    });
     unsigned frames = 0;
+    constexpr std::string_view clipboardError = "Could not copy the screenshot to the clipboard.";
+#ifdef UKNCBTL_TEST_HOOKS
+    const auto imageOnClipboard = [] {
+        return SDL_HasClipboardData("image/bmp") && SDL_HasClipboardData("image/png");
+    };
+#endif
+    const auto reportMountError = [&](media_slots::Error error) {
+        if (error == media_slots::Error::already_mounted)
+            reportActionError("The image is already mounted; shared mounts must all be read-only.");
+        else if (error == media_slots::Error::missing_cartridge)
+            reportActionError("Insert the matching hard-disk ROM cartridge first.");
+        else
+            reportActionError("Could not attach the disk image. Check the file and the selected drive.");
+    };
     while (true)
     {
+        if (const auto saved = screenshotSave.Poll(); saved && !*saved)
+        {
+            if (showActionError && !actionError.empty()) actionError += "\n";
+            else actionError.clear();
+            actionError += "Could not save the screenshot image.";
+            showActionError = true;
+            screenshotErrorUnacknowledged = true;
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testScreenshotFailureExit) done = true;
+            if (testScreenshotErrorMerge) { actionError = "Another operation failed."; showActionError = true; }
+#endif
+        }
+        if (const auto saved = snapshotSave.Poll(); saved && !*saved)
+        {
+            reportActionError("Could not save the state image.");
+            snapshotErrorUnacknowledged = true;
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testSnapshotFailureExit) done = true;
+#endif
+        }
+        if (const auto created = diskCreate.Poll(); created && !*created)
+        {
+            reportActionError("Could not create the disk image.");
+            diskErrorUnacknowledged = true;
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testDiskFailureExit) done = true;
+#endif
+        }
+        if (const auto saved = debuggerExport.Poll(); saved && !*saved)
+        {
+            reportActionError("Could not save the debugger export. The file may be incomplete.");
+            exportErrorUnacknowledged = true;
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testExportFailureExit) done = true;
+#endif
+        }
         if (done)
         {
             if (forceQuit || media.FlushFloppy()) break;
@@ -352,13 +694,219 @@ int Run(const preview_options::Options& options)
             pauseMachine();
             showFloppyQuit = true;
         }
+        if (const auto copied = clipboardCopy.Poll())
+        {
+            if (*copied == screenshot_clipboard::AsyncCopy::Outcome::failed) reportActionError(clipboardError);
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testCopyScreenshot)
+            {
+                if (frames < 3) return 1; // Encoding is held until the UI advances through three frames.
+                if (testClipboardSupersede)
+                {
+                    const std::unique_ptr<char, decltype(&SDL_free)> text(SDL_GetClipboardText(), SDL_free);
+                    verifiedTestClipboard = *copied == screenshot_clipboard::AsyncCopy::Outcome::superseded &&
+                        text && std::string_view(text.get()) == clipboardTestText && !imageOnClipboard();
+                }
+                else verifiedTestClipboard = *copied == screenshot_clipboard::AsyncCopy::Outcome::copied && imageOnClipboard();
+                if (!verifiedTestClipboard) return 1;
+            }
+#endif
+        }
+        if (auto imported = settingsImport.Poll())
+        {
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testSettingsImportPath)
+            {
+                if (imported->has_value() == testSettingsImportFailure) return 1;
+                verifiedSettingsImport = true;
+            }
+#endif
+            if (!*imported) reportSettingsImportError();
+            else
+            {
+                importedSettings = true;
+#ifdef UKNCBTL_TEST_HOOKS
+                if (!testSettingsImportPath)
+#endif
+                    (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Settings imported",
+                        "Settings were imported. The emulator will close; start it again to apply them.", window.get());
+                done = true;
+                continue;
+            }
+        }
+        const int diskSlot = diskMount.Slot();
+        const auto diskKind = diskMount.DiskKind();
+        if (auto mounted = diskMount.Poll(media))
+        {
+            if (!*mounted) reportMountError(mounted->error());
+            else
+            {
+                const bool floppy = diskKind == media_slots::Kind::floppy;
+                (floppy ? commandFloppies[diskSlot] : commandHardDisks[diskSlot]) = false;
+                if (settings.restoreMedia)
+                {
+                    (floppy ? settings.floppies[diskSlot] : settings.hardDisks[diskSlot]) = *media.Path(diskKind, diskSlot);
+                    (floppy ? settings.floppyReadOnly[diskSlot] : settings.hardDiskReadOnly[diskSlot]) =
+                        media.RequestedReadOnly(diskKind, diskSlot);
+                    settingsDirty = true;
+                }
+            }
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testDiskMountPath)
+            {
+                if (mounted->has_value() == testHardMountFailure ||
+                    media.Attached(diskKind, diskSlot) != mounted->has_value() ||
+                    (*mounted && !media.ReadOnly(diskKind, diskSlot))) return 1;
+                verifiedDiskMount = true;
+            }
+#endif
+        }
+        if (auto prepared = tapePrepare.Poll())
+        {
+            const bool creatingTape = prepared->Mode() == preview_tape::FileMode::recording;
+            const bool inserted = std::move(*prepared).InsertInto(tape);
+            if (!inserted)
+            {
+                if (creatingTape) tapeCreateErrorUnacknowledged = true;
+                reportActionError(creatingTape ? tapeCreateError : "Could not open the WAV file or its format is unsupported.");
+            }
+            else
+            {
+                commandTape = false;
+                if (settings.restoreMedia)
+                {
+                    settings.tapePath = creatingTape ? std::filesystem::path{} : tape.Path();
+                    settingsDirty = true;
+                }
+            }
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testTapePath)
+            {
+                if (inserted == testTapeOpenFailure || tape.Inserted() != inserted ||
+                    (inserted && (tape.Recording() != testTapeCreate || tape.Length() != (testTapeCreate ? 0u : 2u) ||
+                        tape.Frequency() != 44100))) return 1;
+                verifiedTapeOpen = true;
+            }
+#endif
+        }
+        if (auto loaded = subtitleLoad.Poll())
+        {
+            if (!loaded->cancelled && !loaded->items)
+                reportActionError("Could not load the UTF-16LE disassembly listing.");
+            else if (!loaded->cancelled)
+                debugger.SetSubtitles(std::move(loaded->path), std::move(*loaded->items));
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testSubtitlePath)
+            {
+                if (loaded->cancelled != testSubtitleCancel ||
+                    (!loaded->cancelled && loaded->items.has_value() == testSubtitleFailure) ||
+                    (debugger.SubtitlePath() != nullptr) != (!testSubtitleCancel && !testSubtitleFailure)) return 1;
+                verifiedSubtitleLoad = true;
+            }
+#endif
+        }
+        if (auto loaded = romLoad.Poll())
+        {
+            if (!loaded->cancelled && !loaded->image)
+                reportActionError(loaded->slot == -1 ? "Could not load the system ROM image." : "Could not load the ROM cartridge image.");
+            else if (!loaded->cancelled && loaded->slot == -1)
+            {
+                if (!media.FlushFloppy()) reportActionError("Could not flush floppy changes; ROM change was canceled.");
+                else
+                {
+                    roms.InstallSystem(loaded->path, std::get<preview_roms::SystemImage>(*loaded->image));
+                    commandSystem = false;
+                    if (settings.restoreMedia) { settings.systemRom = loaded->path; settingsDirty = true; }
+                    if (resetMachine()) scheduler.Restart(frame_pacing::Clock::now());
+                }
+            }
+            else if (!loaded->cancelled)
+            {
+                if (!roms.InstallCartridge(loaded->slot, loaded->path, std::get<preview_roms::CartridgeImage>(*loaded->image)))
+                    reportActionError("Could not load the ROM cartridge image.");
+                else
+                {
+                    commandCartridges[loaded->slot] = false;
+                    if (settings.restoreMedia) { settings.cartridges[loaded->slot] = loaded->path; settingsDirty = true; }
+                }
+            }
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testRomPath)
+            {
+                if (loaded->cancelled != testRomCancel ||
+                    (!loaded->cancelled && loaded->image.has_value() == testRomFailure)) return 1;
+                if (!testRomFailure && !testRomCancel &&
+                    (testRomCartridge ? !roms.Inserted(0) : roms.Source() != preview_roms::SystemSource::file)) return 1;
+                if (testRomCancel && (testRomCartridge ? roms.Inserted(0) : roms.Source() != preview_roms::SystemSource::embedded)) return 1;
+                verifiedRomLoad = true;
+            }
+#endif
+        }
+        if (auto loaded = snapshotLoad.Poll())
+        {
+            if (loaded->cancelled)
+            {
+#ifdef UKNCBTL_TEST_HOOKS
+                if (testSnapshotLoadCancel)
+                {
+                    if (loaded->image || roms.Source() == preview_roms::SystemSource::snapshot) return 1;
+                    verifiedSnapshotLoad = true;
+                }
+#endif
+            }
+            else if (!loaded->image) reportActionError("Could not load the state image.");
+            else if (!media.FlushFloppy())
+                reportActionError("Could not flush floppy changes; state load was canceled.");
+            else if (!snapshots.Restore(*loaded->image, [&] {
+                releaseKeys();
+                releaseMouse();
+                debugger.Stop();
+                running = false;
+                if (audio.IsOpen() && (!audio.SetActive(false) || !audio.Reset()))
+                {
+                    SDL_Log("Audio pause failed: %s", SDL_GetError());
+                    audio.Close(); reportActionError("Audio failed. Use Audio > Output to retry.");
+                }
+            })) reportActionError("Could not load the state image.");
+            else {
+                roms.MarkRestoredFromSnapshot(); printer.Synchronize(); debugger.ClearHistory(); frameFailure.Recovered();
+#ifdef UKNCBTL_TEST_HOOKS
+                if (testSnapshotLoadPath) { verifiedSnapshotLoad = true; startMachine(frame_pacing::Clock::now()); }
+#endif
+            }
+        }
         bool copyScreenshot = false;
+#ifdef UKNCBTL_TEST_HOOKS
+        if (testCopyScreenshot && !requestedTestClipboard)
+        { copyScreenshot = true; screenshotMode = 3; requestedTestClipboard = true; }
+#endif
         bool copyScreenText = false;
+#ifdef UKNCBTL_TEST_HOOKS
+        if (testClipboardSupersede && frames >= 2 && !appliedTestClipboardText)
+        {
+            if (testImGuiClipboard)
+            {
+                if (!clipboardCopy.Pending()) return 1;
+                ImGui::SetClipboardText(clipboardTestText);
+                appliedTestClipboardText = true;
+            }
+            else copyScreenText = true;
+        }
+#endif
         std::vector<sdl_shortcuts::Action> shortcuts;
         bool toggleFullscreen = false;
         bool speedChanged = false;
         bool volumeChanged = false;
         std::optional<std::filesystem::path> screenshotPath;
+#ifdef UKNCBTL_TEST_HOOKS
+        if (testScreenshotPath && !requestedTestScreenshot)
+        {
+            const std::u8string path(reinterpret_cast<const char8_t*>(testScreenshotPath));
+            screenshotPath = std::filesystem::path(path);
+            screenshotMode = 3;
+            requestedTestScreenshot = true;
+        }
+#endif
         std::vector<SDL_Event> mouseEvents;
         bool focusLost = false;
         UKNC_PROFILE_FRAME();
@@ -369,6 +917,9 @@ int Run(const preview_options::Options& options)
         SDL_Event event;
         while (SDL_PollEvent(&event))
         {
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testSlowFrame && event.type == testSlowEventType) receivedSlowEvent = true;
+#endif
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (event.type == SDL_EVENT_AUDIO_DEVICE_REMOVED)
             {
@@ -396,7 +947,9 @@ int Run(const preview_options::Options& options)
                     { actionError = "Drop one file at a time."; showActionError = true; }
                     else if (path)
                     {
-                        if (fileDialog->Pending() || droppedFile)
+                        if (settingsImport.Pending())
+                            reportActionError("Wait for the settings import to finish before dropping another file.");
+                        else if (fileDialog->Pending() || droppedFile)
                         { actionError = "Finish the current file selection before dropping another file."; showActionError = true; }
                         else { droppedFile = std::move(path); dropReadOnly = false; showDropChooser = true; }
                     }
@@ -437,8 +990,11 @@ int Run(const preview_options::Options& options)
                 if (result->purpose == sdl_file_dialog::Purpose::legacySettings)
                 {
                     const auto source = std::filesystem::path(path);
-                    std::error_code error;
-                    const bool same = settingsPath && std::filesystem::equivalent(source, *settingsPath, error);
+                    if (settingsImport.Pending() || !settingsPath || conflicts(source))
+                    {
+                        reportActionError("Could not import settings. Check the source and settings file.");
+                        continue;
+                    }
                     auto current = settings;
                     const bool layoutCaptured = captureUiLayout(current);
                     current.cpuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::cpu).PermanentAddresses();
@@ -451,18 +1007,16 @@ int Run(const preview_options::Options& options)
                     if (!(flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) &&
                         SDL_GetWindowSize(window.get(), &width, &height) && preview_settings::ValidWindowSize(width, height))
                     { current.windowWidth = width; current.windowHeight = height; }
-                    const auto imported = preview_settings::ImportLegacy(source,
-                        static_cast<preview_settings::ImportEncoding>(result->slot % 3), current, result->slot >= 3);
-                    if (!layoutCaptured || !settingsPath || same || conflicts(source) || !imported ||
-                        !media.FlushFloppy() || !preview_settings::Save(*settingsPath, *imported))
-                    { actionError = "Could not import settings. Check the source, encoding and settings file."; showActionError = true; }
-                    else
+                    if (!layoutCaptured || !media.FlushFloppy() || !settingsImport.Start(source, *settingsPath,
+                        static_cast<preview_settings::ImportEncoding>(result->slot % 3), std::move(current), result->slot >= 3))
+                        reportActionError(settingsImportError);
+#ifdef UKNCBTL_TEST_HOOKS
+                    else if (testSettingsImportPath)
                     {
-                        importedSettings = true;
-                        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Settings imported",
-                            "Settings were imported. The emulator will close; start it again to apply them.", window.get());
-                        done = true;
+                        if (!conflicts(source.parent_path() / "." / source.filename())) return 1;
+                        if (testSettingsImportExit) done = true;
                     }
+#endif
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::trace)
                 {
@@ -481,10 +1035,33 @@ int Run(const preview_options::Options& options)
                     if (!target.has_extension()) target += memory ? ".bin" : ".txt";
                     if (conflicts(target))
                     { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
-                    else if (memory ? !debugger.SaveMemory(target, static_cast<preview_debugger::MemorySource>(result->slot),
-                        debugProcessor, result->start, result->end) : log ? !console.Save(target) :
-                        !display_list_dump::Save(target, board))
-                    { actionError = "Could not save the debugger export. The file may be incomplete."; showActionError = true; }
+                    else if (debuggerExport.Pending()) reportActionError("A debugger export is already being saved.");
+                    else
+                    {
+                        std::optional<debugger_export::AsyncSave::Data> data;
+                        if (memory)
+                        {
+                            auto words = debugger.CaptureMemory(static_cast<preview_debugger::MemorySource>(result->slot),
+                                debugProcessor, result->start, result->end);
+                            if (words) data.emplace(std::move(*words));
+                        }
+                        else if (log) data.emplace(console.Log());
+                        else
+                        {
+                            auto snapshot = std::make_unique<video::MemorySnapshot>();
+                            video::CaptureMemory(board, *snapshot);
+                            data.emplace(std::move(snapshot));
+                        }
+                        if (!data || !debuggerExport.Start(target, std::move(*data)))
+                            reportActionError("Could not start saving the debugger export.");
+#ifdef UKNCBTL_TEST_HOOKS
+                        else if (testExportPath)
+                        {
+                            if (!debuggerExport.Pending() || !conflicts(target.parent_path() / "." / target.filename())) return 1;
+                            verifiedExportReservation = true;
+                        }
+#endif
+                    }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::tapeOpen ||
                     result->purpose == sdl_file_dialog::Purpose::tapeCreate)
@@ -494,13 +1071,17 @@ int Run(const preview_options::Options& options)
                     if (creating && !target.has_extension()) target += ".wav";
                     if (conflicts(target))
                     { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
-                    else if (!(creating ? tape.Create(target) : tape.Open(target)))
-                    { actionError = creating ? "Could not create the WAV file." : "Could not open the WAV file or its format is unsupported."; showActionError = true; }
-                    else
+                    else if (tapePrepare.Pending()) reportActionError("A tape file operation is already in progress.");
+                    else if (tape.Inserted() || !tapePrepare.Start(target,
+                        creating ? preview_tape::FileMode::recording : preview_tape::FileMode::playback))
+                        reportActionError(creating ? "Could not start creating the WAV file." : "Could not start opening the WAV file.");
+#ifdef UKNCBTL_TEST_HOOKS
+                    else if (testTapePath)
                     {
-                        commandTape = false;
-                        if (settings.restoreMedia) { settings.tapePath = creating ? std::filesystem::path{} : target; settingsDirty = true; }
+                        if (!conflicts(target.parent_path() / "." / target.filename())) return 1;
+                        if (testTapeCreateExit) done = true;
                     }
+#endif
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::createDisk)
                 {
@@ -508,8 +1089,16 @@ int Run(const preview_options::Options& options)
                     if (!target.has_extension()) target += ".dsk";
                     if (conflicts(target))
                     { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
-                    else if (!disk_image::CreatePortable(target, result->slot))
-                    { actionError = "Could not create the disk image."; showActionError = true; }
+                    else if (diskCreate.Pending()) reportActionError("A disk image is already being created.");
+                    else if (!diskCreate.Start(target, result->slot))
+                        reportActionError("Could not start creating the disk image.");
+#ifdef UKNCBTL_TEST_HOOKS
+                    else if (testDiskPath)
+                    {
+                        if (!diskCreate.Pending() || !conflicts(target.parent_path() / "." / target.filename())) return 1;
+                        verifiedDiskReservation = true;
+                    }
+#endif
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::printer)
                 {
@@ -521,8 +1110,7 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose != sdl_file_dialog::Purpose::screenshot &&
                     result->purpose != sdl_file_dialog::Purpose::snapshotSave &&
-                    (isSettingsFile(std::filesystem::path(path)) || printer.Conflicts(std::filesystem::path(path)) || tape.Conflicts(std::filesystem::path(path)) ||
-                        debugger.TraceConflicts(std::filesystem::path(path))))
+                    conflictsWithOutputOrPendingFile(std::filesystem::path(path)))
                 { actionError = "The selected file is used for emulator output. Choose another file."; showActionError = true; }
                 else if (result->purpose == sdl_file_dialog::Purpose::screenshot)
                 {
@@ -531,32 +1119,34 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::subtitles)
                 {
-                    if (!debugger.LoadSubtitles(std::filesystem::path(path)))
-                    { actionError = "Could not load the UTF-16LE disassembly listing."; showActionError = true; }
+                    const auto source = std::filesystem::path(path);
+                    if (subtitleLoad.Pending()) reportActionError("A disassembly listing is already being loaded.");
+                    else if (conflicts(source)) reportActionError("The selected file is used by the emulator. Choose another file.");
+                    else if (!subtitleLoad.Start(source)) reportActionError("Could not start loading the disassembly listing.");
+#ifdef UKNCBTL_TEST_HOOKS
+                    else if (testSubtitlePath)
+                    {
+                        if (!subtitleLoad.Pending() || !conflicts(source.parent_path() / "." / source.filename())) return 1;
+                        if (testSubtitleCancel) subtitleLoad.Cancel();
+                    }
+#endif
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::snapshotLoad)
                 {
-                    if (!media.FlushFloppy())
-                    { actionError = "Could not flush floppy changes; state load was canceled."; showActionError = true; }
-                    else if (!snapshots.Load(std::filesystem::path(path), [&] {
-                        releaseKeys();
-                        releaseMouse();
-                        debugger.Stop();
-                        running = false;
-                        if (audio.IsOpen())
-                        {
-                            if (!audio.SetActive(false) || !audio.Reset())
-                            {
-                                SDL_Log("Audio pause failed: %s", SDL_GetError());
-                                audio.Close(); actionError = "Audio failed. Use Audio > Output to retry."; showActionError = true;
-                            }
-                        }
-                    }))
+                    if (snapshotLoad.Pending()) reportActionError("A state image is already being loaded.");
+                    else if (conflicts(std::filesystem::path(path)))
+                        reportActionError("The selected file is used by the emulator. Choose another file.");
+                    else if (!snapshotLoad.Start(std::filesystem::path(path)))
+                        reportActionError("Could not start loading the state image.");
+                    else if (romLoad.Pending() && romLoad.Slot() == -1) romLoad.Cancel();
+#ifdef UKNCBTL_TEST_HOOKS
+                    else if (testSnapshotLoadPath)
                     {
-                        actionError = "Could not load the state image.";
-                        showActionError = true;
+                        const auto source = std::filesystem::path(path);
+                        if (!snapshotLoad.Pending() || !conflicts(source.parent_path() / "." / source.filename())) return 1;
+                        if (testSnapshotLoadCancel && (!resetMachine() || !snapshotLoad.Cancelled())) return 1;
                     }
-                    else { roms.MarkRestoredFromSnapshot(); printer.Synchronize(); debugger.ClearHistory(); }
+#endif
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::snapshotSave)
                 {
@@ -566,57 +1156,74 @@ int Run(const preview_options::Options& options)
                         actionError = "The selected file is used by the emulator. Choose another file.";
                         showActionError = true;
                     }
+                    else if (snapshotSave.Pending())
+                    {
+                        actionError = "A state image is already being saved.";
+                        showActionError = true;
+                    }
                     else if (!media.FlushFloppy())
                     {
                         actionError = "Could not flush floppy changes; state save was canceled.";
                         showActionError = true;
                     }
-                    else if (!snapshots.Save(target))
+                    else if (!snapshotSave.Start(target, snapshots.Capture()))
                     {
-                        actionError = "Could not save the state image.";
+                        actionError = "Could not start saving the state image.";
                         showActionError = true;
                     }
+#ifdef UKNCBTL_TEST_HOOKS
+                    else if (testSnapshotPath)
+                    {
+                        const auto alias = target.parent_path() / "." / target.filename();
+                        if (!snapshotSave.Pending() || !conflicts(alias)) return 1;
+                        verifiedSnapshotReservation = true;
+                    }
+#endif
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::systemRom)
                 {
-                    if (!media.FlushFloppy())
-                    { actionError = "Could not flush floppy changes; ROM change was canceled."; showActionError = true; }
-                    else if (roms.LoadSystem(std::filesystem::path(path)))
-                    { commandSystem = false; if (settings.restoreMedia) { settings.systemRom = std::filesystem::path(path); settingsDirty = true; } if (resetMachine()) scheduler.Restart(started); }
-                    else { actionError = "Could not load the system ROM image."; showActionError = true; }
+                    const auto source = std::filesystem::path(path);
+                    if (romLoad.Pending()) reportActionError("A ROM image is already being loaded.");
+                    else if (media.Conflicts(source)) reportActionError("The selected file is used by the emulator. Choose another file.");
+                    else if (!romLoad.Start(source, -1)) reportActionError("Could not start loading the system ROM image.");
+                    else
+                    {
+                        snapshotLoad.Cancel();
+#ifdef UKNCBTL_TEST_HOOKS
+                        if (testRomPath)
+                        {
+                            if (!conflicts(source.parent_path() / "." / source.filename())) return 1;
+                            if (testRomCancel && (!resetMachine() || !romLoad.Cancelled())) return 1;
+                        }
+#endif
+                    }
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::cartridge)
                 {
-                    if (!roms.Insert(result->slot, std::filesystem::path(path)))
+                    const auto source = std::filesystem::path(path);
+                    if (romLoad.Pending()) reportActionError("A ROM image is already being loaded.");
+                    else if (result->slot < 0 || result->slot >= 2 || roms.Inserted(result->slot) || media.Conflicts(source))
+                        reportActionError("Could not load the ROM cartridge image.");
+                    else if (!romLoad.Start(source, result->slot)) reportActionError("Could not start loading the ROM cartridge image.");
+#ifdef UKNCBTL_TEST_HOOKS
+                    else if (testRomPath)
                     {
-                        actionError = "Could not load the ROM cartridge image.";
-                        showActionError = true;
+                        if (!conflicts(source.parent_path() / "." / source.filename())) return 1;
+                        if (testRomCancel) romLoad.Cancel();
                     }
-                    else { commandCartridges[result->slot] = false; if (settings.restoreMedia) { settings.cartridges[result->slot] = std::filesystem::path(path); settingsDirty = true; } }
-                }
-                else if (result->kind == media_slots::Kind::hardDisk && !roms.Inserted(result->slot))
-                {
-                    actionError = "Insert the matching hard-disk ROM cartridge first.";
-                    showActionError = true;
+#endif
                 }
                 else
                 {
-                    const auto attached = media.Attach(result->kind, result->slot, std::filesystem::path(path), result->readOnly);
-                    if (!attached)
-                    {
-                        actionError = attached.error() == media_slots::Error::already_mounted ?
-                            "The image is already mounted; shared mounts must all be read-only." :
-                            "Could not attach the disk image. Check the file and the selected drive.";
-                        showActionError = true;
-                    }
-                    else
-                    {
-                        if (result->kind == media_slots::Kind::floppy)
-                        { commandFloppies[result->slot] = false; if (settings.restoreMedia) { settings.floppies[result->slot] = std::filesystem::path(path); settings.floppyReadOnly[result->slot] = result->readOnly; } }
-                        else
-                        { commandHardDisks[result->slot] = false; if (settings.restoreMedia) { settings.hardDisks[result->slot] = std::filesystem::path(path); settings.hardDiskReadOnly[result->slot] = result->readOnly; } }
-                        if (settings.restoreMedia) settingsDirty = true;
-                    }
+                    const auto source = std::filesystem::path(path);
+                    if (diskMount.Pending()) reportActionError("A disk image is already being opened.");
+                    else if (const auto allowed = media.CheckAttach(result->kind, result->slot, source, result->readOnly); !allowed)
+                        reportMountError(allowed.error());
+                    else if (!diskMount.Start(result->kind, source, result->slot, result->readOnly))
+                        reportActionError("Could not start opening the disk image.");
+#ifdef UKNCBTL_TEST_HOOKS
+                    else if (testDiskMountPath && !conflicts(source.parent_path() / "." / source.filename())) return 1;
+#endif
                 }
             }
         }
@@ -637,15 +1244,15 @@ int Run(const preview_options::Options& options)
         for (const auto shortcut : shortcuts)
         {
             if (!sdl_shortcuts::Allowed(shortcut, running, focusLost || ImGui::GetIO().WantCaptureKeyboard,
-                fileDialog->Pending() || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))) continue;
+                fileDialog->Pending() || settingsImport.Pending() || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))) continue;
             switch (shortcut)
             {
             case sdl_shortcuts::Action::fullscreen: toggleFullscreen = true; break;
             case sdl_shortcuts::Action::toggleRun: if (running) pauseMachine(); else startMachine(started); break;
             case sdl_shortcuts::Action::reset: if (resetMachine()) scheduler.Restart(started); break;
-            case sdl_shortcuts::Action::step: debugger.Step(); showDebugger = true; break;
+            case sdl_shortcuts::Action::step: if (!frameFailure.Failed()) debugger.Step(); showDebugger = true; break;
             case sdl_shortcuts::Action::stepOver:
-                showDebugger = true; if (debugger.StepOver(debugProcessor)) startMachine(started); break;
+                showDebugger = true; if (!frameFailure.Failed() && debugger.StepOver(debugProcessor)) startMachine(started); break;
             }
         }
         if (ImGui::GetIO().WantCaptureKeyboard) releasePhysicalKeys();
@@ -725,7 +1332,8 @@ int Run(const preview_options::Options& options)
                         }
                     }
                 }
-                if (ImGui::BeginMenu("Import legacy settings and exit", settingsPath.has_value() && !fileDialog->Pending()))
+                if (ImGui::BeginMenu("Import legacy settings and exit",
+                    settingsPath.has_value() && !fileDialog->Pending() && !settingsImport.Pending()))
                 {
                     constexpr std::array labels{"UTF-8 or UTF-16LE...", "Windows-1251...", "Windows-1252..."};
                     for (int media = 0; media < 2; ++media)
@@ -785,7 +1393,7 @@ int Run(const preview_options::Options& options)
                         ImGui::TextUnformatted(reinterpret_cast<const char*>(text.c_str()));
                     }
                     else ImGui::TextDisabled(roms.Source() == preview_roms::SystemSource::embedded ? "Embedded ROM" : "Restored from state");
-                    if (ImGui::MenuItem("Load ROM and reset...", nullptr, false, !fileDialog->Pending()) &&
+                    if (ImGui::MenuItem("Load ROM and reset...", nullptr, false, !fileDialog->Pending() && !romLoad.Pending()) &&
                         !sdl_file_dialog::OpenRom(fileDialog, *window, sdl_file_dialog::Purpose::systemRom))
                     { actionError = "Could not open the file dialog."; showActionError = true; }
                     if (ImGui::MenuItem("Use embedded ROM and reset", nullptr, false,
@@ -797,11 +1405,21 @@ int Run(const preview_options::Options& options)
                     }
                     ImGui::EndMenu();
                 }
-                if (ImGui::MenuItem("Load state...", nullptr, false, !fileDialog->Pending()) &&
+                if (romLoad.Pending())
+                {
+                    if (romLoad.Cancelled()) ImGui::TextDisabled("Canceling ROM load...");
+                    else if (ImGui::MenuItem("Cancel ROM load")) romLoad.Cancel();
+                }
+                if (ImGui::MenuItem("Load state...", nullptr, false, !fileDialog->Pending() && !snapshotLoad.Pending()) &&
                     !sdl_file_dialog::OpenSnapshot(fileDialog, *window))
                 {
                     actionError = "Could not open the file dialog.";
                     showActionError = true;
+                }
+                if (snapshotLoad.Pending())
+                {
+                    if (snapshotLoad.Cancelled()) ImGui::TextDisabled("Canceling state load...");
+                    else if (ImGui::MenuItem("Cancel state load")) snapshotLoad.Cancel();
                 }
                 if (ImGui::MenuItem("Save state...", nullptr, false, !fileDialog->Pending()) &&
                     !sdl_file_dialog::SaveSnapshot(fileDialog, *window))
@@ -873,7 +1491,7 @@ int Run(const preview_options::Options& options)
                         ImGui::TextUnformatted(reinterpret_cast<const char*>(path.c_str()));
                         if (settings.soundCovox) ImGui::TextDisabled("Output paused while Covox is enabled");
                         if (ImGui::MenuItem("Stop output") && !printer.Stop())
-                        { actionError = "Could not finish the printer output file."; showActionError = true; }
+                            reportPrinterError();
                     }
                     else if (ImGui::MenuItem("Start output...", nullptr, false, !fileDialog->Pending()) &&
                         !sdl_file_dialog::SavePrinter(fileDialog, *window))
@@ -963,7 +1581,7 @@ int Run(const preview_options::Options& options)
             }
             if (ImGui::BeginMenu("Screenshot"))
             {
-                if (ImGui::MenuItem("Copy to clipboard")) copyScreenshot = true;
+                if (ImGui::MenuItem("Copy to clipboard", nullptr, false, !clipboardCopy.Pending())) copyScreenshot = true;
                 if (ImGui::MenuItem("Copy screen text")) copyScreenText = true;
                 if (ImGui::MenuItem("Save as...", nullptr, false, !fileDialog->Pending()))
                 {
@@ -1024,6 +1642,8 @@ int Run(const preview_options::Options& options)
                         if (media.ReadOnly(kind, slot)) ImGui::TextDisabled("Read-only");
                         if (ImGui::MenuItem("Eject")) ejectDisk(kind, slot);
                     }
+                    else if (diskMount.Pending())
+                        ImGui::TextDisabled("Opening disk image...");
                     else for (const bool readOnly : {false, true})
                     {
                         if (ImGui::MenuItem(readOnly ? "Attach read-only..." : "Attach read/write...", nullptr, false, !fileDialog->Pending()))
@@ -1063,10 +1683,11 @@ int Run(const preview_options::Options& options)
                 }
                 else
                 {
-                    if (ImGui::MenuItem("Open WAV...", nullptr, false, !fileDialog->Pending()) &&
+                    if (tapePrepare.Pending()) ImGui::TextDisabled(tapePrepare.Mode() == preview_tape::FileMode::recording ? "Creating WAV..." : "Opening WAV...");
+                    if (ImGui::MenuItem("Open WAV...", nullptr, false, !fileDialog->Pending() && !tapePrepare.Pending()) &&
                         !sdl_file_dialog::OpenTape(fileDialog, *window))
                     { actionError = "Could not open the file dialog."; showActionError = true; }
-                    if (ImGui::MenuItem("Create WAV...", nullptr, false, !fileDialog->Pending()) &&
+                    if (ImGui::MenuItem("Create WAV...", nullptr, false, !fileDialog->Pending() && !tapePrepare.Pending()) &&
                         !sdl_file_dialog::SaveTape(fileDialog, *window))
                     { actionError = "Could not open the file dialog."; showActionError = true; }
                 }
@@ -1163,7 +1784,7 @@ int Run(const preview_options::Options& options)
                                 const auto index = static_cast<std::size_t>(slot + (kind == media_slots::Kind::floppy ? 0 : 4));
                                 ImGui::Checkbox("Read-only", &mediaReadOnly[index]);
                                 ImGui::SameLine();
-                                ImGui::BeginDisabled(fileDialog->Pending());
+                                ImGui::BeginDisabled(fileDialog->Pending() || diskMount.Pending());
                                 if (ImGui::Button("Attach...")) openDisk(kind, slot, mediaReadOnly[index]);
                                 ImGui::EndDisabled();
                             }
@@ -1263,8 +1884,9 @@ int Run(const preview_options::Options& options)
                 }
                 else
                 {
-                    ImGui::TextUnformatted("No tape inserted.");
-                    ImGui::BeginDisabled(fileDialog->Pending());
+                    ImGui::TextUnformatted(tapePrepare.Pending() ?
+                        (tapePrepare.Mode() == preview_tape::FileMode::recording ? "Creating WAV..." : "Opening WAV...") : "No tape inserted.");
+                    ImGui::BeginDisabled(fileDialog->Pending() || tapePrepare.Pending());
                     if (ImGui::Button("Open WAV...") && !sdl_file_dialog::OpenTape(fileDialog, *window))
                     { actionError = "Could not open the file dialog."; showActionError = true; }
                     ImGui::SameLine();
@@ -1287,7 +1909,7 @@ int Run(const preview_options::Options& options)
                         if (ImGui::MenuItem(hex ? "Copy value (hex)" : "Copy value (octal)"))
                         {
                             const auto text = preview_debugger::FormatValue(value, hex, byteMode);
-                            if (!SDL_SetClipboardText(text.c_str()))
+                            if (!clipboardCopy.SetText(text.c_str()))
                             { actionError = "Could not copy the debugger value to the clipboard."; showActionError = true; }
                         }
                     }
@@ -1298,7 +1920,7 @@ int Run(const preview_options::Options& options)
                         if (ImGui::MenuItem(hex ? "Copy address (hex)" : "Copy address (octal)"))
                         {
                             const auto text = preview_debugger::FormatValue(address, hex);
-                            if (!SDL_SetClipboardText(text.c_str()))
+                            if (!clipboardCopy.SetText(text.c_str()))
                             { actionError = "Could not copy the debugger address to the clipboard."; showActionError = true; }
                         }
                     }
@@ -1319,7 +1941,7 @@ int Run(const preview_options::Options& options)
                 if (ImGui::Button(running ? "Pause" : "Run"))
                 { if (running) pauseMachine(); else startMachine(started); }
                 ImGui::SameLine();
-                ImGui::BeginDisabled(running);
+                ImGui::BeginDisabled(running || frameFailure.Failed());
                 if (ImGui::Button("Step")) debugger.Step();
                 ImGui::SameLine();
                 if (ImGui::Button("Step over") && debugger.StepOver(debugProcessor)) startMachine(started);
@@ -1435,7 +2057,7 @@ int Run(const preview_options::Options& options)
                     else { disasmBase = *address; followPc = false; disasmError.clear(); }
                 }
                 ImGui::SameLine();
-                ImGui::BeginDisabled(fileDialog->Pending());
+                ImGui::BeginDisabled(fileDialog->Pending() || subtitleLoad.Pending());
                 if (ImGui::Button("Load subtitles..."))
                     if (!sdl_file_dialog::OpenSubtitles(fileDialog, *window))
                     { actionError = "Could not open the file dialog."; showActionError = true; }
@@ -1445,7 +2067,12 @@ int Run(const preview_options::Options& options)
                     const auto text = path->u8string();
                     ImGui::TextUnformatted(reinterpret_cast<const char*>(text.c_str()));
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("Unload subtitles")) debugger.UnloadSubtitles();
+                    if (ImGui::SmallButton("Unload subtitles")) { subtitleLoad.Cancel(); debugger.UnloadSubtitles(); }
+                }
+                if (subtitleLoad.Pending())
+                {
+                    if (subtitleLoad.Cancelled()) ImGui::TextDisabled("Canceling subtitle load...");
+                    else if (ImGui::SmallButton("Cancel subtitle load")) subtitleLoad.Cancel();
                 }
                 if (!disasmError.empty()) ImGui::TextWrapped("%s", disasmError.c_str());
                 const auto hint = debugger.CurrentHint(debugProcessor);
@@ -1795,6 +2422,7 @@ int Run(const preview_options::Options& options)
                 }
                 ImGui::EndChild();
                 ImGui::SetNextItemWidth(-1);
+                ImGui::BeginDisabled(frameFailure.Failed());
                 if (ImGui::InputText("##console-input", consoleInput.data(), consoleInput.size(),
                     ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory, ConsoleHistoryCallback, &console))
                 {
@@ -1821,6 +2449,7 @@ int Run(const preview_options::Options& options)
                     }
                     ImGui::SetKeyboardFocusHere(-1);
                 }
+                ImGui::EndDisabled();
             }
             ImGui::End();
         }
@@ -1851,9 +2480,23 @@ int Run(const preview_options::Options& options)
         }
         if (debugger.TakeTraceError())
         {
+            traceErrorUnacknowledged = true;
             if (showActionError && !actionError.empty()) actionError += "\n";
             else actionError.clear();
             actionError += "Trace output failed and tracing was stopped."; showActionError = true;
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testTraceFailure)
+            {
+                if (verifiedTraceRecovery || debugger.TracePath() || debugger.TraceMask()) return 1;
+                preview_debugger::testing::FailWorkerTraceWrites(false);
+                const std::u8string path(reinterpret_cast<const char8_t*>(testTracePath));
+                if (!debugger.StartTrace(std::filesystem::path(path),
+                    preview_debugger::TraceInstructionsCpu | preview_debugger::TraceInstructionsPpu)) return 1;
+                verifiedTraceRecovery = true;
+                traceErrorUnacknowledged = false; // Simulate acknowledging the test dialog.
+            }
+            if (testTraceFailureExit) done = true;
+#endif
         }
         if (showDropChooser) { ImGui::OpenPopup("Open dropped file"); showDropChooser = false; }
         if (ImGui::BeginPopupModal("Open dropped file", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
@@ -1889,14 +2532,14 @@ int Run(const preview_options::Options& options)
                     if (slot) ImGui::SameLine();
                     const auto label = std::format("Floppy {}", slot);
                     choose(label.c_str(), sdl_file_dialog::Purpose::disk, media_slots::Kind::floppy, slot,
-                        !media.Attached(media_slots::Kind::floppy, slot));
+                        !media.Attached(media_slots::Kind::floppy, slot) && !diskMount.Pending());
                 }
                 for (int slot = 0; slot < 2; ++slot)
                 {
                     if (slot) ImGui::SameLine();
                     const auto label = std::format("Hard disk {}", slot + 1);
                     choose(label.c_str(), sdl_file_dialog::Purpose::disk, media_slots::Kind::hardDisk, slot,
-                        roms.Inserted(slot) && !media.Attached(media_slots::Kind::hardDisk, slot));
+                        roms.Inserted(slot) && !media.Attached(media_slots::Kind::hardDisk, slot) && !diskMount.Pending());
                 }
                 for (int slot = 0; slot < 2; ++slot)
                 {
@@ -1907,7 +2550,7 @@ int Run(const preview_options::Options& options)
                 }
                 choose("System ROM and reset", sdl_file_dialog::Purpose::systemRom, media_slots::Kind::floppy, -1, true);
                 choose("Load state", sdl_file_dialog::Purpose::snapshotLoad, media_slots::Kind::floppy, -1, true);
-                choose("Open tape", sdl_file_dialog::Purpose::tapeOpen, media_slots::Kind::floppy, -1, !tape.Inserted());
+                choose("Open tape", sdl_file_dialog::Purpose::tapeOpen, media_slots::Kind::floppy, -1, !tape.Inserted() && !tapePrepare.Pending());
                 choose("Load disassembly subtitles", sdl_file_dialog::Purpose::subtitles, media_slots::Kind::floppy, -1, true);
                 if (ImGui::Button("Cancel")) { droppedFile.reset(); ImGui::CloseCurrentPopup(); }
             }
@@ -1929,11 +2572,95 @@ int Run(const preview_options::Options& options)
             if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
-        if (showActionError) { ImGui::OpenPopup("Error"); showActionError = false; }
+        if (settingsImport.Pending() && !ImGui::IsPopupOpen("Importing settings"))
+            ImGui::OpenPopup("Importing settings");
+        if (ImGui::BeginPopupModal("Importing settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            if (settingsImport.Pending()) ImGui::TextUnformatted("Importing settings...");
+            else ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        if (showActionError && !settingsImport.Pending())
+        {
+            constexpr std::string_view screenshotError = "Could not save the screenshot image.";
+            constexpr std::string_view snapshotError = "Could not save the state image.";
+            constexpr std::string_view traceError = "Trace output failed and tracing was stopped.";
+            constexpr std::string_view diskError = "Could not create the disk image.";
+            constexpr std::string_view exportError = "Could not save the debugger export. The file may be incomplete.";
+            if (screenshotErrorUnacknowledged && actionError.find(screenshotError) == std::string::npos)
+            {
+                if (!actionError.empty()) actionError += "\n";
+                actionError += screenshotError;
+            }
+            if (snapshotErrorUnacknowledged && actionError.find(snapshotError) == std::string::npos)
+            {
+                if (!actionError.empty()) actionError += "\n";
+                actionError += snapshotError;
+            }
+            if (traceErrorUnacknowledged && actionError.find(traceError) == std::string::npos)
+            {
+                if (!actionError.empty()) actionError += "\n";
+                actionError += traceError;
+            }
+            if (diskErrorUnacknowledged && actionError.find(diskError) == std::string::npos)
+            {
+                if (!actionError.empty()) actionError += "\n";
+                actionError += diskError;
+            }
+            if (exportErrorUnacknowledged && actionError.find(exportError) == std::string::npos)
+            {
+                if (!actionError.empty()) actionError += "\n";
+                actionError += exportError;
+            }
+            if (printerErrorUnacknowledged && actionError.find(printerError) == std::string::npos)
+            {
+                if (!actionError.empty()) actionError += "\n";
+                actionError += printerError;
+            }
+            if (tapeCreateErrorUnacknowledged && actionError.find(tapeCreateError) == std::string::npos)
+            {
+                if (!actionError.empty()) actionError += "\n";
+                actionError += tapeCreateError;
+            }
+            if (settingsImportErrorUnacknowledged && actionError.find(settingsImportError) == std::string::npos)
+            {
+                if (!actionError.empty()) actionError += "\n";
+                actionError += settingsImportError;
+            }
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testScreenshotErrorMerge && screenshotErrorUnacknowledged)
+            {
+                if (actionError.find("Another operation failed.") == std::string::npos ||
+                    actionError.find(screenshotError) == std::string::npos) return 1;
+                verifiedScreenshotErrorMerge = true;
+                screenshotErrorUnacknowledged = false; // Simulate acknowledging the test dialog.
+            }
+#endif
+            ImGui::OpenPopup("Error"); showActionError = false;
+        }
         if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
             ImGui::TextWrapped("%s", actionError.c_str());
-            if (ImGui::Button("OK")) ImGui::CloseCurrentPopup();
+            if (ImGui::Button("OK"))
+            {
+                if (actionError.find("Could not save the screenshot image.") != std::string::npos)
+                    screenshotErrorUnacknowledged = false;
+                if (actionError.find("Could not save the state image.") != std::string::npos)
+                    snapshotErrorUnacknowledged = false;
+                if (actionError.find("Trace output failed and tracing was stopped.") != std::string::npos)
+                    traceErrorUnacknowledged = false;
+                if (actionError.find("Could not create the disk image.") != std::string::npos)
+                    diskErrorUnacknowledged = false;
+                if (actionError.find("Could not save the debugger export. The file may be incomplete.") != std::string::npos)
+                    exportErrorUnacknowledged = false;
+                if (actionError.find(printerError) != std::string::npos)
+                    printerErrorUnacknowledged = false;
+                if (actionError.find(tapeCreateError) != std::string::npos)
+                    tapeCreateErrorUnacknowledged = false;
+                if (actionError.find(settingsImportError) != std::string::npos)
+                    settingsImportErrorUnacknowledged = false;
+                ImGui::CloseCurrentPopup();
+            }
             ImGui::EndPopup();
         }
         }
@@ -1979,9 +2706,35 @@ int Run(const preview_options::Options& options)
                 }
             }
         }
+        if (tape.TakeError()) { actionError = "Tape I/O failed and playback or recording was stopped."; showActionError = true; }
+        const auto palette = video_palette::Get(static_cast<video_palette::Mode>(paletteMode));
+        if (copyScreenText)
+        {
+            auto text = screen_text::Capture(board);
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testClipboardSupersede)
+            {
+                if (!clipboardCopy.Pending()) return 1;
+                text = clipboardTestText;
+            }
+#endif
+            if (!text || !clipboardCopy.SetText(text->c_str()))
+            { actionError = "Could not copy screen text to the clipboard."; showActionError = true; }
+#ifdef UKNCBTL_TEST_HOOKS
+            else if (testClipboardSupersede) appliedTestClipboardText = true;
+#endif
+        }
+        const bool screenshotConflict = screenshotPath && conflicts(*screenshotPath);
+#ifdef UKNCBTL_TEST_HOOKS
+        if (testScreenshotConflict && screenshotPath)
+        {
+            if (!screenshotConflict || screenshotSave.Pending()) return 1;
+            verifiedScreenshotConflict = true;
+        }
+#endif
+        bool frameStarted = false;
         if (!done && running && scheduler.Due(started))
         {
-            UKNC_PROFILE_SCOPE("Emulator frame");
             scheduler.FrameStarted(started, settings.speed, FRAMERATE);
             if (const auto key = keyDelivery.Next()) board.KeyboardEvent(key->scan, key->pressed);
             if (settings.mouse)
@@ -1989,68 +2742,53 @@ int Run(const preview_options::Options& options)
                 const auto sample = mouse.Next();
                 board.MouseMove(sample.dx, sample.dy, sample.left, sample.right);
             }
-            const bool completed = debugger.RunFrame();
-            if (!completed)
-            {
-                pauseMachine();
-                showDebugger = true;
-            }
-            if (!printer.Check()) { actionError = "Printer output failed and was stopped."; showActionError = true; }
-            if (completed)
-            {
-                if (const auto event = autoBoot.FrameCompleted())
-                    queueKey(sdl_keyboard::Source::automatic, {event->scan, event->pressed});
-                snapshots.FrameCompleted();
-                if (smokeTest) ++frames;
-                if (audio.IsOpen() && audio.Active() && !audio.SubmitFrame())
-                {
-                    SDL_Log("Audio submission failed: %s", SDL_GetError());
-                    audio.Close(); actionError = "Audio failed. Use Audio > Output to retry."; showActionError = true;
-                }
-            }
+            video::CaptureMemory(board, videoMemory);
+            frameStarted = frameWorker.Start();
+            if (!frameStarted) return 1;
         }
-        if (tape.TakeError()) { actionError = "Tape I/O failed and playback or recording was stopped."; showActionError = true; }
-        const auto palette = video_palette::Get(static_cast<video_palette::Mode>(paletteMode));
-        if (copyScreenText)
-        {
-            const auto text = screen_text::Capture(board);
-            if (!text || !SDL_SetClipboardText(text->c_str()))
-            { actionError = "Could not copy screen text to the clipboard."; showActionError = true; }
-        }
-        if (!video::RenderRgb(board, pixels, palette)) return 1;
+        if (!(frameStarted ? video::RenderRgb(videoMemory, pixels, palette) : video::RenderRgb(board, pixels, palette))) return 1;
         const auto image = screenshot_image::Prepare(pixels, displayMode);
         if (!image) return 1;
         if (copyScreenshot || screenshotPath)
         {
-            const auto capture = screenshotMode == displayMode ? image : screenshot_image::Prepare(pixels, screenshotMode);
-            if (!capture)
+            if (copyScreenshot)
             {
-                actionError = "Could not prepare the screenshot image.";
+#ifdef UKNCBTL_TEST_HOOKS
+                if (testCopyScreenshot && !testClipboardExit) screenshot_clipboard::testing::HoldEncoding(true);
+#endif
+                if (clipboardCopy.Pending()) reportActionError("A screenshot is already being copied to the clipboard.");
+                else if (!(screenshotMode == displayMode ? clipboardCopy.Start(*image) :
+                    clipboardCopy.StartScaled(pixels, screenshotMode))) reportActionError(clipboardError);
+#ifdef UKNCBTL_TEST_HOOKS
+                if (testCopyScreenshot && !clipboardCopy.Pending()) return 1;
+                if (testClipboardExit) done = true;
+#endif
+            }
+            if (screenshotConflict)
+            {
+                if (showActionError) actionError += "\n";
+                else actionError.clear();
+                actionError += "The selected file is used by the emulator. Choose another file.";
                 showActionError = true;
             }
-            else
+            else if (screenshotPath)
             {
-                if (copyScreenshot && !screenshot_clipboard::SetImage(*capture))
-                {
-                    actionError = "Could not copy the screenshot to the clipboard.";
-                    showActionError = true;
-                }
-                if (screenshotPath && conflicts(*screenshotPath))
+                const bool started = screenshotMode == displayMode ? screenshotSave.Start(*screenshotPath, *image) :
+                    screenshotSave.StartScaled(*screenshotPath, pixels, screenshotMode);
+                if (!started)
                 {
                     if (showActionError) actionError += "\n";
                     else actionError.clear();
-                    actionError += "The selected file is used by the emulator. Choose another file.";
-                    showActionError = true;
-                }
-                else if (screenshotPath && !screenshot_file::Save(*screenshotPath, *capture))
-                {
-                    if (showActionError) actionError += "\n";
-                    else actionError.clear();
-                    actionError += "Could not save the screenshot image.";
+                    actionError += screenshotSave.Pending() ? "A screenshot is already being saved." : "Could not start saving the screenshot image.";
                     showActionError = true;
                 }
             }
         }
+#ifdef UKNCBTL_TEST_HOOKS
+        // Exercise the same cleanup as a renderer error while a frame and an
+        // optional screenshot are outstanding.
+        if (testEarlyFrameExit && frameStarted) return 1;
+#endif
         {
         UKNC_PROFILE_SCOPE("SDL render");
         ImGui::Render();
@@ -2062,21 +2800,231 @@ int Run(const preview_options::Options& options)
             if (!SDL_RenderPresent(renderer.get())) return 1;
         }
         }
-        if (smokeTest && frames >= 3) done = true;
+        if (frameStarted)
+        {
+            UKNC_PROFILE_SCOPE("Frame worker wait");
+            // Keep the native window responsive even if guest I/O makes a
+            // frame slow. Process queued events only after the board handoff.
+            while (!frameWorker.WaitFor(std::chrono::milliseconds(5)))
+            {
+                SDL_PumpEvents();
+#ifdef UKNCBTL_TEST_HOOKS
+                if (testSlowFrame && !pumpedDuringSlowFrame)
+                {
+                    SDL_Event event{};
+                    event.type = testSlowEventType;
+                    pumpedDuringSlowFrame = SDL_PushEvent(&event);
+                    releaseSlowFrame.store(true);
+                }
+#endif
+            }
+            const auto outcome = frameWorker.WaitOutcome();
+            frameFailure.Observe(outcome);
+#ifdef UKNCBTL_TEST_HOOKS
+            if (testScreenshotPath && !testScreenshotConflict && requestedTestScreenshot && !verifiedScreenshotReservation)
+            {
+                const std::u8string utf8(reinterpret_cast<const char8_t*>(testScreenshotPath));
+                const auto path = std::filesystem::path(utf8);
+                const auto alias = path.parent_path() / "." / path.filename();
+                if (!screenshotSave.Pending() || !conflicts(alias)) return 1;
+                verifiedScreenshotReservation = true;
+            }
+#endif
+            const bool completed = outcome == FrameWorker::Outcome::completed;
+            if (!completed)
+            {
+                pauseMachine();
+                showDebugger = true;
+                if (outcome == FrameWorker::Outcome::failed)
+                {
+                    SDL_Log("Emulation frame failed; reset is required.");
+                    reportActionError("Emulation stopped after a frame error. Reset the machine before running again.");
+                }
+            }
+            if (!printer.Check())
+            {
+                reportPrinterError();
+#ifdef UKNCBTL_TEST_HOOKS
+                if (testPrinterFailureExit) done = true;
+#endif
+            }
+            if (completed)
+            {
+                if (const auto event = autoBoot.FrameCompleted())
+                    queueKey(sdl_keyboard::Source::automatic, {event->scan, event->pressed});
+                snapshots.FrameCompleted();
+                if (smokeTest) ++frames;
+#ifdef UKNCBTL_TEST_HOOKS
+                if (testTraceFailure && verifiedTraceRecovery) ++framesAfterTraceRecovery;
+                if (testCopyScreenshot && frames == 3) screenshot_clipboard::testing::HoldEncoding(false);
+#endif
+                if (audio.IsOpen() && audio.Active() && !audio.SubmitFrame())
+                {
+                    SDL_Log("Audio submission failed: %s", SDL_GetError());
+                    audio.Close(); actionError = "Audio failed. Use Audio > Output to retry."; showActionError = true;
+                }
+            }
+#ifdef UKNCBTL_TEST_HOOKS
+            if ((testFrameFailure || testTraceRecordFailure) && outcome == FrameWorker::Outcome::failed)
+            {
+                if (!frameFailure.Failed() || running) return 1;
+                if (testFrameAndPrinterFailure &&
+                    (actionError.find("Printer output failed") == std::string::npos ||
+                     actionError.find("Emulation stopped after a frame error") == std::string::npos)) return 1;
+                startMachine(started);
+                if (running || !frameFailure.Failed()) return 1;
+                if (testTraceRecordFailure) preview_debugger::testing::ThrowOnTraceRecord(0);
+                if (!resetMachine() || frameFailure.Failed()) return 1;
+                startMachine(started);
+                if (!running) return 1;
+                verifiedFrameRecovery = true;
+                if (testFrameAndPrinterFailure) printerErrorUnacknowledged = false;
+                actionError.clear();
+                showActionError = false;
+            }
+#endif
+        }
+        if (smokeTest && frames >= 3
+#ifdef UKNCBTL_TEST_HOOKS
+            && !testScreenshotFailureExit && !testSnapshotFailureExit && !testTraceFailureExit && !testDiskFailureExit && !testExportFailureExit && (!testScreenshotErrorMerge || verifiedScreenshotErrorMerge)
+            && (!testTraceFailure || (verifiedTraceRecovery && framesAfterTraceRecovery > 0))
+            && (!testSnapshotLoadPath || verifiedSnapshotLoad)
+            && (!testSubtitlePath || verifiedSubtitleLoad)
+            && (!testRomPath || verifiedRomLoad)
+            && (!testTapePath || verifiedTapeOpen)
+            && (!testSettingsImportPath || verifiedSettingsImport)
+            && !testPrinterFailureExit
+            && (!testCopyScreenshot || verifiedTestClipboard)
+            && (!testDiskMountPath || verifiedDiskMount)
+#endif
+            )
+        {
+#ifdef UKNCBTL_TEST_HOOKS
+            if ((testFrameFailure || testTraceRecordFailure) && !verifiedFrameRecovery) return 1;
+            if (testScreenshotPath && !testScreenshotConflict && !verifiedScreenshotReservation) return 1;
+            if (testScreenshotConflict && !verifiedScreenshotConflict) return 1;
+            if (testSlowFrame && (!pumpedDuringSlowFrame || !receivedSlowEvent)) return 1;
+            if (testSnapshotPath && !verifiedSnapshotReservation) return 1;
+            if (testDiskPath && !verifiedDiskReservation) return 1;
+            if (testExportPath && !verifiedExportReservation) return 1;
+#endif
+            done = true;
+        }
         {
             UKNC_PROFILE_SCOPE("Frame pacing wait");
             std::this_thread::sleep_for(scheduler.Delay(frame_pacing::Clock::now(), settings.speed, running));
         }
+    }
+    const auto finalClipboard = clipboardCopy.Finish();
+#ifdef UKNCBTL_TEST_HOOKS
+    if (testClipboardExit && (finalClipboard != screenshot_clipboard::AsyncCopy::Outcome::copied || !imageOnClipboard())) return 1;
+#endif
+    if (finalClipboard == screenshot_clipboard::AsyncCopy::Outcome::failed) SDL_Log("%s", clipboardError.data());
+    const auto finalScreenshot = screenshotSave.Finish();
+    const bool reportScreenshotError = screenshotErrorUnacknowledged || (finalScreenshot && !*finalScreenshot);
+#ifdef UKNCBTL_TEST_HOOKS
+    if (testScreenshotFailureExit && !screenshotErrorUnacknowledged) return 1;
+#endif
+    if (reportScreenshotError)
+    {
+        SDL_Log("Could not save the screenshot image.");
+#ifdef UKNCBTL_TEST_HOOKS
+        if (!testScreenshotFailureExit)
+#endif
+        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Screenshot", "Could not save the screenshot image.", window.get());
+    }
+    const auto finalSnapshot = snapshotSave.Finish();
+#ifdef UKNCBTL_TEST_HOOKS
+    if (testSnapshotFailureExit && !snapshotErrorUnacknowledged) return 1;
+#endif
+    if (snapshotErrorUnacknowledged || (finalSnapshot && !*finalSnapshot))
+    {
+        SDL_Log("Could not save the state image.");
+#ifdef UKNCBTL_TEST_HOOKS
+        if (!testSnapshotFailureExit)
+#endif
+        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "State image", "Could not save the state image.", window.get());
+    }
+    const auto finalDisk = diskCreate.Finish();
+#ifdef UKNCBTL_TEST_HOOKS
+    if (testDiskFailureExit && !diskErrorUnacknowledged) return 1;
+#endif
+    if (diskErrorUnacknowledged || (finalDisk && !*finalDisk))
+    {
+        SDL_Log("Could not create the disk image.");
+#ifdef UKNCBTL_TEST_HOOKS
+        if (!testDiskFailureExit)
+#endif
+        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Disk image", "Could not create the disk image.", window.get());
+    }
+    const auto finalExport = debuggerExport.Finish();
+#ifdef UKNCBTL_TEST_HOOKS
+    if (testExportFailureExit && !exportErrorUnacknowledged) return 1;
+#endif
+    if (exportErrorUnacknowledged || (finalExport && !*finalExport))
+    {
+        SDL_Log("Could not save the debugger export. The file may be incomplete.");
+#ifdef UKNCBTL_TEST_HOOKS
+        if (!testExportFailureExit)
+#endif
+        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Debugger export", "Could not save the debugger export. The file may be incomplete.", window.get());
+    }
+    // A trace write may still be in flight when the last frame completes.
+    debugger.StopTrace();
+    const bool finalTraceError = debugger.TakeTraceError();
+#ifdef UKNCBTL_TEST_HOOKS
+    if (testTraceFailureExit && !traceErrorUnacknowledged) return 1;
+#endif
+    if (traceErrorUnacknowledged || finalTraceError)
+    {
+        SDL_Log("Could not finish the trace output.");
+#ifdef UKNCBTL_TEST_HOOKS
+        if (!testTraceFailureExit)
+#endif
+        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Trace", "Could not finish the trace output.", window.get());
+    }
+    if (auto pendingTape = tapePrepare.Finish(); pendingTape && pendingTape->Mode() == preview_tape::FileMode::recording)
+    {
+        const bool closed = pendingTape->Close();
+#ifdef UKNCBTL_TEST_HOOKS
+        if (testTapeCreateExit && (closed == testTapeOpenFailure || tape.Inserted())) return 1;
+#endif
+        tapeCreateErrorUnacknowledged |= !closed;
+    }
+    if (tapeCreateErrorUnacknowledged)
+    {
+        SDL_Log("Could not finish creating the WAV file.");
+#ifdef UKNCBTL_TEST_HOOKS
+        if (!testTapePath)
+#endif
+            (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Tape", "Could not finish creating the WAV file.", window.get());
     }
     if (!tape.Close())
     {
         SDL_Log("Could not finish the WAV file.");
         (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Tape", "Could not finish the WAV file.", window.get());
     }
-    if (!printer.Stop())
+    const bool printerClosed = printer.Stop();
+    if (!printerClosed || printerErrorUnacknowledged)
     {
         SDL_Log("Could not finish the printer output file.");
+#ifdef UKNCBTL_TEST_HOOKS
+        if (!testPrinterFailureExit)
+#endif
         (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Printer", "Could not finish the printer output file.", window.get());
+    }
+    if (auto imported = settingsImport.Finish())
+    {
+        importedSettings = imported->has_value();
+        settingsImportErrorUnacknowledged |= !importedSettings;
+    }
+    if (settingsImportErrorUnacknowledged)
+    {
+        SDL_Log("Could not import settings. Check the source, encoding and settings file.");
+#ifdef UKNCBTL_TEST_HOOKS
+        if (!testSettingsImportPath)
+#endif
+            (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Settings", settingsImportError.data(), window.get());
     }
     if (settingsPath && !importedSettings)
     {

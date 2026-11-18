@@ -37,10 +37,21 @@ bool preview_snapshot::Session::Save(const std::filesystem::path& path)
     return snapshot::Save(path, board_, timing_.Uptime());
 }
 
+std::vector<std::uint8_t> preview_snapshot::Session::Capture()
+{
+    return snapshot::Capture(board_, timing_.Uptime());
+}
+
 bool preview_snapshot::Session::Load(const std::filesystem::path& path, const std::function<void()>& stop)
 {
+    const auto image = snapshot::Read(path);
+    return image && Restore(*image, stop);
+}
+
+bool preview_snapshot::Session::Restore(std::span<const std::uint8_t> image, const std::function<void()>& stop)
+{
     auto uptime = timing_.Uptime();
-    if (!snapshot::Load(path, board_, uptime, history_, stop)) return false;
+    if (!snapshot::Restore(image, board_, uptime, history_, stop)) return false;
     timing_.ResetUptime();
     timing_.SetUptime(uptime);
     timing_.Start(frame_timing::Clock::now());

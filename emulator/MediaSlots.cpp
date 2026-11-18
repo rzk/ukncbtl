@@ -1,6 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "MediaSlots.h"
-#include "emubase/Board.h"
+#include "emubase/Emubase.h"
 #include <utility>
 
 namespace
@@ -58,7 +58,8 @@ bool media_slots::Slots::Conflicts(const std::filesystem::path& path) const
     return false;
 }
 
-std::expected<void, media_slots::Error> media_slots::Slots::Attach(Kind kind, int slot, const std::filesystem::path& path, bool readOnly)
+std::expected<void, media_slots::Error> media_slots::Slots::CheckAttach(
+    Kind kind, int slot, const std::filesystem::path& path, bool readOnly) const
 {
     if (!Valid(kind, slot)) return std::unexpected(Error::invalid_slot);
     if (path.empty()) return std::unexpected(Error::empty_path);
@@ -69,6 +70,36 @@ std::expected<void, media_slots::Error> media_slots::Slots::Attach(Kind kind, in
                 (!readOnly || !ReadOnly(mountedKind, mountedSlot))) return std::unexpected(Error::already_mounted);
     if (kind == Kind::hardDisk && !board_.IsROMCartridgeLoaded(slot + 1))
         return std::unexpected(Error::missing_cartridge);
+    return {};
+}
+
+std::expected<void, media_slots::Error> media_slots::Slots::InstallHardDisk(
+    int slot, std::filesystem::path path, bool readOnly, std::unique_ptr<CHardDrive> drive)
+{
+    const auto allowed = CheckAttach(Kind::hardDisk, slot, path, readOnly);
+    if (!allowed) return allowed;
+    if (!drive) return std::unexpected(Error::attach_failed);
+    board_.InstallHardDrive(slot + 1, std::move(drive));
+    hardPaths_[slot] = std::move(path);
+    hardReadOnly_[slot] = readOnly;
+    return {};
+}
+
+std::expected<void, media_slots::Error> media_slots::Slots::InstallFloppy(
+    int slot, std::filesystem::path path, bool readOnly, PreparedFloppyImage image)
+{
+    const auto allowed = CheckAttach(Kind::floppy, slot, path, readOnly);
+    if (!allowed) return allowed;
+    if (!board_.AttachPreparedFloppy(slot, std::move(image))) return std::unexpected(Error::attach_failed);
+    floppyPaths_[slot] = std::move(path);
+    floppyReadOnly_[slot] = readOnly;
+    return {};
+}
+
+std::expected<void, media_slots::Error> media_slots::Slots::Attach(Kind kind, int slot, const std::filesystem::path& path, bool readOnly)
+{
+    const auto allowed = CheckAttach(kind, slot, path, readOnly);
+    if (!allowed) return allowed;
     // Copy before attaching so allocation failure cannot leave an untracked mount.
     auto savedPath = path;
     const bool attached = kind == Kind::floppy ? board_.AttachFloppyImage(slot, path, readOnly) : board_.AttachHardImage(slot + 1, path, readOnly);

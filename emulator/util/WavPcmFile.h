@@ -15,6 +15,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <span>
 
 enum class WavError
 {
@@ -50,6 +51,8 @@ public:
     [[nodiscard]] std::expected<void, WavError> SetPosition(uint32_t position);
     [[nodiscard]] std::expected<uint32_t, WavError> ReadOne();
     [[nodiscard]] std::expected<void, WavError> WriteOne(uint32_t value);
+    [[nodiscard]] std::expected<void, WavError> WriteSamples(std::span<const uint8_t> samples);
+    [[nodiscard]] uint32_t RecordingLimit() const;
     // Flush a recording with a valid header, retaining its current position.
     [[nodiscard]] std::expected<void, WavError> Sync();
     [[nodiscard]] std::expected<void, WavError> Close();

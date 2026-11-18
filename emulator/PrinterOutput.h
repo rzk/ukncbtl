@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <span>
 
 // Binary parallel-port output. Opening truncates the destination.
 class PrinterOutput
@@ -11,6 +12,7 @@ class PrinterOutput
 public:
     [[nodiscard]] bool Open(const std::filesystem::path& path);
     [[nodiscard]] bool Write(std::uint8_t value);
+    [[nodiscard]] bool Write(std::span<const std::uint8_t> bytes);
     [[nodiscard]] bool Flush();
     [[nodiscard]] bool Close();
     [[nodiscard]] bool IsOpen() const { return file_.is_open(); }

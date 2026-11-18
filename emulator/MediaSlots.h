@@ -4,8 +4,11 @@
 #include <array>
 #include <expected>
 #include <filesystem>
+#include <memory>
 
 class CMotherboard;
+class CHardDrive;
+struct PreparedFloppyImage;
 
 namespace media_slots
 {
@@ -22,6 +25,7 @@ public:
     Slots(const Slots&) = delete;
     Slots& operator=(const Slots&) = delete;
     [[nodiscard]] std::expected<void, Error> Attach(Kind kind, int slot, const std::filesystem::path& path, bool readOnly = false);
+    [[nodiscard]] std::expected<void, Error> CheckAttach(Kind kind, int slot, const std::filesystem::path& path, bool readOnly) const;
     [[nodiscard]] std::expected<void, Error> Eject(Kind kind, int slot);
     [[nodiscard]] bool FlushFloppy();
     [[nodiscard]] bool Attached(Kind kind, int slot) const;
@@ -32,6 +36,11 @@ public:
     // Detect existing aliases (including hard links) to mounted disk images.
     [[nodiscard]] bool Conflicts(const std::filesystem::path& path) const;
 private:
+    friend class AsyncDiskMount;
+    [[nodiscard]] std::expected<void, Error> InstallFloppy(int slot, std::filesystem::path path, bool readOnly,
+        PreparedFloppyImage image);
+    [[nodiscard]] std::expected<void, Error> InstallHardDisk(int slot, std::filesystem::path path, bool readOnly,
+        std::unique_ptr<CHardDrive> drive);
     CMotherboard& board_;
     std::array<std::filesystem::path, 4> floppyPaths_{};
     std::array<std::filesystem::path, 2> hardPaths_{};

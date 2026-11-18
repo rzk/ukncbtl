@@ -2,13 +2,23 @@
 #include "PreviewDebugger.h"
 #include "DebugStep.h"
 #include "FrameControl.h"
+#include "FrameWorker.h"
 #include "MemoryDump.h"
 #include "emubase/Board.h"
 #include "emubase/Processor.h"
+#ifdef UKNCBTL_TRACE_TEST_HOOKS
+#include "TraceTestHooks.h"
+#include <atomic>
+#include <stdexcept>
+namespace { std::atomic<bool> failWorkerTraceWrites{false}; std::atomic<unsigned> traceRecordCountdown{0}; }
+void preview_debugger::testing::FailWorkerTraceWrites(bool fail) { failWorkerTraceWrites.store(fail); }
+void preview_debugger::testing::ThrowOnTraceRecord(unsigned count) { traceRecordCountdown.store(count); }
+#endif
 #include "util/IniEncoding.h"
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <format>
 #include <utility>
 
@@ -230,14 +240,22 @@ std::expected<void, preview_debugger::DumpError> preview_debugger::Session::Save
 std::expected<void, preview_debugger::DumpError> preview_debugger::Session::SaveMemory(
     const std::filesystem::path& path, MemorySource source, Processor selected, std::uint16_t start, std::uint16_t end) const
 {
+    auto words = CaptureMemory(source, selected, start, end);
+    if (!words) return std::unexpected(words.error());
+    if (!memory_dump::Save(path, *words)) return std::unexpected(DumpError::file_error);
+    return {};
+}
+
+std::expected<std::vector<std::uint16_t>, preview_debugger::DumpError> preview_debugger::Session::CaptureMemory(
+    MemorySource source, Processor selected, std::uint16_t start, std::uint16_t end) const
+{
     const auto range = memory_dump::Range(start, end);
     if (!range || static_cast<int>(source) < static_cast<int>(MemorySource::selected) ||
         static_cast<int>(source) > static_cast<int>(MemorySource::rom)) return std::unexpected(DumpError::invalid_range);
     std::vector<std::uint16_t> words(range->Count());
     for (std::size_t index = 0; index < words.size(); ++index)
         words[index] = InspectMemory(source, selected, static_cast<std::uint16_t>((range->first + index) * 2), false).value_or(0);
-    if (!memory_dump::Save(path, words)) return std::unexpected(DumpError::file_error);
-    return {};
+    return words;
 }
 std::vector<preview_debugger::Line> preview_debugger::Session::Disassemble(Processor which, std::uint16_t address,
     unsigned count, bool useSubtitles) const
@@ -267,9 +285,12 @@ std::expected<void, subtitles::FileError> preview_debugger::Session::LoadSubtitl
 {
     auto loaded = subtitles::LoadFile(path);
     if (!loaded) return std::unexpected(loaded.error());
-    auto savedPath = path;
-    subtitles_ = std::move(*loaded); subtitlePath_ = std::move(savedPath); subtitlesLoaded_ = true;
+    SetSubtitles(path, std::move(*loaded));
     return {};
+}
+void preview_debugger::Session::SetSubtitles(std::filesystem::path path, std::vector<DisasmSubtitleItem> items)
+{
+    subtitles_ = std::move(items); subtitlePath_ = std::move(path); subtitlesLoaded_ = true;
 }
 void preview_debugger::Session::UnloadSubtitles()
 { subtitles_.clear(); subtitlePath_.clear(); subtitlesLoaded_ = false; }
@@ -287,7 +308,23 @@ bool preview_debugger::Session::StepOver(Processor which)
     PrepareRun();
     return true;
 }
-bool preview_debugger::Session::RunFrame() { return frame_control::RunFrame(board_, cpu_, ppu_); }
+bool preview_debugger::Session::RunFrame()
+{
+    inFrame_ = true;
+    try
+    {
+        const bool completed = frame_control::RunFrame(board_, cpu_, ppu_);
+        inFrame_ = false;
+        SubmitTraceBatch();
+        return completed;
+    }
+    catch (...)
+    {
+        inFrame_ = false;
+        SubmitTraceBatch();
+        throw;
+    }
+}
 bool preview_debugger::Session::RunTo(Processor which, std::uint16_t address)
 {
     if ((address & 1) || address == BreakpointSet::NoBreakpoint) return false;
@@ -313,10 +350,20 @@ void preview_debugger::Session::UpdateCallbacks()
 
 bool preview_debugger::Session::StartTrace(const std::filesystem::path& path, std::uint16_t mask)
 {
-    if (trace_ || path.empty() || !mask || (mask & ~TraceAll)) return false;
+    if (trace_ || traceError_ || path.empty() || !mask || (mask & ~TraceAll)) return false;
     auto savedPath = path;
     trace_.emplace(path);
     if (!trace_->Open()) { trace_.reset(); return false; }
+    try
+    {
+        traceWriter_ = std::make_unique<FrameWorker>([this] {
+#ifdef UKNCBTL_TRACE_TEST_HOOKS
+            if (failWorkerTraceWrites.load()) return false;
+#endif
+            return trace_->Append(traceWork_);
+        });
+    }
+    catch (...) { trace_.reset(); return false; }
     tracePath_ = std::move(savedPath);
     traceMask_ = mask;
     traceError_ = false;
@@ -335,6 +382,10 @@ bool preview_debugger::Session::SetTraceMask(std::uint16_t mask)
 void preview_debugger::Session::StopTrace()
 {
     traceMask_ = 0;
+    (void)FinishTraceBatch(true);
+    traceWriter_.reset();
+    traceWork_.clear();
+    traceBatch_.clear();
     trace_.reset();
     tracePath_.clear();
     UpdateCallbacks();
@@ -343,6 +394,7 @@ void preview_debugger::Session::StopTrace()
 bool preview_debugger::Session::ClearTrace()
 {
     if (!trace_ || !traceMask_) return false;
+    if (!FinishTraceBatch(true)) return false;
     if (trace_->Clear()) return true;
     traceError_ = true; traceMask_ = 0;
     return false;
@@ -358,14 +410,56 @@ bool preview_debugger::Session::TraceConflicts(const std::filesystem::path& path
 
 bool preview_debugger::Session::TakeTraceError()
 {
-    if (!std::exchange(traceError_, false)) return false;
+    (void)FinishTraceBatch(false);
+    if (!traceError_) return false;
     StopTrace();
+    traceError_ = false;
     return true;
 }
 
 void preview_debugger::Session::TraceWrite(std::string_view text)
 {
-    if (trace_ && !trace_->Append(text)) { traceError_ = true; traceMask_ = 0; }
+    if (!trace_ || !traceMask_) return;
+#ifdef UKNCBTL_TRACE_TEST_HOOKS
+    if (traceRecordCountdown.load() > 0 && traceRecordCountdown.fetch_sub(1) == 1)
+        throw std::runtime_error("Injected trace record failure");
+#endif
+    if (inFrame_)
+    {
+        traceBatch_.append(text);
+        if (traceBatch_.size() >= 256 * 1024) SubmitTraceBatch();
+        return;
+    }
+    if (!FinishTraceBatch(true)) return;
+    if (!trace_->Append(text)) { traceError_ = true; traceMask_ = 0; }
+}
+
+bool preview_debugger::Session::FinishTraceBatch(bool wait)
+{
+    if (tracePending_)
+    {
+        if (!wait && !traceWriter_->WaitFor(std::chrono::milliseconds(0)))
+            return !traceError_;
+        const auto outcome = traceWriter_->WaitOutcome();
+        tracePending_ = false;
+        traceWork_.clear();
+        if (outcome != FrameWorker::Outcome::completed) { traceError_ = true; traceMask_ = 0; }
+    }
+    return !traceError_;
+}
+
+void preview_debugger::Session::SubmitTraceBatch()
+{
+    if (traceBatch_.empty()) return;
+    if (!trace_ || !FinishTraceBatch(true)) { traceBatch_.clear(); return; }
+    try
+    {
+        traceWork_ = std::move(traceBatch_);
+        traceBatch_.clear();
+        if (!traceWriter_->Start()) { traceWork_.clear(); traceError_ = true; traceMask_ = 0; return; }
+        tracePending_ = true;
+    }
+    catch (...) { traceBatch_.clear(); traceWork_.clear(); traceError_ = true; traceMask_ = 0; }
 }
 
 void preview_debugger::Session::OnFloppyTrace(void* context, std::wstring_view text)

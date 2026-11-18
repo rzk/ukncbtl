@@ -13,6 +13,7 @@ shell with Ninja, the MSVC compiler and Clang available on `PATH`.
 | `UKNCBTL_BUILD_BENCHMARKS` | `OFF` | Headless `EmulatorBenchmarks` executable |
 | `UKNCBTL_ENABLE_TRACY` | `OFF` | Tracy instrumentation in the app and shared core/scaler |
 | `UKNCBTL_ENABLE_ASAN` | `OFF` | MSVC AddressSanitizer for the application, renderer, tests and benchmarks |
+| `UKNCBTL_BUILD_FRAME_BENCHMARK` | `OFF` | Portable, headless frame-overlap, trace, and tape measurements |
 
 CMake fetches GoogleTest 1.17.0, Google Benchmark 1.9.4 and Tracy 0.12.2 by
 pinned commit, as needed. GoogleTest and Benchmark are linked only into their
@@ -64,6 +65,43 @@ measurements.
 
 ## Speed measurements
 
+To compare the SDL frame worker with serial video preparation without fetching a
+benchmark library, enable the portable frame workload in a Release build:
+
+```powershell
+cmake -S . -B build/windows-clang -DUKNCBTL_BUILD_FRAME_BENCHMARK=ON
+cmake --build build/windows-clang --target FrameOverlapBenchmark --parallel
+./build/windows-clang/FrameOverlapBenchmark.exe
+```
+
+This compares synthetic CPU/PPU execution and direct board video decoding in
+serial with snapshot copying, video decoding and frame execution overlapped.
+Both paths scale the decoded image; neither includes a window, presentation,
+audio, disk or pacing. It alternates order across five repetitions, checks a
+checksum of sampled video pixels, and reports median wall time per
+frame. It is a focused measurement rather than an application FPS estimate.
+
+The same option also enables a trace comparison:
+
+```powershell
+cmake --build build/windows-clang --target TraceBatchBenchmark --parallel
+./build/windows-clang/TraceBatchBenchmark.exe
+```
+
+It runs the same synthetic CPU/PPU workload with CPU instruction tracing, once
+with a flush for every record and once with the batched writer. Each measurement
+includes draining the log; three alternating repetitions are compared, and the
+complete output files must match. Results depend on the host filesystem and do
+not include SDL rendering, audio, or pacing.
+
+For a focused tape recording comparison, build and run `TapeFrameBenchmark` with
+the same option. It compares five 200-frame runs each with no recording,
+direct 44.1 kHz recording and buffered recording. Timings include WAV
+finalization, and the two recording modes must produce identical files at
+the expected sample rate and length. The benchmark excludes playback, SDL
+rendering, audio output and pacing. Storage latency and caching can differ
+substantially from a user's tape workload.
+
 ```powershell
 cmake -S . -B build/legacy -DUKNCBTL_BUILD_BENCHMARKS=ON -DUKNCBTL_ENABLE_TRACY=OFF
 cmake --build build/legacy --target EmulatorBenchmarks --parallel
@@ -106,7 +144,11 @@ on localhost. Capture collection begins when the profiler connects.
 Frame markers delimit iterations of the host main loop, including paused
 iterations. SDL zones cover the main loop, events, ImGui frame setup and interface, emulation,
 video decode, screen scaling and drawing, audio submission, rendering, presentation,
-and pacing. The legacy frontend also reports `Prepare screen` and `Audio buffer wait`.
+and pacing. `Video memory snapshot` measures the RAM copy before the SDL frame
+worker starts; `Frame worker wait` measures the remaining wait after video and
+presentation overlap the frame. Compare these zones and total frame time when
+evaluating the worker, rather than assuming that the copy pays for itself. The
+legacy frontend also reports `Prepare screen` and `Audio buffer wait`.
 Audio and pacing waits are deliberate
 throttling, so inspect them separately from computation. The screen-scaling zone
 appears only on paths that call the CPU scaler. No per-instruction or per-sample

@@ -111,36 +111,56 @@ bool CFloppyController::AttachImage(int drive, const wchar_t* sFileName)
 
 bool CFloppyController::AttachImage(int drive, const std::filesystem::path& path, bool readOnly)
 {
-    if (path.empty() || drive < 0 || drive >= static_cast<int>(m_drivedata.size()) || !FlushChanges())
-        return false;
+    if (path.empty() || !PrepareAttachment(drive)) return false;
+    auto image = OpenImage(path, readOnly);
+    if (!image) return false;
+    InstallImage(drive, std::move(*image));
+    return true;
+}
 
-    // If image attached - detach one first
+bool CFloppyController::PrepareAttachment(int drive)
+{
+    if (drive < 0 || drive >= static_cast<int>(m_drivedata.size()) || !FlushChanges()) return false;
     if (m_drivedata[drive].fpFile != nullptr)
     {
         DetachImage(drive);
         if (m_drivedata[drive].fpFile != nullptr)
             return false;
     }
+    return true;
+}
 
+std::optional<PreparedFloppyImage> CFloppyController::OpenImage(const std::filesystem::path& path, bool readOnly)
+{
+    if (path.empty()) return std::nullopt;
     // Detect if this is a .dsk image or .rtd image, using the file extension
     auto extension = path.extension().u8string();
     for (auto& ch : extension)
         if (ch >= u8'A' && ch <= u8'Z') ch += u8'a' - u8'A';
-    m_drivedata[drive].okNetRT11Image = extension == u8".rtd";
-
-    // Open file
-    m_drivedata[drive].okReadOnly = readOnly;
     auto file = std::make_unique<std::fstream>();
     if (!readOnly) file->open(path, std::ios::binary | std::ios::in | std::ios::out);
     if (readOnly || !*file)
     {
-        m_drivedata[drive].okReadOnly = true;
+        readOnly = true;
         file = std::make_unique<std::fstream>(path, std::ios::binary | std::ios::in);
     }
-    if (!*file)
-        return false;
-    m_drivedata[drive].fpFile = std::move(file);
+    if (!*file) return std::nullopt;
+    return PreparedFloppyImage{std::move(file), extension == u8".rtd", readOnly};
+}
 
+bool CFloppyController::AttachPreparedImage(int drive, PreparedFloppyImage image)
+{
+    if (!image.stream || !PrepareAttachment(drive)) return false;
+    InstallImage(drive, std::move(image));
+    return true;
+}
+
+void CFloppyController::InstallImage(int drive, PreparedFloppyImage image)
+{
+    auto& target = m_drivedata[drive];
+    target.fpFile = std::move(image.stream);
+    target.okNetRT11Image = image.netRt11;
+    target.okReadOnly = image.readOnly;
     m_side = m_track = m_drivedata[drive].datatrack = m_drivedata[drive].dataside = 0;
     m_drivedata[drive].dataptr = 0;
     m_datareg = m_writereg = m_shiftreg = 0;
@@ -151,8 +171,6 @@ bool CFloppyController::AttachImage(int drive, const std::filesystem::path& path
     m_flags = FLOPPY_CMD_CORRECTION500 | FLOPPY_CMD_SIDEUP | FLOPPY_CMD_DIR | FLOPPY_CMD_SKIPSYNC;
 
     PrepareTrack();
-
-    return true;
 }
 
 void CFloppyController::DetachImage(int drive)

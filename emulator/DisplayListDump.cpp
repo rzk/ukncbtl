@@ -17,26 +17,28 @@ std::string display_list_dump::FormatLine(int line, const video::DisplayTag& tag
     return result;
 }
 
-bool display_list_dump::Write(std::ostream& output, const CMotherboard& board)
+namespace {
+template<class Memory> bool WriteFrom(std::ostream& output, const Memory& memory)
 {
     output << "line address  tag 1  tag 2  addr   next   \n";
     if (!output) return false;
     video::DisplayListCursor cursor;
     for (int line = 0; line < video::TotalLines; ++line)
     {
-        output << FormatLine(line, cursor.Next(board));
+        output << display_list_dump::FormatLine(line, cursor.Next(memory));
         if (!output) return false;
     }
     return true;
 }
 
-std::expected<void, display_list_dump::FileError> display_list_dump::Save(
-    const std::filesystem::path& path, const CMotherboard& board)
+template<class Memory> std::expected<void, display_list_dump::FileError> SaveFrom(
+    const std::filesystem::path& path, const Memory& memory)
 {
+    using display_list_dump::FileError;
     if (path.empty()) return std::unexpected(FileError::open_failed);
     std::ofstream file(path, std::ios::out | std::ios::trunc);
     if (!file) return std::unexpected(FileError::open_failed);
-    const bool written = Write(file, board);
+    const bool written = WriteFrom(file, memory);
     file.flush();
     const bool flushed = static_cast<bool>(file);
     file.close();
@@ -44,3 +46,11 @@ std::expected<void, display_list_dump::FileError> display_list_dump::Save(
     if (!file) return std::unexpected(FileError::close_failed);
     return {};
 }
+}
+
+bool display_list_dump::Write(std::ostream& output, const CMotherboard& board) { return WriteFrom(output, board); }
+bool display_list_dump::Write(std::ostream& output, const video::MemorySnapshot& snapshot) { return WriteFrom(output, snapshot); }
+std::expected<void, display_list_dump::FileError> display_list_dump::Save(const std::filesystem::path& path, const CMotherboard& board)
+{ return SaveFrom(path, board); }
+std::expected<void, display_list_dump::FileError> display_list_dump::Save(const std::filesystem::path& path, const video::MemorySnapshot& snapshot)
+{ return SaveFrom(path, snapshot); }

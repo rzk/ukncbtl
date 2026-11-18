@@ -362,6 +362,11 @@ bool CMotherboard::AttachFloppyImage(int slot, const std::filesystem::path& path
     return m_pFloppyCtl->AttachImage(slot, path, readOnly);
 }
 
+bool CMotherboard::AttachPreparedFloppy(int slot, PreparedFloppyImage image)
+{
+    return m_pFloppyCtl->AttachPreparedImage(slot, std::move(image));
+}
+
 void CMotherboard::DetachFloppyImage(int slot)
 {
     assert(slot >= 0 && slot < 4);
@@ -431,13 +436,19 @@ bool CMotherboard::AttachHardImage(int slot, const std::filesystem::path& path, 
     if (!drive->AttachImage(path, readOnly))
         return false;
 
+    InstallHardDrive(slot, std::move(drive));
+    return true;
+}
+
+void CMotherboard::InstallHardDrive(int slot, std::unique_ptr<CHardDrive> drive)
+{
+    assert(slot >= 1 && slot <= 2 && drive);
     drive->Reset();
     const auto index = static_cast<std::size_t>(slot - 1);
     if (m_pHardDrives[index] && !m_hardFailures[index])
         m_hardFailures[index] = m_pHardDrives[index]->TakeHostFailure();
     m_pHardDrives[slot - 1] = std::move(drive);
     m_pSecondMemCtl->UpdateMemoryMap();
-    return true;
 }
 void CMotherboard::DetachHardImage(int slot)
 {

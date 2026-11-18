@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <span>
+#include <vector>
 
 class CMotherboard;
 
@@ -23,8 +25,10 @@ public:
     void ResetTracking();
     [[nodiscard]] std::uint32_t Uptime() const { return timing_.Uptime(); }
     [[nodiscard]] bool Save(const std::filesystem::path& path);
+    [[nodiscard]] std::vector<std::uint8_t> Capture();
     // stop runs only after a snapshot has been validated, before restoration.
     [[nodiscard]] bool Load(const std::filesystem::path& path, const std::function<void()>& stop);
+    [[nodiscard]] bool Restore(std::span<const std::uint8_t> image, const std::function<void()>& stop);
 private:
     CMotherboard& board_;
     InstructionHistory history_;

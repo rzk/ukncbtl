@@ -1,5 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "MediaSlots.h"
+#include "AsyncDiskMount.h"
+#include "FrameWorker.h"
 #include "PreviewMediaRestore.h"
 #include "PreviewRoms.h"
 #include "emubase/Emubase.h"
@@ -8,6 +10,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -74,6 +77,152 @@ TEST_F(MediaSlotsTest, AttachesAndEjectsAllDriveSlots)
         ASSERT_TRUE(media.Eject(media_slots::Kind::hardDisk, slot));
         EXPECT_FALSE(board.IsHardImageAttached(slot + 1));
     }
+}
+
+TEST_F(MediaSlotsTest, WorkerFramesKeepReadOnlyFloppyIntactThroughFlushAndEject)
+{
+    const auto readImage = [&] {
+        std::ifstream input(floppy, std::ios::binary);
+        return std::vector<char>(std::istreambuf_iterator<char>(input), {});
+    };
+    const auto original = readImage();
+    ASSERT_FALSE(original.empty());
+    CMotherboard board;
+    board.Reset();
+    board.GetCPU()->SetDCLOPin(true);
+    board.GetPPU()->SetDCLOPin(true);
+    media_slots::Slots media(board);
+    media_slots::AsyncDiskMount mount;
+    ASSERT_TRUE(mount.Start(media_slots::Kind::floppy, floppy, 0, true));
+    FrameWorker worker([&] { return board.SystemFrame(); });
+    ASSERT_TRUE(worker.Start());
+    ASSERT_TRUE(worker.Wait());
+    EXPECT_FALSE(media.Attached(media_slots::Kind::floppy, 0));
+    const auto mounted = mount.Finish(media);
+    ASSERT_TRUE(mounted && *mounted);
+    EXPECT_TRUE(media.RequestedReadOnly(media_slots::Kind::floppy, 0));
+    board.SetFloppyState(02003 | FLOPPY_CMD_ENGINESTART);
+    ASSERT_TRUE(board.IsFloppyEngineOn());
+    board.SetFloppyData(0x1234);
+    for (int frame = 0; frame < 5; ++frame)
+    {
+        ASSERT_TRUE(worker.Start());
+        ASSERT_TRUE(worker.Wait());
+    }
+    EXPECT_TRUE(media.ReadOnly(media_slots::Kind::floppy, 0));
+    EXPECT_TRUE(media.FlushFloppy());
+    EXPECT_FALSE(board.TakeFloppyFailure());
+    ASSERT_TRUE(media.Eject(media_slots::Kind::floppy, 0));
+    EXPECT_EQ(readImage(), original);
+}
+
+TEST_F(MediaSlotsTest, WorkerFrameCommitsHardDiskWriteBeforeEject)
+{
+    CMotherboard board;
+    board.Reset();
+    board.GetCPU()->SetDCLOPin(true);
+    board.GetPPU()->SetDCLOPin(true);
+    const std::array<std::uint8_t, 24 * 1024> cartridge{};
+    board.LoadROMCartridge(1, cartridge);
+    media_slots::Slots media(board);
+    media_slots::AsyncDiskMount mount;
+    ASSERT_TRUE(mount.Start(media_slots::Kind::hardDisk, hard, 0, false));
+    EXPECT_EQ(mount.Path(), hard);
+    EXPECT_FALSE(mount.Start(media_slots::Kind::floppy, floppy, 1, true));
+    FrameWorker worker([&] { return board.SystemFrame(); });
+    ASSERT_TRUE(worker.Start());
+    ASSERT_TRUE(worker.Wait());
+    EXPECT_FALSE(media.Attached(media_slots::Kind::hardDisk, 0));
+    const auto result = mount.Finish(media);
+    ASSERT_TRUE(result && *result);
+    EXPECT_FALSE(media.ReadOnly(media_slots::Kind::hardDisk, 0));
+    ASSERT_TRUE(worker.Start());
+    ASSERT_TRUE(worker.Wait()); // Complete the drive's reset delay.
+
+    // The board maps and inverts the guest QBUS address and data bits.
+    const auto writePort = [&](std::uint16_t ataPort, std::uint16_t value) {
+        const auto qbusPort = static_cast<std::uint16_t>((~ataPort & 7) << 1);
+        board.SetHardPortWord(1, qbusPort, static_cast<std::uint16_t>(~value));
+    };
+    writePort(0x1f4, 0); writePort(0x1f5, 0); writePort(0x1f6, 0);
+    writePort(0x1f3, 2); writePort(0x1f2, 1); writePort(0x1f7, 0x30);
+    for (int i = 0; i < 256; ++i) writePort(0x1f0, 0x1234);
+    ASSERT_TRUE(worker.Start());
+    ASSERT_TRUE(worker.Wait()); // Periodic drive ticks commit the sector.
+    const auto status = static_cast<std::uint16_t>(~board.GetHardPortWord(1, 0));
+    EXPECT_EQ(status & 0x89, 0);
+    EXPECT_FALSE(board.TakeHardDiskFailure());
+    ASSERT_TRUE(media.Eject(media_slots::Kind::hardDisk, 0));
+    std::ifstream input(hard, std::ios::binary);
+    input.seekg(512);
+    std::array<unsigned char, 512> sector{};
+    ASSERT_TRUE(input.read(reinterpret_cast<char*>(sector.data()), sector.size()));
+    for (std::size_t i = 0; i < sector.size(); i += 2)
+    { EXPECT_EQ(sector[i], 0xcb); EXPECT_EQ(sector[i + 1], 0xed); }
+}
+
+TEST_F(MediaSlotsTest, AsyncHardMountRechecksCartridgeAndConflicts)
+{
+    using media_slots::Error;
+    using media_slots::Kind;
+    CMotherboard board;
+    board.Reset();
+    const std::array<std::uint8_t, 24 * 1024> cartridge{};
+    media_slots::Slots media(board);
+    media_slots::AsyncDiskMount mount;
+    board.LoadROMCartridge(1, cartridge);
+    ASSERT_TRUE(media.CheckAttach(Kind::hardDisk, 0, hard, true));
+    ASSERT_TRUE(mount.Start(Kind::hardDisk, hard, 0, true));
+    board.UnloadROMCartridge(1);
+    auto result = mount.Finish(media);
+    ASSERT_TRUE(result && !*result);
+    EXPECT_EQ(result->error(), Error::missing_cartridge);
+
+    board.LoadROMCartridge(1, cartridge);
+    ASSERT_TRUE(mount.Start(Kind::hardDisk, hard, 0, true));
+    ASSERT_TRUE(media.Attach(Kind::floppy, 0, hard));
+    result = mount.Finish(media);
+    ASSERT_TRUE(result && !*result);
+    EXPECT_EQ(result->error(), Error::already_mounted);
+    EXPECT_FALSE(media.Attached(Kind::hardDisk, 0));
+    ASSERT_TRUE(media.Eject(Kind::floppy, 0));
+
+    ASSERT_TRUE(mount.Start(Kind::hardDisk, directory / "missing.img", 0, true));
+    result = mount.Finish(media);
+    ASSERT_TRUE(result && !*result);
+    EXPECT_EQ(result->error(), Error::attach_failed);
+    ASSERT_TRUE(mount.Start(Kind::hardDisk, hard, 0, true));
+    result = mount.Finish(media);
+    ASSERT_TRUE(result && *result);
+    EXPECT_TRUE(media.RequestedReadOnly(Kind::hardDisk, 0));
+    EXPECT_TRUE(media.ReadOnly(Kind::hardDisk, 0));
+    EXPECT_FALSE(mount.Pending());
+}
+
+TEST_F(MediaSlotsTest, AsyncFloppyMountRechecksOccupancyAndCanRetry)
+{
+    using media_slots::Kind;
+    CMotherboard board;
+    board.Reset();
+    media_slots::Slots media(board);
+    media_slots::AsyncDiskMount mount;
+    ASSERT_TRUE(mount.Start(Kind::floppy, floppy, 3, false));
+    ASSERT_TRUE(media.Attach(Kind::floppy, 3, hard, true));
+    auto result = mount.Finish(media);
+    ASSERT_TRUE(result && !*result);
+    EXPECT_EQ(result->error(), media_slots::Error::occupied);
+    ASSERT_NE(media.Path(Kind::floppy, 3), nullptr);
+    EXPECT_EQ(*media.Path(Kind::floppy, 3), hard);
+    ASSERT_TRUE(media.Eject(Kind::floppy, 3));
+
+    ASSERT_TRUE(mount.Start(Kind::floppy, directory / "missing.dsk", 3, false));
+    result = mount.Finish(media);
+    ASSERT_TRUE(result && !*result);
+    EXPECT_EQ(result->error(), media_slots::Error::attach_failed);
+    ASSERT_TRUE(mount.Start(Kind::floppy, floppy, 3, false));
+    result = mount.Finish(media);
+    ASSERT_TRUE(result && *result);
+    EXPECT_FALSE(media.ReadOnly(Kind::floppy, 3));
 }
 
 TEST_F(MediaSlotsTest, RestoresMediaInDependencyOrderAndPreservesFailedPaths)

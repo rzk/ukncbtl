@@ -70,4 +70,38 @@ execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDI
 if(NOT result EQUAL 0)
   message(FATAL_ERROR "Unicode media startup failed: ${result}: ${error}")
 endif()
+set(disk "${TEST_DIR}/disk-日本.img")
+file(SHA256 "${disk}" original)
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  "UKNCBTL_TEST_HARD_MOUNT_PATH=${disk}" "UKNCBTL_TEST_SCREENSHOT_PATH=${disk}"
+  UKNCBTL_TEST_SCREENSHOT_CONFLICT=1 "${APP}" --smoke-test --cartridge 1 "${TEST_DIR}/cart-日本.rom"
+  RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
+if(NOT result STREQUAL "0")
+  message(FATAL_ERROR "Async hard disk mount failed (${result}): ${error}")
+endif()
+file(SHA256 "${disk}" after)
+if(NOT after STREQUAL original)
+  message(FATAL_ERROR "Conflicting screenshot changed the hard disk image")
+endif()
+file(WRITE "${disk}" "invalid disk")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  "UKNCBTL_TEST_HARD_MOUNT_PATH=${disk}" UKNCBTL_TEST_HARD_MOUNT_FAILURE=1
+  "${APP}" --smoke-test --cartridge 1 "${TEST_DIR}/cart-日本.rom"
+  RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
+if(NOT result STREQUAL "0")
+  message(FATAL_ERROR "Async hard disk failure handling failed (${result}): ${error}")
+endif()
+set(floppy "${TEST_DIR}/floppy-日本.dsk")
+file(SHA256 "${floppy}" original)
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  "UKNCBTL_TEST_FLOPPY_MOUNT_PATH=${floppy}" "UKNCBTL_TEST_SCREENSHOT_PATH=${floppy}"
+  UKNCBTL_TEST_SCREENSHOT_CONFLICT=1 "${APP}" --smoke-test
+  RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
+if(NOT result STREQUAL "0")
+  message(FATAL_ERROR "Async floppy mount failed (${result}): ${error}")
+endif()
+file(SHA256 "${floppy}" after)
+if(NOT after STREQUAL original)
+  message(FATAL_ERROR "Conflicting screenshot changed the floppy image")
+endif()
 file(REMOVE "${TEST_DIR}/cart-日本.rom" "${TEST_DIR}/disk-日本.img" "${TEST_DIR}/floppy-日本.dsk" "${TEST_DIR}/settings.ini" "${TEST_DIR}/state-日本.uknc")

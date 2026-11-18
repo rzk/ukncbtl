@@ -15,6 +15,7 @@
 
 class CMotherboard;
 class CProcessor;
+class FrameWorker;
 namespace preview_debugger
 {
 enum class Processor { cpu, ppu };
@@ -39,6 +40,8 @@ struct Line
 [[nodiscard]] std::optional<std::string> ToUtf8(std::wstring_view text);
 
 // Owns breakpoint storage borrowed by the board. The board must outlive it.
+// Calls on the session and board must be serialized with RunFrame. Trace output
+// from a frame may finish afterward; ClearTrace and StopTrace drain it.
 class Session
 {
 public:
@@ -78,9 +81,12 @@ public:
     // Inaccessible words are written as zero; no device reads are performed.
     [[nodiscard]] std::expected<void, DumpError> SaveMemory(const std::filesystem::path& path,
         MemorySource source, Processor selected, std::uint16_t start, std::uint16_t end) const;
+    [[nodiscard]] std::expected<std::vector<std::uint16_t>, DumpError> CaptureMemory(
+        MemorySource source, Processor selected, std::uint16_t start, std::uint16_t end) const;
     [[nodiscard]] std::vector<Line> Disassemble(Processor which, std::uint16_t address, unsigned count,
         bool useSubtitles = false) const;
     [[nodiscard]] std::expected<void, subtitles::FileError> LoadSubtitles(const std::filesystem::path& path);
+    void SetSubtitles(std::filesystem::path path, std::vector<DisasmSubtitleItem> items);
     void UnloadSubtitles();
     [[nodiscard]] const std::filesystem::path* SubtitlePath() const { return subtitlesLoaded_ ? &subtitlePath_ : nullptr; }
     void PrepareRun();
@@ -107,6 +113,8 @@ private:
     struct Comparison;
     void UpdateCallbacks();
     void TraceWrite(std::string_view text);
+    void SubmitTraceBatch();
+    bool FinishTraceBatch(bool wait);
     static void OnInstruction(void* context, const CProcessor* processor, std::uint16_t address, std::uint16_t opcode);
     static void OnInterrupt(void* context, const CProcessor* processor, std::uint16_t oldPc, std::uint16_t vector);
     static void OnFloppyTrace(void* context, std::wstring_view text);
@@ -116,6 +124,11 @@ private:
     InstructionHistory history_;
     bool historyEnabled_ = false;
     std::optional<DebugLogFile> trace_;
+    std::string traceBatch_;
+    std::string traceWork_;
+    std::unique_ptr<FrameWorker> traceWriter_;
+    bool tracePending_ = false;
+    bool inFrame_ = false;
     std::filesystem::path tracePath_;
     std::uint16_t traceMask_ = 0;
     bool traceError_ = false;
