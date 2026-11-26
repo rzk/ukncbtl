@@ -11,13 +11,122 @@
 namespace
 {
 std::atomic<bool> failRecordingWrites{false};
+std::atomic<int> failPlaybackAt{-1};
 }
 
 void preview_tape::testing::FailRecordingWrites(bool fail)
 {
     failRecordingWrites.store(fail);
 }
+
+void preview_tape::testing::FailPlaybackAt(int position)
+{
+    failPlaybackAt.store(position);
+}
 #endif
+
+class preview_tape::Session::PlaybackReader
+{
+public:
+    explicit PlaybackReader(WavPcmFile file)
+        : file_(std::move(file)), length_(file_.Length()), frequency_(file_.Frequency()),
+          reader_([this] { return ReadBlock(); }) {}
+
+    void Prefetch()
+    {
+        const auto& block = blocks_[reading_];
+        if (pending_ || block.failed || position_ + block.size - offset_ >= length_) return;
+        pending_ = reader_.Start();
+        if (!pending_) blocks_[reading_].failed = true;
+    }
+
+    [[nodiscard]] std::expected<std::uint32_t, WavError> ReadOne()
+    {
+        if (offset_ == blocks_[reading_].size)
+        {
+            if (blocks_[reading_].failed) return std::unexpected(WavError::io_error);
+            if (position_ == length_) return std::unexpected(WavError::end_of_data);
+            Prefetch();
+            if (!pending_) return std::unexpected(WavError::io_error);
+            Collect();
+            std::swap(reading_, filling_);
+            offset_ = 0;
+            const auto& block = blocks_[reading_];
+            if (block.size == 0)
+                return std::unexpected(block.failed ? WavError::io_error : WavError::end_of_data);
+            Prefetch();
+        }
+        ++position_;
+        return blocks_[reading_].samples[offset_++];
+    }
+
+    [[nodiscard]] bool Seek(std::uint32_t position)
+    {
+        if (position > length_) return false;
+        Collect();
+        const bool moved = file_.SetPosition(position).has_value();
+        blocks_[reading_].size = offset_ = 0;
+        blocks_[reading_].failed = !moved;
+        if (moved) position_ = position;
+        return moved;
+    }
+
+    [[nodiscard]] bool Close()
+    {
+        Collect();
+        return file_.Close().has_value();
+    }
+
+    [[nodiscard]] std::uint32_t Position() const { return position_; }
+    [[nodiscard]] std::uint32_t Length() const { return length_; }
+    [[nodiscard]] int Frequency() const { return frequency_; }
+
+private:
+    struct Block
+    {
+        std::array<std::uint32_t, 4096> samples{};
+        std::size_t size = 0;
+        bool failed = false;
+    };
+
+    bool ReadBlock()
+    {
+        auto& block = blocks_[filling_];
+        block.size = 0;
+        block.failed = false;
+        auto count = (std::min)(block.samples.size(), static_cast<std::size_t>(length_ - file_.Position()));
+        bool injectedFailure = false;
+#ifdef UKNCBTL_TAPE_TEST_HOOKS
+        const int failurePosition = failPlaybackAt.load();
+        const auto position = file_.Position();
+        if (failurePosition >= 0 && static_cast<std::uint32_t>(failurePosition) >= position &&
+            static_cast<std::uint32_t>(failurePosition) - position < count)
+        {
+            count = static_cast<std::uint32_t>(failurePosition) - position;
+            injectedFailure = true;
+        }
+#endif
+        const auto result = file_.ReadSamples(std::span{block.samples}.first(count));
+        block.size = result.samples;
+        return !result.error && !injectedFailure;
+    }
+
+    void Collect()
+    {
+        if (!pending_) return;
+        blocks_[filling_].failed = reader_.WaitOutcome() != FrameWorker::Outcome::completed;
+        pending_ = false;
+    }
+
+    WavPcmFile file_;
+    const std::uint32_t length_;
+    const int frequency_;
+    std::array<Block, 2> blocks_;
+    std::size_t reading_ = 0, filling_ = 1, offset_ = 0;
+    std::uint32_t position_ = 0;
+    bool pending_ = false;
+    FrameWorker reader_;
+};
 
 class preview_tape::Session::RecordingWriter
 {
@@ -143,12 +252,12 @@ bool preview_tape::Session::Open(const std::filesystem::path& path)
 
 bool preview_tape::Session::Insert(std::filesystem::path path, WavPcmFile file, FileMode mode)
 {
-    if (mode == FileMode::recording)
+    try
     {
-        try { recording_ = std::make_unique<RecordingWriter>(std::move(file)); }
-        catch (...) { return false; }
+        if (mode == FileMode::recording) recording_ = std::make_unique<RecordingWriter>(std::move(file));
+        else playback_ = std::make_unique<PlaybackReader>(std::move(file));
     }
-    else file_.emplace(std::move(file));
+    catch (...) { return false; }
     path_ = std::move(path);
     waveform_.fill(128);
     state_.Insert(mode == FileMode::recording);
@@ -178,22 +287,29 @@ bool preview_tape::AsyncPrepare::Result::Close()
     return closed;
 }
 
+preview_tape::AsyncPrepare::Result preview_tape::AsyncPrepare::Prepare(std::filesystem::path path, FileMode mode)
+{
+    const auto open = [&]() -> std::expected<WavPcmFile, WavError> {
+        try
+        {
+            if (mode == FileMode::playback) return WavPcmFile::Open(path);
+            auto file = WavPcmFile::Create(path, 44100);
+            if (file && !file->Sync()) return std::unexpected(WavError::io_error);
+            return file;
+        }
+        catch (...) { return std::unexpected(WavError::io_error); }
+    };
+    auto file = open();
+    return Result(std::move(path), std::move(file), mode);
+}
+
 bool preview_tape::AsyncPrepare::Start(std::filesystem::path path, FileMode mode)
 {
     if (Pending() || path.empty()) return false;
     try
     {
         path_ = std::move(path);
-        result_ = std::async(std::launch::async, [source = path_, mode]() -> std::expected<WavPcmFile, WavError> {
-            try
-            {
-                if (mode == FileMode::playback) return WavPcmFile::Open(source);
-                auto file = WavPcmFile::Create(source, 44100);
-                if (file && !file->Sync()) return std::unexpected(WavError::io_error);
-                return file;
-            }
-            catch (...) { return std::unexpected(WavError::io_error); }
-        });
+        result_.Start([source = path_, mode]() mutable { return Prepare(std::move(source), mode); });
         mode_ = mode;
         return true;
     }
@@ -202,7 +318,7 @@ bool preview_tape::AsyncPrepare::Start(std::filesystem::path path, FileMode mode
 
 std::optional<preview_tape::AsyncPrepare::Result> preview_tape::AsyncPrepare::Poll()
 {
-    if (!Pending() || result_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    if (!result_.Ready())
         return std::nullopt;
     return Finish();
 }
@@ -210,10 +326,9 @@ std::optional<preview_tape::AsyncPrepare::Result> preview_tape::AsyncPrepare::Po
 std::optional<preview_tape::AsyncPrepare::Result> preview_tape::AsyncPrepare::Finish()
 {
     if (!Pending()) return std::nullopt;
-    auto result = result_.get();
-    auto source = std::move(path_);
+    auto result = result_.Take();
     path_.clear();
-    return Result(std::move(source), std::move(result), mode_);
+    return result;
 }
 
 bool preview_tape::Session::Create(const std::filesystem::path& path)
@@ -227,24 +342,24 @@ bool preview_tape::Session::Create(const std::filesystem::path& path)
 
 std::uint32_t preview_tape::Session::Position() const
 {
-    return recording_ ? recording_->Position() : file_ ? file_->Position() : 0;
+    return recording_ ? recording_->Position() : playback_ ? playback_->Position() : 0;
 }
 
 std::uint32_t preview_tape::Session::Length() const
 {
-    return recording_ ? recording_->Length() : file_ ? file_->Length() : 0;
+    return recording_ ? recording_->Length() : playback_ ? playback_->Length() : 0;
 }
 
 int preview_tape::Session::Frequency() const
 {
-    return recording_ ? recording_->Frequency() : file_ ? file_->Frequency() : 0;
+    return recording_ ? recording_->Frequency() : playback_ ? playback_->Frequency() : 0;
 }
 
 bool preview_tape::Session::Close()
 {
     Stop();
-    const bool closed = recording_ ? recording_->Close() : !file_ || static_cast<bool>(file_->Close());
-    recording_.reset(); file_.reset(); path_.clear(); state_.Eject(); waveform_.fill(128);
+    const bool closed = recording_ ? recording_->Close() : !playback_ || playback_->Close();
+    recording_.reset(); playback_.reset(); path_.clear(); state_.Eject(); waveform_.fill(128);
     const bool failed = std::exchange(error_, false);
     return closed && !failed;
 }
@@ -253,7 +368,11 @@ bool preview_tape::Session::Play()
 {
     if ((recording_ && recording_->Failed()) || !state_.Play()) return false;
     if (Recording()) board_.SetTapeWriteCallbackWithContext(Write, this, recording_->Frequency());
-    else board_.SetTapeReadCallbackWithContext(Read, this, file_->Frequency());
+    else
+    {
+        playback_->Prefetch();
+        board_.SetTapeReadCallbackWithContext(Read, this, playback_->Frequency());
+    }
     return true;
 }
 
@@ -270,15 +389,16 @@ void preview_tape::Session::Stop()
 
 bool preview_tape::Session::Rewind()
 {
-    const bool rewound = recording_ ? recording_->Rewind() : file_ && file_->SetPosition(0);
+    const bool rewound = recording_ ? recording_->Rewind() : playback_ && playback_->Seek(0);
     if (!rewound) { Stop(); return false; }
+    if (playback_ && Playing()) playback_->Prefetch();
     waveform_.fill(128);
     return true;
 }
 
 bool preview_tape::Session::Seek(std::uint32_t position)
 {
-    if (!file_ || Recording() || Playing() || !file_->SetPosition(position)) return false;
+    if (!playback_ || Playing() || !playback_->Seek(position)) return false;
     waveform_.fill(128);
     return true;
 }
@@ -286,7 +406,7 @@ bool preview_tape::Session::Seek(std::uint32_t position)
 bool preview_tape::Session::Read(void* context, unsigned samples)
 {
     auto& self = *static_cast<Session*>(context);
-    const auto result = tape::Read(*self.file_, samples, self.waveform_);
+    const auto result = tape::Read(*self.playback_, samples, self.waveform_);
     if (result.stop) self.Stop();
     self.error_ |= result.error.has_value();
     return result.bit;

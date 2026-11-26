@@ -39,6 +39,22 @@ file(READ "${TEST_DIR}/settings.ini" settings)
 if(NOT settings STREQUAL "[SDLPreview]\nSound=0\n")
   message(FATAL_ERROR "Settings file was changed by the rejected state load")
 endif()
+set(async_settings "${TEST_DIR}/settings-日本.ini")
+file(WRITE "${async_settings}" "[SDLPreview]\nWindowWidth=1024\nWindowHeight=768\nUiScale=125\n")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  UKNCBTL_TEST_STARTUP_SETTINGS=1 "${APP}" --smoke-test --settings "${async_settings}"
+  RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 10)
+if(NOT result STREQUAL "0")
+  message(FATAL_ERROR "Settings load did not pump events and apply the saved window size (${result}): ${error}")
+endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  UKNCBTL_TEST_STARTUP_SETTINGS=1 UKNCBTL_TEST_STARTUP_SETTINGS_QUIT=1
+  "${APP}" --smoke-test --settings "${async_settings}" --state "${TEST_DIR}/missing-state.uknc"
+  RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 10)
+if(NOT result STREQUAL "0" OR error MATCHES "requested state")
+  message(FATAL_ERROR "Quit during settings load did not stop media startup (${result}): ${error}")
+endif()
+file(REMOVE "${async_settings}")
 execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
   "${APP}" --smoke-test --hard-disk 1 "${TEST_DIR}/disk-日本.img"
   RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
@@ -58,7 +74,9 @@ if(NOT result EQUAL 1 OR NOT error MATCHES "requested state")
   message(FATAL_ERROR "Invalid state was not rejected: ${result}: ${error}")
 endif()
 execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  UKNCBTL_TEST_STARTUP_PUMP=1
   "${APP}" --smoke-test --state "${TEST_DIR}/state-日本.uknc" --run
+  --cartridge 1 "${TEST_DIR}/cart-日本.rom" --hard-disk-read-only 1 "${TEST_DIR}/disk-日本.img"
   RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
 if(NOT result EQUAL 0)
   message(FATAL_ERROR "Unicode state startup failed: ${result}: ${error}")
@@ -69,6 +87,14 @@ execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDI
   RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
 if(NOT result EQUAL 0)
   message(FATAL_ERROR "Unicode media startup failed: ${result}: ${error}")
+endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  UKNCBTL_TEST_STARTUP_PUMP=1 UKNCBTL_TEST_STARTUP_QUIT=1
+  "${APP}" --smoke-test --cartridge 1 "${TEST_DIR}/cart-日本.rom"
+  --hard-disk 1 "${TEST_DIR}/missing-startup.img"
+  RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
+if(NOT result STREQUAL "0" OR error MATCHES "Could not attach requested hard disk")
+  message(FATAL_ERROR "Quit while loading startup media failed (${result}): ${error}")
 endif()
 set(disk "${TEST_DIR}/disk-日本.img")
 file(SHA256 "${disk}" original)
@@ -100,8 +126,14 @@ execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDI
 if(NOT result STREQUAL "0")
   message(FATAL_ERROR "Async floppy mount failed (${result}): ${error}")
 endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+  "UKNCBTL_TEST_FLOPPY_MOUNT_PATH=${floppy}" UKNCBTL_TEST_BOARD_OPERATIONS=1 "${APP}" --smoke-test
+  RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 15)
+if(NOT result STREQUAL "0")
+  message(FATAL_ERROR "SDL event pumping during disk install, eject and quit flush failed (${result}): ${error}")
+endif()
 file(SHA256 "${floppy}" after)
 if(NOT after STREQUAL original)
-  message(FATAL_ERROR "Conflicting screenshot changed the floppy image")
+  message(FATAL_ERROR "The floppy image changed during the read-only disk tests")
 endif()
 file(REMOVE "${TEST_DIR}/cart-日本.rom" "${TEST_DIR}/disk-日本.img" "${TEST_DIR}/floppy-日本.dsk" "${TEST_DIR}/settings.ini" "${TEST_DIR}/state-日本.uknc")

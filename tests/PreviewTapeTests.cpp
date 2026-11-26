@@ -78,16 +78,19 @@ TEST_F(PreviewTapeTest, BufferedRecordingPreservesSamplesAcrossBlocksAndRewind)
         EXPECT_FALSE(tape.TakeError());
     }
     EXPECT_EQ(tape.Length(), 12u * 882);
-    ASSERT_TRUE(tape.Rewind());
+    ASSERT_TRUE(worker.Start([&] { return tape.Rewind(); }));
+    ASSERT_TRUE(worker.Wait());
     EXPECT_TRUE(tape.Playing());
     EXPECT_EQ(tape.Position(), 0u);
     EXPECT_EQ(tape.Length(), 12u * 882);
     memory->SetWord(0177716, false, 0100000);
     ASSERT_TRUE(worker.Start());
     ASSERT_TRUE(worker.Wait());
-    tape.Stop();
+    ASSERT_TRUE(worker.Start([&] { tape.Stop(); return true; }));
+    ASSERT_TRUE(worker.Wait());
     ASSERT_FALSE(tape.TakeError());
-    ASSERT_TRUE(tape.Close());
+    ASSERT_TRUE(worker.Start([&] { return tape.Close(); }));
+    ASSERT_TRUE(worker.Wait());
 
     auto recorded = WavPcmFile::Open(path);
     ASSERT_TRUE(recorded);
@@ -229,6 +232,89 @@ TEST_F(PreviewTapeTest, PendingRecordingCanBeFinalizedWithoutInsertion)
     const auto wav = WavPcmFile::Open(path);
     ASSERT_TRUE(wav);
     EXPECT_EQ(wav->Length(), 0u);
+}
+
+TEST_F(PreviewTapeTest, ReadAheadKeepsGuestPositionAndDiscardsOldBlocksOnSeek)
+{
+    constexpr unsigned samplesPerFrame = 882;
+    {
+        auto wav = WavPcmFile::Create(path, 44100);
+        ASSERT_TRUE(wav);
+        for (unsigned frame = 0; frame < 14; ++frame)
+        {
+            std::array<std::uint8_t, samplesPerFrame> block;
+            block.fill(static_cast<std::uint8_t>(frame * 16));
+            ASSERT_TRUE(wav->WriteSamples(block));
+        }
+        ASSERT_TRUE(wav->Close());
+    }
+    preview_tape::Session tape(*board);
+    ASSERT_TRUE(tape.Open(path));
+    FrameWorker worker([&] { return board->SystemFrame(); });
+    ASSERT_TRUE(tape.Play());
+    EXPECT_EQ(tape.Position(), 0u);
+    ASSERT_TRUE(worker.Start());
+    ASSERT_TRUE(worker.Wait());
+    EXPECT_EQ(tape.Position(), samplesPerFrame);
+    tape.Stop();
+    ASSERT_TRUE(tape.Play());
+    ASSERT_TRUE(worker.Start());
+    ASSERT_TRUE(worker.Wait());
+    EXPECT_EQ(tape.Position(), 2 * samplesPerFrame);
+    EXPECT_TRUE(std::ranges::all_of(tape.Waveform(), [](auto sample) { return sample == 16; }));
+    ASSERT_TRUE(worker.Start([&] { tape.Stop(); return true; }));
+    ASSERT_TRUE(worker.Wait());
+    ASSERT_TRUE(worker.Start([&] { return tape.Seek(8 * samplesPerFrame); }));
+    ASSERT_TRUE(worker.Wait());
+    ASSERT_TRUE(worker.Start([&] { return tape.Play(); }));
+    ASSERT_TRUE(worker.Wait());
+    for (unsigned frame = 8; frame < 14; ++frame)
+    {
+        ASSERT_TRUE(worker.Start());
+        ASSERT_TRUE(worker.Wait());
+        EXPECT_EQ(tape.Position(), (frame + 1) * samplesPerFrame);
+        EXPECT_TRUE(std::ranges::all_of(tape.Waveform(), [frame](auto sample) { return sample == frame * 16; }));
+        EXPECT_FALSE(tape.TakeError());
+    }
+    EXPECT_FALSE(tape.Playing());
+    ASSERT_TRUE(tape.Rewind());
+    ASSERT_TRUE(tape.Play());
+    ASSERT_TRUE(worker.Start([&] { return tape.Close(); })); // Eject with a read outstanding.
+    EXPECT_TRUE(worker.Wait());
+}
+
+TEST_F(PreviewTapeTest, ReadAheadDeliversPartialBlockBeforeReportingFailure)
+{
+    {
+        auto wav = WavPcmFile::Create(path, 44100);
+        ASSERT_TRUE(wav);
+        const std::vector<std::uint8_t> samples(7000, 0xd3);
+        ASSERT_TRUE(wav->WriteSamples(samples));
+        ASSERT_TRUE(wav->Close());
+    }
+    struct ResetFault { ~ResetFault() { preview_tape::testing::FailPlaybackAt(-1); } } resetFault;
+    preview_tape::Session tape(*board);
+    ASSERT_TRUE(tape.Open(path));
+    preview_tape::testing::FailPlaybackAt(4300);
+    ASSERT_TRUE(tape.Play());
+    for (unsigned frame = 1; frame <= 4; ++frame)
+    {
+        ASSERT_TRUE(board->SystemFrame());
+        EXPECT_EQ(tape.Position(), frame * 882u);
+        EXPECT_FALSE(tape.TakeError());
+    }
+    ASSERT_TRUE(board->SystemFrame());
+    EXPECT_EQ(tape.Position(), 4300u);
+    EXPECT_TRUE(tape.TakeError());
+    EXPECT_FALSE(tape.TakeError());
+    EXPECT_FALSE(tape.Playing());
+    EXPECT_TRUE(std::ranges::all_of(tape.Waveform(), [](auto sample) { return sample == 0xd3; }));
+    preview_tape::testing::FailPlaybackAt(-1);
+    ASSERT_TRUE(tape.Seek(4300));
+    ASSERT_TRUE(tape.Play());
+    ASSERT_TRUE(board->SystemFrame());
+    EXPECT_EQ(tape.Position(), 5182u);
+    EXPECT_FALSE(tape.TakeError());
 }
 
 TEST_F(PreviewTapeTest, RecordsFramesRewindsAndReopensForPlayback)

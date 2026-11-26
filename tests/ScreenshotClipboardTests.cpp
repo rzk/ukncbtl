@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "ScreenshotClipboard.h"
 #include "AsyncClipboard.h"
+#include "SdlDisplay.h"
 #include <SDL3/SDL.h>
 #include <gtest/gtest.h>
 #include <future>
@@ -115,7 +116,7 @@ TEST_F(ScreenshotClipboardTest, AsyncCopyOwnsPixelsAndPublishesOnlyOnCollection)
     EXPECT_FALSE(copy.Start(image));
     image.pixels[0] = 0;
     EXPECT_FALSE(SDL_HasClipboardData("image/png"));
-    EXPECT_EQ(copy.Finish(), AsyncCopy::Outcome::copied);
+    EXPECT_EQ(copy.Finish(), (AsyncCopy::Completion{AsyncCopy::Kind::image, AsyncCopy::Outcome::copied}));
     EXPECT_FALSE(copy.Pending());
     for (const char* mime : {"image/bmp", "image/png"})
     {
@@ -135,14 +136,84 @@ TEST_F(ScreenshotClipboardTest, SupersededAndFailedCopiesPreserveNewerText)
     AsyncCopy copy;
     ASSERT_TRUE(copy.Start({1, 1, {0x00ffffff}}));
     ASSERT_TRUE(copy.SetText("newer"));
-    EXPECT_EQ(copy.Finish(), AsyncCopy::Outcome::superseded);
+    EXPECT_EQ(copy.Finish(), (AsyncCopy::Completion{AsyncCopy::Kind::image, AsyncCopy::Outcome::superseded}));
     ASSERT_TRUE(copy.StartScaled({}, 3));
-    EXPECT_EQ(copy.Finish(), AsyncCopy::Outcome::failed);
+    EXPECT_EQ(copy.Finish(), (AsyncCopy::Completion{AsyncCopy::Kind::image, AsyncCopy::Outcome::failed}));
     const std::unique_ptr<char, decltype(&SDL_free)> text(SDL_GetClipboardText(), SDL_free);
     ASSERT_TRUE(text);
     EXPECT_STREQ(text.get(), "newer");
     EXPECT_FALSE(SDL_HasClipboardData("image/png"));
     ASSERT_TRUE(copy.Start({1, 1, {0}}));
-    EXPECT_EQ(copy.Finish(), AsyncCopy::Outcome::copied);
+    EXPECT_EQ(copy.Finish(), (AsyncCopy::Completion{AsyncCopy::Kind::image, AsyncCopy::Outcome::copied}));
+}
+
+TEST_F(ScreenshotClipboardTest, PendingTextTakesPriorityOverAnEarlierImage)
+{
+    using Copy = screenshot_clipboard::AsyncCopy;
+    ASSERT_TRUE(SDL_SetClipboardText("original"));
+    Copy copy;
+    ASSERT_TRUE(copy.Start({1, 1, {0x00ffffff}}));
+    std::promise<void> release;
+    ASSERT_TRUE(copy.StartText([ready = release.get_future()] {
+        ready.wait();
+        return std::optional<std::string>{"recognized"};
+    }));
+    EXPECT_TRUE(copy.ImagePending());
+    EXPECT_TRUE(copy.TextPending());
+    EXPECT_FALSE(copy.Poll());
+    EXPECT_FALSE(SDL_HasClipboardData("image/bmp"));
+    release.set_value();
+    EXPECT_EQ(copy.Finish(), (Copy::Completion{Copy::Kind::text, Copy::Outcome::copied}));
+    EXPECT_EQ(copy.Finish(), (Copy::Completion{Copy::Kind::image, Copy::Outcome::superseded}));
+    EXPECT_FALSE(copy.Pending());
+    const std::unique_ptr<char, decltype(&SDL_free)> text(SDL_GetClipboardText(), SDL_free);
+    EXPECT_STREQ(text.get(), "recognized");
+}
+
+TEST_F(ScreenshotClipboardTest, NewerSuccessfulImageOrDirectTextSupersedesRecognition)
+{
+    using Copy = screenshot_clipboard::AsyncCopy;
+    Copy copy;
+    const auto recognize = [] { return std::optional<std::string>{"older screen"}; };
+    ASSERT_TRUE(copy.StartText(recognize));
+    EXPECT_FALSE(copy.StartText(recognize));
+    ASSERT_TRUE(copy.Start({1, 1, {0x00112233}}));
+    EXPECT_EQ(copy.Finish(), (Copy::Completion{Copy::Kind::image, Copy::Outcome::copied}));
+    EXPECT_EQ(copy.Finish(), (Copy::Completion{Copy::Kind::text, Copy::Outcome::superseded}));
+    EXPECT_TRUE(SDL_HasClipboardData("image/png"));
+
+    ASSERT_TRUE(copy.Start({1, 1, {0x00ffffff}}));
+    ASSERT_TRUE(copy.StartText(recognize));
+    ASSERT_TRUE(copy.SetText("newer direct copy"));
+    EXPECT_EQ(copy.Finish(), (Copy::Completion{Copy::Kind::text, Copy::Outcome::superseded}));
+    EXPECT_EQ(copy.Finish(), (Copy::Completion{Copy::Kind::image, Copy::Outcome::superseded}));
+    const std::unique_ptr<char, decltype(&SDL_free)> text(SDL_GetClipboardText(), SDL_free);
+    EXPECT_STREQ(text.get(), "newer direct copy");
+}
+
+TEST_F(ScreenshotClipboardTest, FailedRecognitionLeavesEarlierImageEligibleToPublish)
+{
+    using Copy = screenshot_clipboard::AsyncCopy;
+    Copy copy;
+    ASSERT_TRUE(copy.Start({1, 1, {0x00112233}}));
+    ASSERT_TRUE(copy.StartText([]() -> std::optional<std::string> { return std::nullopt; }));
+    EXPECT_EQ(copy.Finish(), (Copy::Completion{Copy::Kind::text, Copy::Outcome::failed}));
+    EXPECT_EQ(copy.Finish(), (Copy::Completion{Copy::Kind::image, Copy::Outcome::copied}));
+    EXPECT_TRUE(SDL_HasClipboardData("image/png"));
+}
+
+TEST_F(ScreenshotClipboardTest, CompletedCopyWakesTheWindowBeforeClipboardPublication)
+{
+    using Copy = screenshot_clipboard::AsyncCopy;
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
+    sdl_display::CompletionWake wake;
+    Copy copy(wake.Notifier());
+    ASSERT_TRUE(copy.StartText([] { return std::optional<std::string>{"recognized on the worker"}; }));
+    SDL_Event event{};
+    ASSERT_TRUE(SDL_WaitEventTimeout(&event, 1000));
+    ASSERT_TRUE(wake.Consume(event.type));
+    EXPECT_FALSE(SDL_HasClipboardText());
+    EXPECT_EQ(copy.Poll(), (Copy::Completion{Copy::Kind::text, Copy::Outcome::copied}));
+    EXPECT_TRUE(SDL_HasClipboardText());
 }
 }

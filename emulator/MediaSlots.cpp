@@ -79,6 +79,7 @@ std::expected<void, media_slots::Error> media_slots::Slots::InstallHardDisk(
     const auto allowed = CheckAttach(Kind::hardDisk, slot, path, readOnly);
     if (!allowed) return allowed;
     if (!drive) return std::unexpected(Error::attach_failed);
+    drive->EnableReadAhead();
     board_.InstallHardDrive(slot + 1, std::move(drive));
     hardPaths_[slot] = std::move(path);
     hardReadOnly_[slot] = readOnly;
@@ -90,6 +91,7 @@ std::expected<void, media_slots::Error> media_slots::Slots::InstallFloppy(
 {
     const auto allowed = CheckAttach(Kind::floppy, slot, path, readOnly);
     if (!allowed) return allowed;
+    image.readAhead = true;
     if (!board_.AttachPreparedFloppy(slot, std::move(image))) return std::unexpected(Error::attach_failed);
     floppyPaths_[slot] = std::move(path);
     floppyReadOnly_[slot] = readOnly;
@@ -102,11 +104,15 @@ std::expected<void, media_slots::Error> media_slots::Slots::Attach(Kind kind, in
     if (!allowed) return allowed;
     // Copy before attaching so allocation failure cannot leave an untracked mount.
     auto savedPath = path;
-    const bool attached = kind == Kind::floppy ? board_.AttachFloppyImage(slot, path, readOnly) : board_.AttachHardImage(slot + 1, path, readOnly);
-    if (!attached) return std::unexpected(Error::attach_failed);
-    (kind == Kind::floppy ? floppyPaths_[slot] : hardPaths_[slot]) = std::move(savedPath);
-    (kind == Kind::floppy ? floppyReadOnly_[slot] : hardReadOnly_[slot]) = readOnly;
-    return {};
+    if (kind == Kind::hardDisk)
+    {
+        auto drive = std::make_unique<CHardDrive>();
+        if (!drive->AttachImage(path, readOnly)) return std::unexpected(Error::attach_failed);
+        return InstallHardDisk(slot, std::move(savedPath), readOnly, std::move(drive));
+    }
+    auto image = CFloppyController::OpenImage(path, readOnly);
+    if (!image) return std::unexpected(Error::attach_failed);
+    return InstallFloppy(slot, std::move(savedPath), readOnly, std::move(*image));
 }
 
 std::expected<void, media_slots::Error> media_slots::Slots::Eject(Kind kind, int slot)

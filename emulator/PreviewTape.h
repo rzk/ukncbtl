@@ -1,8 +1,8 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #pragma once
+#include "BackgroundJob.h"
 #include "TapeTransport.h"
 #include <filesystem>
-#include <future>
 #include <memory>
 #include <optional>
 #include <array>
@@ -32,8 +32,11 @@ public:
         std::optional<WavPcmFile> stream;
         FileMode mode = FileMode::playback;
     };
+    explicit AsyncPrepare(background::Notify notify = {}) : result_(std::move(notify)) {}
+    // Open or create an owned stream without touching the board.
+    [[nodiscard]] static Result Prepare(std::filesystem::path path, FileMode mode);
     [[nodiscard]] bool Start(std::filesystem::path path, FileMode mode);
-    [[nodiscard]] bool Pending() const { return result_.valid(); }
+    [[nodiscard]] bool Pending() const { return result_.Pending(); }
     [[nodiscard]] const std::filesystem::path& Path() const { return path_; }
     [[nodiscard]] FileMode Mode() const { return mode_; }
     [[nodiscard]] std::optional<Result> Poll();
@@ -41,7 +44,7 @@ public:
 private:
     std::filesystem::path path_;
     FileMode mode_ = FileMode::playback;
-    std::future<std::expected<WavPcmFile, WavError>> result_;
+    background::Job<Result> result_;
 };
 
 // Owns the board tape callback. The callback runs during a worker-owned frame;
@@ -75,11 +78,12 @@ private:
     friend struct AsyncPrepare::Result;
     [[nodiscard]] bool Insert(std::filesystem::path path, WavPcmFile file, FileMode mode);
     class RecordingWriter;
+    class PlaybackReader;
     static bool Read(void* context, unsigned samples);
     static void Write(void* context, int value, unsigned samples);
     CMotherboard& board_;
     tape::State state_;
-    std::optional<WavPcmFile> file_;
+    std::unique_ptr<PlaybackReader> playback_;
     std::unique_ptr<RecordingWriter> recording_;
     std::filesystem::path path_;
     bool error_ = false;

@@ -93,6 +93,52 @@ TEST(FrameWorker, DestructorCompletesOutstandingFrame)
     EXPECT_EQ(calls, 1);
 }
 
+TEST(FrameWorker, OneShotOperationsShareTheFrameThreadAndReleaseTheNextFrame)
+{
+    std::thread::id frameThread, operationThread;
+    int calls = 0, boardState = 0;
+    FrameWorker worker([&] {
+        frameThread = std::this_thread::get_id();
+        ++calls;
+        ++boardState;
+        return true;
+    });
+    EXPECT_FALSE(worker.Start({}));
+    ASSERT_TRUE(worker.Start());
+    ASSERT_TRUE(worker.Wait());
+
+    ASSERT_TRUE(worker.Start([&] {
+        operationThread = std::this_thread::get_id();
+        boardState *= 3;
+        return false;
+    }));
+    ASSERT_TRUE(worker.WaitFor(std::chrono::seconds(5)));
+    EXPECT_FALSE(worker.Start());
+    EXPECT_FALSE(worker.Start([] { return true; }));
+    EXPECT_EQ(worker.WaitOutcome(), FrameWorker::Outcome::stopped);
+    EXPECT_EQ(operationThread, frameThread);
+    EXPECT_NE(operationThread, std::this_thread::get_id());
+    EXPECT_EQ(calls, 1);
+    EXPECT_EQ(boardState, 3);
+
+    ASSERT_TRUE(worker.Start([]() -> bool { throw std::runtime_error("disk operation"); }));
+    EXPECT_EQ(worker.WaitOutcome(), FrameWorker::Outcome::failed);
+    ASSERT_TRUE(worker.Start());
+    EXPECT_TRUE(worker.Wait());
+    EXPECT_EQ(calls, 2);
+    EXPECT_EQ(boardState, 4);
+}
+
+TEST(FrameWorker, DestructorCompletesOutstandingOneShotOperation)
+{
+    int calls = 0;
+    {
+        FrameWorker worker([&] { calls += 100; return true; });
+        ASSERT_TRUE(worker.Start([&] { ++calls; return true; }));
+    }
+    EXPECT_EQ(calls, 1);
+}
+
 TEST(FrameWorker, RepeatedHandoffsPublishStateInBothDirections)
 {
     int input = 0, output = 0;
@@ -321,6 +367,83 @@ TEST_F(PreviewDebuggerTest, SearchesBytesAndSkipsInaccessibleMemory)
     const auto port = debugger.ReadPort(Processor::ppu, 0177700);
     (void)debugger.FindMemory(MemorySource::ppu, Processor::ppu, 0177676, 0, false, forward);
     EXPECT_EQ(debugger.ReadPort(Processor::ppu, 0177700), port);
+}
+
+TEST_F(PreviewDebuggerTest, CapturedMemoryMatchesLiveViewsAcrossAllAddresses)
+{
+    using Source = preview_debugger::MemorySource;
+    using Processor = preview_debugger::Processor;
+    preview_debugger::Session debugger(*board);
+    for (unsigned address = 0; address < 65536; ++address)
+        for (int plane = 0; plane < 3; ++plane)
+            board->SetRAMByte(plane, static_cast<std::uint16_t>(address),
+                static_cast<std::uint8_t>(address * 29 + (address >> 8) + plane * 51));
+    std::array<std::uint8_t, 32768> systemRom;
+    std::array<std::uint8_t, 24 * 1024> cartridge;
+    for (std::size_t i = 0; i < systemRom.size(); ++i) systemRom[i] = static_cast<std::uint8_t>(i * 3 + 5);
+    for (std::size_t i = 0; i < cartridge.size(); ++i) cartridge[i] = static_cast<std::uint8_t>(i * 5 + 7);
+    board->LoadROM(systemRom);
+    board->LoadROMCartridge(1, cartridge);
+
+    const auto check = [&](Source source, Processor processor) {
+        const auto capture = debugger.CaptureMemoryView(source, processor);
+        ASSERT_TRUE(capture);
+        for (unsigned offset = 0; offset < 65536; ++offset)
+        {
+            const auto address = static_cast<std::uint16_t>(offset);
+            ASSERT_EQ(capture->Inspect(address, true), debugger.InspectMemory(source, processor, address, true))
+                << "byte address " << offset;
+            ASSERT_EQ(capture->Inspect(address, false), debugger.InspectMemory(source, processor, address, false))
+                << "word address " << offset;
+        }
+    };
+    for (const auto source : {Source::selected, Source::cpu, Source::ppu, Source::ram0, Source::ram1, Source::ram2, Source::rom})
+        check(source, Processor::cpu);
+    board->GetCPU()->SetPSW(0400);
+    check(Source::selected, Processor::cpu);
+    auto& ppuMemory = *board->GetPPU()->GetMemoryController();
+    const std::array<std::pair<std::uint16_t, std::optional<std::uint16_t>>, 6> mappings{{
+        {0, std::nullopt}, {1, board->GetROMWord(0)}, {2, board->GetROMCartWord(1, 0)},
+        {6, board->GetROMCartWord(1, 16384)}, {8, std::nullopt}, {0xf0, board->GetRAMWord(0, 0100000)},
+    }};
+    for (const auto& [mapping, word] : mappings)
+    {
+        ppuMemory.SetWord(0177054, false, mapping);
+        EXPECT_EQ(debugger.InspectMemory(Source::ppu, Processor::ppu, 0100000, false), word);
+        check(Source::selected, Processor::ppu);
+    }
+}
+
+TEST_F(PreviewDebuggerTest, SearchesCapturedMemoryAcrossThreadsAfterTheBoardChanges)
+{
+    using enum preview_debugger::MemorySource;
+    using enum preview_debugger::SearchDirection;
+    constexpr auto processor = preview_debugger::Processor::cpu;
+    preview_debugger::Session debugger(*board);
+    board->SetRAMWord(2, 0xfffe, 0xabcd);
+    board->SetRAMWord(2, 01000, 0x1122);
+    auto capture = debugger.CaptureMemoryView(ram2, processor);
+    std::promise<void> changed;
+    auto search = std::async(std::launch::async, [capture = std::move(capture), ready = changed.get_future()] {
+        ready.wait();
+        return std::array{
+            capture->Find(0, 0xab, true, backward),
+            capture->Find(0xfffe, 0x1122, false, forward),
+            capture->Find(0, 0x2244, false, forward),
+            capture->Find(1, 0x1122, false, forward),
+            capture->Find(0, 0x1ab, true, backward),
+        };
+    });
+    board->SetRAMWord(2, 0xfffe, 0);
+    board->SetRAMWord(2, 01000, 0x2244);
+    changed.set_value();
+    const auto found = search.get();
+    EXPECT_EQ(found[0], 0xffff);
+    EXPECT_EQ(found[1], 01000);
+    EXPECT_FALSE(found[2]);
+    EXPECT_FALSE(found[3]);
+    EXPECT_FALSE(found[4]);
+    EXPECT_EQ(debugger.FindMemory(ram2, processor, 0, 0x2244, false, forward), 01000);
 }
 
 TEST_F(PreviewDebuggerTest, CurrentHintUsesCurrentProcessorAndFlags)
@@ -651,11 +774,12 @@ TEST_F(PreviewDebuggerTest, ClearTraceWaitsForWorkerFrameBeforeTruncating)
     FrameWorker worker([&] { return debugger.RunFrame(); });
     ASSERT_TRUE(worker.Start());
     ASSERT_FALSE(worker.Wait());
-    ASSERT_TRUE(debugger.ClearTrace());
+    ASSERT_TRUE(worker.Start([&] { return debugger.ClearTrace(); }));
+    ASSERT_TRUE(worker.Wait());
     EXPECT_EQ(std::filesystem::file_size(path), 0u);
     board->GetCPU()->SetPC(01000);
-    debugger.Step();
-    debugger.StopTrace();
+    ASSERT_TRUE(worker.Start([&] { debugger.Step(); debugger.StopTrace(); return true; }));
+    ASSERT_TRUE(worker.Wait());
     std::ifstream file(path, std::ios::binary);
     const std::string contents{std::istreambuf_iterator<char>(file), {}};
     const auto first = contents.find("CPU\t001000\tINC");
@@ -753,11 +877,15 @@ TEST_F(PreviewDebuggerTest, WorkerTraceFailureIsReportedOnceAndCanBeRetried)
     ASSERT_FALSE(worker.Wait());
     bool reported = false;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (!(reported = debugger.TakeTraceError()) && std::chrono::steady_clock::now() < deadline)
+    while (!(reported = debugger.PollTraceError()) && std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     ASSERT_TRUE(reported);
     EXPECT_EQ(debugger.TraceMask(), 0);
+    EXPECT_TRUE(debugger.TraceConflicts(path));
+    ASSERT_TRUE(worker.Start([&] { return debugger.TakeTraceError(); }));
+    ASSERT_TRUE(worker.Wait());
     EXPECT_EQ(debugger.TracePath(), nullptr);
+    EXPECT_FALSE(debugger.PollTraceError());
     EXPECT_FALSE(debugger.TakeTraceError());
     EXPECT_EQ(debugger.History().Length(true), 1);
 

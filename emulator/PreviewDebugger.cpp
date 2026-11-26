@@ -66,7 +66,7 @@ struct preview_debugger::Session::Comparison
 {
     std::array<std::array<std::uint16_t, 11>, 2> registers{};
     // One view each for CPU, PPU, the three raw RAM planes, and ROM.
-    std::array<std::vector<std::optional<std::uint16_t>>, 6> memory;
+    std::array<std::unique_ptr<const MemoryView>, 6> memory;
 };
 
 preview_debugger::Session::Session(CMotherboard& board) : board_(board) {}
@@ -115,19 +115,80 @@ std::optional<std::uint16_t> preview_debugger::Session::InspectMemory(
     return byteMode ? static_cast<std::uint16_t>((word >> ((address & 1) * 8)) & 0xff) : word;
 }
 
-std::optional<std::uint16_t> preview_debugger::Session::FindMemory(MemorySource source, Processor selected,
-    std::uint16_t start, std::uint16_t value, bool byteMode, SearchDirection direction) const
+namespace
+{
+template<class Read>
+std::optional<std::uint16_t> FindValue(std::uint16_t start, std::uint16_t value,
+    bool byteMode, preview_debugger::SearchDirection direction, Read read)
 {
     if ((!byteMode && (start & 1)) || (byteMode && value > 0xff)) return std::nullopt;
-    const unsigned stride = byteMode ? 1 : 2;
+    const int stride = byteMode ? 1 : 2;
+    const int delta = direction == preview_debugger::SearchDirection::forward ? stride : -stride;
     auto address = start;
     for (unsigned index = 0; index < 65536u / stride; ++index)
     {
-        address = static_cast<std::uint16_t>(direction == SearchDirection::forward ? address + stride : address - stride);
-        if (const auto cell = InspectMemory(source, selected, address, byteMode); cell && *cell == value)
+        address = static_cast<std::uint16_t>(address + delta);
+        if (const auto cell = read(address); cell && *cell == value)
             return address;
     }
     return std::nullopt;
+}
+}
+
+std::optional<std::uint16_t> preview_debugger::Session::FindMemory(MemorySource source, Processor selected,
+    std::uint16_t start, std::uint16_t value, bool byteMode, SearchDirection direction) const
+{
+    return FindValue(start, value, byteMode, direction,
+        [&](auto address) { return InspectMemory(source, selected, address, byteMode); });
+}
+
+std::optional<std::uint16_t> preview_debugger::MemoryView::Inspect(std::uint16_t address, bool byteMode) const
+{
+    if ((!byteMode && (address & 1)) || !readable_[address / 2]) return std::nullopt;
+    if (byteMode) return bytes_[address];
+    return static_cast<std::uint16_t>(bytes_[address] | (bytes_[address + 1] << 8));
+}
+
+std::optional<std::uint16_t> preview_debugger::MemoryView::Find(
+    std::uint16_t start, std::uint16_t value, bool byteMode, SearchDirection direction) const
+{
+    return FindValue(start, value, byteMode, direction, [&](auto address) { return Inspect(address, byteMode); });
+}
+
+std::unique_ptr<const preview_debugger::MemoryView> preview_debugger::Session::CaptureMemoryView(
+    MemorySource source, Processor selected) const
+{
+    auto capture = std::make_unique<MemoryView>();
+    const auto store = [&](unsigned address, std::uint16_t value) {
+        capture->bytes_[address] = static_cast<std::uint8_t>(value);
+        capture->bytes_[address + 1] = static_cast<std::uint8_t>(value >> 8);
+        capture->readable_.set(address / 2);
+    };
+    if (source == MemorySource::ram0 || source == MemorySource::ram1 || source == MemorySource::ram2)
+    {
+        const int plane = static_cast<int>(source) - static_cast<int>(MemorySource::ram0);
+        std::ranges::copy(board_.RAMPlane(plane), capture->bytes_.begin());
+        capture->readable_.set();
+    }
+    else if (source == MemorySource::rom)
+    {
+        for (unsigned address = 0100000; address < capture->bytes_.size(); address += 2)
+            store(address, board_.GetROMWord(static_cast<std::uint16_t>(address - 0100000)));
+    }
+    else if (source == MemorySource::selected || source == MemorySource::cpu || source == MemorySource::ppu)
+    {
+        const auto which = source == MemorySource::selected ? selected :
+            source == MemorySource::cpu ? Processor::cpu : Processor::ppu;
+        const auto& processor = GetProcessor(which);
+        const auto& memory = *processor.GetMemoryControllerConst();
+        const bool halt = processor.IsHaltMode();
+        for (unsigned address = 0; address < capture->bytes_.size(); address += 2)
+        {
+            const auto cell = memory.GetWordView(static_cast<std::uint16_t>(address), halt, false);
+            if (cell.addressType < ADDRTYPE_IO) store(address, cell.value);
+        }
+    }
+    return capture;
 }
 
 namespace
@@ -152,13 +213,7 @@ void preview_debugger::Session::CaptureComparison()
         for (int reg = 0; reg < 11; ++reg)
             capture->registers[processor][reg] = RegisterValue(GetProcessor(processor ? Processor::ppu : Processor::cpu), reg);
     for (std::size_t view = 0; view < comparisonSources.size(); ++view)
-    {
-        auto& values = capture->memory[view];
-        values.reserve(32768);
-        for (unsigned address = 0; address < 65536; address += 2)
-            values.push_back(InspectMemory(comparisonSources[view], Processor::cpu,
-                static_cast<std::uint16_t>(address), false));
-    }
+        capture->memory[view] = CaptureMemoryView(comparisonSources[view], Processor::cpu);
     comparison_ = std::move(capture);
 }
 
@@ -180,11 +235,9 @@ bool preview_debugger::Session::MemoryChanged(MemorySource source, Processor sel
     const auto it = std::find(comparisonSources.begin(), comparisonSources.end(), source);
     if (it == comparisonSources.end()) return false;
     const auto view = static_cast<std::size_t>(it - comparisonSources.begin());
-    const auto previous = comparison_->memory[view][address / 2];
-    const auto current = InspectMemory(source, selected, static_cast<std::uint16_t>(address & 0xfffe), false);
-    if (!previous || !current) return false;
-    const auto difference = static_cast<std::uint16_t>(*previous ^ *current);
-    return byteMode ? ((difference >> ((address & 1) * 8)) & 0xff) != 0 : difference != 0;
+    const auto previous = comparison_->memory[view]->Inspect(address, byteMode);
+    const auto current = InspectMemory(source, selected, address, byteMode);
+    return previous && current && *previous != *current;
 }
 
 DisasmHint preview_debugger::Session::CurrentHint(Processor which) const
@@ -408,10 +461,14 @@ bool preview_debugger::Session::TraceConflicts(const std::filesystem::path& path
     return std::filesystem::equivalent(tracePath_, path, error) && !error;
 }
 
+bool preview_debugger::Session::PollTraceError()
+{
+    return !FinishTraceBatch(false);
+}
+
 bool preview_debugger::Session::TakeTraceError()
 {
-    (void)FinishTraceBatch(false);
-    if (!traceError_) return false;
+    if (!PollTraceError()) return false;
     StopTrace();
     traceError_ = false;
     return true;

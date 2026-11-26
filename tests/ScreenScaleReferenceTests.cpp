@@ -54,6 +54,54 @@ TEST_P(ScalePixels, ShortInputsAreRejectedBeforeWriting) {
     EXPECT_FALSE(screen_scale::Apply(GetParam(),source,std::span(dest).first(dest.size()-1)));
     EXPECT_TRUE(std::ranges::all_of(dest,[](auto value){return value==0xdeadbeef;}));
 }
+TEST_P(ScalePixels, PartialBandWritesOnlyItsDestinationRows)
+{
+    const auto source = Source();
+    const int mode = GetParam();
+    const auto info = screen_scale::GetMode(mode);
+    std::vector<uint32_t> destination(info.width * info.height, 0xdeadbeef);
+    EXPECT_FALSE(screen_scale::ApplyBand(mode, source, destination, 1, 144));
+    EXPECT_FALSE(screen_scale::ApplyBand(mode, source, destination, 144, 142));
+    EXPECT_FALSE(screen_scale::ApplyBand(mode, source, destination, 144, 290));
+    EXPECT_TRUE(std::ranges::all_of(destination, [](auto pixel) { return pixel == 0xdeadbeef; }));
+    ASSERT_TRUE(screen_scale::ApplyBand(mode, source, destination, 144, 216));
+    for (int y = 0; y < info.height; ++y)
+        for (int x = 0; x < info.width; ++x)
+        {
+            const auto expected = y >= info.height / 2 && y < info.height * 3 / 4
+                ? Expected(mode, x, y, source) : 0xdeadbeefu;
+            ASSERT_EQ(expected, destination[y * info.width + x]) << "x=" << x << " y=" << y;
+        }
+}
+TEST_P(ScalePixels, TopDownBandsWriteTheirOwnRowsAndMatchTheReference)
+{
+    const auto source = Source();
+    const int mode = GetParam();
+    const auto [width, height, description] = screen_scale::GetMode(mode);
+    constexpr auto order = screen_scale::RowOrder::topDown;
+    constexpr uint32_t untouched = 0xdeadbeef;
+    std::vector<uint32_t> destination(width * height, untouched);
+    EXPECT_FALSE(screen_scale::ApplyBand(mode, source, destination, 1, 96, order));
+    EXPECT_TRUE(screen_scale::ApplyBand(mode, source, destination, 0, 0, order));
+    EXPECT_TRUE(screen_scale::ApplyBand(mode, source, destination, 288, 288, order));
+    EXPECT_TRUE(std::ranges::all_of(destination, [](auto pixel) { return pixel == untouched; }));
+
+    // Begin with the middle third so either adjoining band's rows can detect a stray write.
+    ASSERT_TRUE(screen_scale::ApplyBand(mode, source, destination, 96, 192, order));
+    for (int row = 0; row < height; ++row)
+        for (int x = 0; x < width; ++x)
+        {
+            const auto expected = row >= height / 3 && row < height * 2 / 3
+                ? Expected(mode, x, height - 1 - row, source) : untouched;
+            ASSERT_EQ(destination[row * width + x], expected) << "x=" << x << " row=" << row;
+        }
+    ASSERT_TRUE(screen_scale::ApplyBand(mode, source, destination, 192, 288, order));
+    ASSERT_TRUE(screen_scale::ApplyBand(mode, source, destination, 0, 96, order));
+    for (int row = 0; row < height; ++row)
+        for (int x = 0; x < width; ++x)
+            ASSERT_EQ(destination[row * width + x], Expected(mode, x, height - 1 - row, source))
+                << "x=" << x << " row=" << row;
+}
 INSTANTIATE_TEST_SUITE_P(AllModes,ScalePixels,testing::Range(0,8));
 TEST(ScaleEdges, InvalidModesUseDefaultDimensionsAndPixels) {
     const auto source=Source(); const auto info=screen_scale::GetMode(1); std::vector<uint32_t> expected(info.width*info.height),actual(expected.size());

@@ -9,25 +9,31 @@
 
 // One task at a time, with externally serialized calls to the control methods.
 // The caller must not access objects used by the task between Start and Wait.
-// The task and its dependencies must outlive the worker.
+// Objects referenced by a task must remain alive until Wait or destruction.
 class FrameWorker
 {
 public:
     enum class Outcome { completed, stopped, failed };
-    explicit FrameWorker(std::function<bool()> task);
+    // notify runs on the worker after publishing the result.
+    explicit FrameWorker(std::function<bool()> task, std::function<void()> notify = {});
     ~FrameWorker();
     FrameWorker(const FrameWorker&) = delete;
     FrameWorker& operator=(const FrameWorker&) = delete;
     [[nodiscard]] bool Start();
+    // Run a one-shot board operation in place of the next frame.
+    [[nodiscard]] bool Start(std::function<bool()> operation);
     // Wait without consuming the result, so a host UI can pump events while
-    // the board is owned by the worker. Requires an outstanding frame.
+    // the board is owned by the worker. Requires an outstanding task.
     [[nodiscard]] bool WaitFor(std::chrono::milliseconds timeout);
     [[nodiscard]] bool Wait();
     // Converts task exceptions to a failure result for frontend error handling.
     [[nodiscard]] Outcome WaitOutcome() noexcept;
 private:
+    bool Request(std::function<bool()> operation);
     void Run();
     std::function<bool()> task_;
+    std::function<bool()> operation_;
+    std::function<void()> notify_;
     std::mutex mutex_;
     std::condition_variable changed_;
     bool stopping_ = false;

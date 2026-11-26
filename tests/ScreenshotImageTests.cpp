@@ -67,3 +67,16 @@ TEST(ScreenshotImage, RejectsInvalidTopDownCopiesWithoutWriting)
     EXPECT_FALSE(screenshot_image::CopyTopDown(image, std::as_writable_bytes(std::span{output}.first<3>())));
     EXPECT_EQ(output, unchanged);
 }
+
+TEST(ScreenshotImage, CopiesPitchedRowsAndLeavesPaddingUntouched)
+{
+    const screenshot_image::Image image{2, 2, {1, 2, 3, 4}};
+    std::array<std::uint32_t, 7> output{9, 9, 9, 9, 9, 9, 9};
+    const auto unchanged = output;
+    const auto bytes = std::as_writable_bytes(std::span{output});
+    EXPECT_FALSE(screenshot_image::CopyTopDown(image, bytes, sizeof(std::uint32_t)));
+    EXPECT_FALSE(screenshot_image::CopyTopDown(image, bytes.first<23>(), 16));
+    EXPECT_EQ(output, unchanged);
+    ASSERT_TRUE(screenshot_image::CopyTopDown(image, bytes, 16));
+    EXPECT_EQ(output, (std::array<std::uint32_t, 7>{3, 4, 9, 9, 1, 2, 9}));
+}

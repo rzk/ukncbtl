@@ -1,6 +1,5 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "AsyncRoms.h"
-#include <chrono>
 #include <utility>
 
 bool preview_roms::AsyncLoad::Start(std::filesystem::path path, int slot)
@@ -9,7 +8,7 @@ bool preview_roms::AsyncLoad::Start(std::filesystem::path path, int slot)
     try
     {
         path_ = std::move(path);
-        result_ = std::async(std::launch::async, [path = path_, slot]() -> std::expected<Image, Error> {
+        result_.Start([path = path_, slot]() -> std::expected<Image, Error> {
             try
             {
                 if (slot == -1)
@@ -33,7 +32,7 @@ bool preview_roms::AsyncLoad::Start(std::filesystem::path path, int slot)
 
 std::optional<preview_roms::AsyncLoad::Result> preview_roms::AsyncLoad::Poll()
 {
-    if (!Pending() || result_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    if (!result_.Ready())
         return std::nullopt;
     return Finish();
 }
@@ -41,7 +40,7 @@ std::optional<preview_roms::AsyncLoad::Result> preview_roms::AsyncLoad::Poll()
 std::optional<preview_roms::AsyncLoad::Result> preview_roms::AsyncLoad::Finish()
 {
     if (!Pending()) return std::nullopt;
-    auto image = result_.get();
+    auto image = result_.Take();
     auto path = std::move(path_);
     path_.clear();
     const int slot = std::exchange(slot_, -1);

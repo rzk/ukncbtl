@@ -5,6 +5,8 @@
 #include "SubtitleFile.h"
 #include "util/DebugLogFile.h"
 #include "emubase/Disasm.h"
+#include <array>
+#include <bitset>
 #include <cstdint>
 #include <optional>
 #include <filesystem>
@@ -39,6 +41,20 @@ struct Line
 [[nodiscard]] std::string FormatValue(std::uint16_t value, bool hex, bool byteMode = false);
 [[nodiscard]] std::optional<std::string> ToUtf8(std::wstring_view text);
 
+// An owned debugger memory view. Capture on the board owner, then read on any
+// thread. The accessibility mask excludes I/O and unmapped words.
+class MemoryView
+{
+public:
+    [[nodiscard]] std::optional<std::uint16_t> Inspect(std::uint16_t address, bool byteMode) const;
+    [[nodiscard]] std::optional<std::uint16_t> Find(std::uint16_t start, std::uint16_t value,
+        bool byteMode, SearchDirection direction) const;
+private:
+    friend class Session;
+    std::array<std::uint8_t, 65536> bytes_{};
+    std::bitset<65536 / 2> readable_;
+};
+
 // Owns breakpoint storage borrowed by the board. The board must outlive it.
 // Calls on the session and board must be serialized with RunFrame. Trace output
 // from a frame may finish afterward; ClearTrace and StopTrace drain it.
@@ -60,6 +76,7 @@ public:
     // Search starts after the given address, wraps once, and skips inaccessible memory.
     [[nodiscard]] std::optional<std::uint16_t> FindMemory(MemorySource source, Processor selected,
         std::uint16_t start, std::uint16_t value, bool byteMode, SearchDirection direction) const;
+    [[nodiscard]] std::unique_ptr<const MemoryView> CaptureMemoryView(MemorySource source, Processor selected) const;
     // Comparison is explicit and remains stable until recaptured or cleared.
     void CaptureComparison();
     void ClearComparison();
@@ -108,6 +125,8 @@ public:
     [[nodiscard]] std::uint16_t TraceMask() const { return traceMask_; }
     [[nodiscard]] const std::filesystem::path* TracePath() const { return trace_ ? &tracePath_ : nullptr; }
     [[nodiscard]] bool TraceConflicts(const std::filesystem::path& path) const;
+    // Collect a ready write result. TakeTraceError stops tracing and consumes the error.
+    [[nodiscard]] bool PollTraceError();
     [[nodiscard]] bool TakeTraceError();
 private:
     struct Comparison;

@@ -208,6 +208,12 @@ protected:  // Memory
     std::unique_ptr<uint8_t[]> m_pROM;     ///< System ROM, 32 KB
     std::array<std::unique_ptr<uint8_t[]>, 2> m_pROMCart;  ///< ROM cartridges #1 and #2, 24 KB each
 public:  // Memory access
+    // A live view for the current board owner. Copy before handing off the board.
+    [[nodiscard]] std::span<const uint8_t, 65536> RAMPlane(int plane) const
+    {
+        assert(plane >= 0 && plane < static_cast<int>(m_pRAM.size()));
+        return std::span<const uint8_t, 65536>(m_pRAM[plane].get(), 65536);
+    }
     uint16_t    GetRAMWord(int plan, uint16_t offset) const;
     uint8_t     GetRAMByte(int plan, uint16_t offset) const;
     void        SetRAMWord(int plan, uint16_t offset, uint16_t word);
@@ -295,6 +301,7 @@ public:  // System control
     void        DetachFloppyImage(int slot);
     // A failed flush keeps the dirty track in memory for a later retry.
     [[nodiscard]] bool FlushFloppyImage();
+    void DrainFloppyReadAhead();
     [[nodiscard]] std::optional<FloppyFailure> TakeFloppyFailure();
     /// \brief Check if the floppy attached.
     bool        IsFloppyImageAttached(int slot) const;

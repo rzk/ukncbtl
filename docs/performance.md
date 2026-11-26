@@ -74,12 +74,23 @@ cmake --build build/windows-clang --target FrameOverlapBenchmark --parallel
 ./build/windows-clang/FrameOverlapBenchmark.exe
 ```
 
-This compares synthetic CPU/PPU execution and direct board video decoding in
-serial with snapshot copying, video decoding and frame execution overlapped.
-Both paths scale the decoded image; neither includes a window, presentation,
-audio, disk or pacing. It alternates order across five repetitions, checks a
-checksum of sampled video pixels, and reports median wall time per
-frame. It is a focused measurement rather than an application FPS estimate.
+This compares serial synthetic CPU/PPU execution and video decoding with two
+overlapped variants. Both overlapped variants decode from a snapshot, and one
+divides both decoding and scaling into bands. All three paths reuse the output
+buffer. The benchmark rotates run order over five repetitions for the default
+and 1120 × 864 interlaced modes, checks a checksum of sampled pixels, and
+reports median frame and video preparation times. It excludes windowing,
+presentation, audio, disk and pacing.
+
+The benchmark also compares repeated decode and scaling of an unchanged board
+with the RAM comparison used to reuse an existing image. It checks that the
+cached pixels match the freshly rendered frame. This comparison measures CPU
+preparation, excluding the SDL texture upload.
+
+The upload layout comparison measures scaling and copying into a tightly
+packed CPU buffer. It checks that a bottom-up scale with a reversed row copy
+produces the same pixels as a top-down scale with a bulk copy. This comparison
+excludes SDL and the graphics driver.
 
 The same option also enables a trace comparison:
 
@@ -95,11 +106,12 @@ complete output files must match. Results depend on the host filesystem and do
 not include SDL rendering, audio, or pacing.
 
 For a focused tape recording comparison, build and run `TapeFrameBenchmark` with
-the same option. It compares five 200-frame runs each with no recording,
+the same option. It compares five 200-frame runs each with no tape,
 direct 44.1 kHz recording and buffered recording. Timings include WAV
 finalization, and the two recording modes must produce identical files at
-the expected sample rate and length. The benchmark excludes playback, SDL
-rendering, audio output and pacing. Storage latency and caching can differ
+the expected sample rate and length. It also compares direct playback against
+read-ahead playback, checking the guest input bit and waveform every frame.
+The benchmark excludes SDL rendering, audio output and pacing. Storage latency and caching can differ
 substantially from a user's tape workload.
 
 ```powershell
@@ -144,10 +156,17 @@ on localhost. Capture collection begins when the profiler connects.
 Frame markers delimit iterations of the host main loop, including paused
 iterations. SDL zones cover the main loop, events, ImGui frame setup and interface, emulation,
 video decode, screen scaling and drawing, audio submission, rendering, presentation,
-and pacing. `Video memory snapshot` measures the RAM copy before the SDL frame
-worker starts; `Frame worker wait` measures the remaining wait after video and
-presentation overlap the frame. Compare these zones and total frame time when
-evaluating the worker, rather than assuming that the copy pays for itself. The
+and pacing. `Video memory snapshot` measures the RAM comparison and any copy
+before the SDL frame worker starts. `ImGui draw data` overlaps the video band
+worker on frames with new pixels. `Screen texture upload` appears when SDL
+needs a new texture image. `Frame worker wait` measures the remaining wait
+after video and presentation overlap the frame. Compare these zones and total
+frame time when evaluating the worker. `Hard disk host read` measures the file
+read on the read-ahead worker or on the board owner when a synchronous read
+is needed. `Hard disk read handoff` measures the time to collect a pending
+sector when the emulated seek ends, a write needs the stream, or a replacement
+read reuses the worker. `Floppy host track read` measures host track reads, and
+`Floppy track read handoff` measures collection of floppy read-ahead work. The
 legacy frontend also reports `Prepare screen` and `Audio buffer wait`.
 Audio and pacing waits are deliberate
 throttling, so inspect them separately from computation. The screen-scaling zone

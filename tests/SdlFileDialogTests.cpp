@@ -29,7 +29,12 @@ TEST(SdlFileDialog, DropBatchCopiesOnePathAndRejectsMultipleFiles)
 
 TEST(SdlFileDialog, HandsWorkerThreadResultToMainThread)
 {
-    auto state = std::make_shared<sdl_file_dialog::State>();
+    int notifications = 0;
+    std::shared_ptr<sdl_file_dialog::State> state;
+    state = std::make_shared<sdl_file_dialog::State>([&] {
+        EXPECT_FALSE(state->Pending());
+        ++notifications;
+    });
     ASSERT_TRUE(state->Begin());
     EXPECT_TRUE(state->Pending());
     EXPECT_FALSE(state->Begin());
@@ -37,6 +42,7 @@ TEST(SdlFileDialog, HandsWorkerThreadResultToMainThread)
         state->Complete({media_slots::Kind::hardDisk, 1, sdl_file_dialog::Status::selected, "disk.img"});
     });
     worker.join();
+    EXPECT_EQ(notifications, 1);
     EXPECT_FALSE(state->Pending());
     EXPECT_FALSE(state->Begin()); // An unread result cannot be overwritten.
     const auto result = state->Take();
@@ -49,6 +55,9 @@ TEST(SdlFileDialog, HandsWorkerThreadResultToMainThread)
     EXPECT_TRUE(state->Begin());
     state->Complete({media_slots::Kind::floppy, 0, sdl_file_dialog::Status::canceled, {}});
     ASSERT_TRUE(state->Take());
+    EXPECT_EQ(notifications, 2);
+    state->Complete({media_slots::Kind::floppy, 0, sdl_file_dialog::Status::failed, {}});
+    EXPECT_EQ(notifications, 2);
 }
 
 TEST(SdlFileDialog, PendingCallbackCanOutliveOwner)

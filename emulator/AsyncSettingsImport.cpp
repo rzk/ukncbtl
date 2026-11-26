@@ -1,6 +1,5 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "AsyncSettingsImport.h"
-#include <chrono>
 #include <utility>
 
 bool preview_settings::AsyncImport::Start(std::filesystem::path source, std::filesystem::path destination,
@@ -10,7 +9,7 @@ bool preview_settings::AsyncImport::Start(std::filesystem::path source, std::fil
     try
     {
         source_ = std::move(source);
-        result_ = std::async(std::launch::async, [source = source_, destination = std::move(destination),
+        result_.Start([source = source_, destination = std::move(destination),
             encoding, current = std::move(current), importMedia]() -> Result {
             try
             {
@@ -28,14 +27,14 @@ bool preview_settings::AsyncImport::Start(std::filesystem::path source, std::fil
 
 std::optional<preview_settings::AsyncImport::Result> preview_settings::AsyncImport::Poll()
 {
-    if (!Pending() || result_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return std::nullopt;
+    if (!result_.Ready()) return std::nullopt;
     return Finish();
 }
 
 std::optional<preview_settings::AsyncImport::Result> preview_settings::AsyncImport::Finish()
 {
     if (!Pending()) return std::nullopt;
-    auto result = result_.get();
+    auto result = result_.Take();
     source_.clear();
     return result;
 }

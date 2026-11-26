@@ -67,7 +67,9 @@ TEST_F(ImGuiSdlTest, DrawsUiOverEmulatorFrameAndHandlesKeyboardEvents)
     ASSERT_TRUE(SDL_SetRenderDrawColor(renderer.get(), 0, 0, 0, 255));
     ASSERT_TRUE(SDL_RenderClear(renderer.get()));
     sdl_screen::Renderer screen(*renderer);
-    ASSERT_TRUE(screen.Draw({1, 1, {0x000000ff}}, SDL_FRect{0, 0, 64, 64}));
+    const std::uint32_t blue = 0x000000ff;
+    ASSERT_TRUE(screen.UploadTopDown(1, 1, {&blue, 1}));
+    ASSERT_TRUE(screen.Draw(SDL_FRect{0, 0, 64, 64}));
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer.get());
     const std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> output(
         SDL_RenderReadPixels(renderer.get(), nullptr), SDL_DestroySurface);

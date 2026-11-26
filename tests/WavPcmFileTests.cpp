@@ -107,9 +107,78 @@ TEST_P(PcmFormats, SignedBoundariesLittleEndianAndFirstChannelOnly)
             EXPECT_EQ(bits == 8 ? sample << 24 : bits == 16 ? (sample << 16) ^ 0x80000000u : sample ^ 0x80000000u, wav->ReadOne());
         ASSERT_TRUE(wav->SetPosition(1));
         EXPECT_EQ(bits == 8 ? samples[1] << 24 : bits == 16 ? (samples[1] << 16) ^ 0x80000000u : samples[1] ^ 0x80000000u, wav->ReadOne());
+        ASSERT_TRUE(wav->SetPosition(0));
+        std::vector<uint32_t> bulk(samples.size() + 1, 0xdeadbeef);
+        const auto result = wav->ReadSamples(bulk);
+        ASSERT_FALSE(result.error);
+        ASSERT_EQ(result.samples, samples.size());
+        EXPECT_EQ(wav->Position(), samples.size());
+        EXPECT_EQ(bulk.back(), 0xdeadbeef);
+        for (std::size_t i = 0; i < samples.size(); ++i)
+            EXPECT_EQ(bulk[i], bits == 8 ? samples[i] << 24 : bits == 16 ? (samples[i] << 16) ^ 0x80000000u : samples[i] ^ 0x80000000u);
+        EXPECT_EQ(wav->ReadSamples(bulk).error, WavError::end_of_data);
     }
 }
 INSTANTIATE_TEST_SUITE_P(All, PcmFormats, testing::Values(8,16,32));
+
+TEST_F(WavFile, BulkReadSpansChunksAndLeavesUnusedOutputUntouched)
+{
+    constexpr std::size_t sampleCount = 10001;
+    auto bytes = Wave();
+    bytes.resize(44);
+    for (std::size_t i = 0; i < sampleCount; ++i) bytes.push_back(static_cast<uint8_t>(i * 7));
+    bytes.insert(bytes.end(), {0, 'J', 'U', 'N', 'K', 0, 0, 0, 0});
+    Put32(bytes, 4, static_cast<uint32_t>(bytes.size() - 8));
+    Put32(bytes, 40, sampleCount);
+    Store(bytes);
+    auto wav = WavPcmFile::Open(path);
+    ASSERT_TRUE(wav);
+    EXPECT_FALSE(wav->ReadSamples({}).error);
+    EXPECT_EQ(wav->Position(), 0u);
+    std::vector<uint32_t> output(sampleCount + 2, 0xdeadbeef);
+    ASSERT_TRUE(wav->SetPosition(3));
+    const auto result = wav->ReadSamples(output);
+    ASSERT_FALSE(result.error);
+    ASSERT_EQ(result.samples, sampleCount - 3);
+    EXPECT_EQ(wav->Position(), sampleCount);
+    for (std::size_t i = 0; i < result.samples; ++i)
+        ASSERT_EQ(output[i], static_cast<uint32_t>(bytes[44 + 3 + i]) << 24);
+    EXPECT_EQ(output[result.samples], 0xdeadbeef);
+    EXPECT_EQ(wav->ReadSamples(output).error, WavError::end_of_data);
+}
+
+TEST_F(WavFile, BulkShortReadExposesOnlyCompleteInterleavedFrames)
+{
+    constexpr std::size_t stride = 4;
+    constexpr uint32_t start = 8192;
+    auto bytes = Wave();
+    bytes.resize(44 + 65536);
+    bytes[22] = 2; // Stereo 16-bit PCM.
+    bytes[32] = stride;
+    bytes[34] = 16;
+    Put32(bytes, 28, 96000 * stride);
+    Put32(bytes, 4, static_cast<uint32_t>(bytes.size() - 8));
+    Put32(bytes, 40, 65536);
+    const auto offset = 44 + start * stride;
+    bytes[offset + stride] = 0x34;
+    bytes[offset + stride + 1] = 0x12;
+    Store(bytes);
+    auto wav = WavPcmFile::Open(path);
+    ASSERT_TRUE(wav);
+    ASSERT_TRUE(wav->SetPosition(start));
+    std::error_code error;
+    std::filesystem::resize_file(path, offset + stride * 2 + 1, error);
+    if (error) GTEST_SKIP() << "The filesystem could not resize an open file: " << error.message();
+    std::array<uint32_t, 4> output;
+    output.fill(0xdeadbeef);
+    const auto result = wav->ReadSamples(output);
+    EXPECT_EQ(result.error, WavError::io_error);
+    EXPECT_EQ(result.samples, 2u);
+    EXPECT_EQ(wav->Position(), start + 2);
+    EXPECT_EQ(output, (std::array<uint32_t, 4>{0x80000000, 0x92340000, 0xdeadbeef, 0xdeadbeef}));
+    ASSERT_TRUE(wav->SetPosition(start));
+    EXPECT_EQ(wav->ReadOne(), 0x80000000u);
+}
 class BadWaveField : public WavFile, public testing::WithParamInterface<std::tuple<size_t,uint32_t>> {};
 TEST_P(BadWaveField, RejectsMalformedHeader)
 {

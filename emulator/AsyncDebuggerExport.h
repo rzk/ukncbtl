@@ -1,9 +1,9 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #pragma once
+#include "BackgroundJob.h"
 #include "VideoDecoder.h"
 #include <cstdint>
 #include <filesystem>
-#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -17,13 +17,14 @@ class AsyncSave
 {
 public:
     using Data = std::variant<std::vector<std::uint16_t>, std::unique_ptr<video::MemorySnapshot>, std::string>;
+    explicit AsyncSave(background::Notify notify = {}) : result_(std::move(notify)) {}
     [[nodiscard]] bool Start(std::filesystem::path path, Data data);
-    [[nodiscard]] bool Pending() const { return result_.valid(); }
+    [[nodiscard]] bool Pending() const { return result_.Pending(); }
     [[nodiscard]] const std::filesystem::path& Path() const { return path_; }
     [[nodiscard]] std::optional<bool> Poll();
     [[nodiscard]] std::optional<bool> Finish();
 private:
     std::filesystem::path path_;
-    std::future<bool> result_;
+    background::Job<bool> result_;
 };
 }

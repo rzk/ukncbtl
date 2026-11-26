@@ -19,10 +19,25 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <system_error>
 #include <string_view>
 #include <utility>
 #include "Emubase.h"
+#include "FrameWorker.h"
 #include "util/LittleEndian.h"
+#include "util/Profiler.h"
+#ifdef UKNCBTL_HARD_PREFETCH_TEST_HOOKS
+#include "HardDiskTestHooks.h"
+#include <atomic>
+namespace
+{
+std::atomic<const hard_disk_testing::ReadObserver*> readObserver{nullptr};
+}
+void hard_disk_testing::ObserveReadAhead(const ReadObserver* observer)
+{
+    readObserver.store(observer);
+}
+#endif
 
 
 //////////////////////////////////////////////////////////////////////
@@ -69,6 +84,66 @@ static void InvertBuffer(std::span<uint8_t, IDE_DISK_SECTOR_SIZE> buffer)
         byte = static_cast<uint8_t>(~byte);
 }
 
+namespace
+{
+bool ReadFileSector(std::fstream& stream, long offset, std::span<uint8_t, IDE_DISK_SECTOR_SIZE> buffer)
+{
+    UKNC_PROFILE_SCOPE("Hard disk host read");
+    stream.clear();
+    stream.seekg(offset, std::ios::beg);
+    return stream && stream.read(reinterpret_cast<char*>(buffer.data()), IDE_DISK_SECTOR_SIZE);
+}
+}
+
+// The board owns the IDE registers and buffer. The reader borrows the stream
+// and writes only its separate sector buffer until the result is collected.
+struct CHardDrive::SectorReader
+{
+    void Start(std::fstream& source, long offset)
+    {
+        usable = false;
+        if (pending)
+        {
+            if (!worker.WaitFor(std::chrono::milliseconds(0))) return;
+            (void)Finish();
+        }
+        stream = &source;
+        position = offset;
+        pending = worker.Start();
+        usable = pending;
+    }
+
+    bool Finish()
+    {
+        if (!pending) return false;
+        UKNC_PROFILE_SCOPE("Hard disk read handoff");
+        const auto result = worker.WaitOutcome();
+        pending = usable = false;
+        return result == FrameWorker::Outcome::completed;
+    }
+
+    bool Read(std::fstream& source, long offset, std::array<uint8_t, IDE_DISK_SECTOR_SIZE>& buffer)
+    {
+        const bool matches = usable && position == offset;
+        const bool completed = Finish();
+        if (!matches) return ReadFileSector(source, offset, buffer);
+        if (completed) buffer = sector;
+        return completed;
+    }
+
+    std::fstream* stream = nullptr;
+    long position = 0;
+    std::array<uint8_t, IDE_DISK_SECTOR_SIZE> sector{};
+    bool pending = false, usable = false;
+    FrameWorker worker{[this] {
+#ifdef UKNCBTL_HARD_PREFETCH_TEST_HOOKS
+        if (const auto* observer = readObserver.load(); observer && !observer->read(observer->context, position))
+            return false;
+#endif
+        return ReadFileSector(*stream, position, sector);
+    }};
+};
+
 //////////////////////////////////////////////////////////////////////
 
 
@@ -99,6 +174,7 @@ void CHardDrive::Reset()
 {
     //DebugLog(_T("HDD Reset\r\n"));
 
+    AbandonReadAhead();
     m_status = IDE_STATUS_BUSY;
     m_error = IDE_ERROR_NONE;
     m_command = 0;
@@ -206,6 +282,7 @@ void CHardDrive::DetachImage()
     m_status = IDE_STATUS_BUSY;
     m_command = 0;
     m_sectorcount = m_bufferoffset = 0;
+    m_reader.reset(); // Join before closing the stream borrowed by a read.
     m_fpFile.reset();
 }
 
@@ -360,11 +437,8 @@ void CHardDrive::HandleCommand(uint8_t command)
         //DebugLogFormat(_T("HDD COMMAND {:02x} (READ MULT): C={}, H={}, SN={}, SC={}\r\n"),
         //        command, m_curcylinder, m_curhead, m_cursector, m_sectorcount);
 
-        m_status |= IDE_STATUS_BUSY;
         m_status &= ~IDE_STATUS_BUFFER_READY;
-
-        m_timeoutcount = TIME_PER_SECTOR * 3;  // Timeout while seek for track
-        m_timeoutevent = TimeoutEvent::read_sector_done;
+        ScheduleRead(TIME_PER_SECTOR * 3); // Seek for the first sector.
         break;
 
     case IDE_COMMAND_SET_CONFIG:
@@ -380,6 +454,7 @@ void CHardDrive::HandleCommand(uint8_t command)
         //DebugLogFormat(_T("HDD COMMAND {:02x} (WRITE MULT): C={}, H={}, SN={}, SC={}\r\n"),
         //        command, m_curcylinder, m_curhead, m_cursector, m_sectorcount);
 
+        AbandonReadAhead();
         m_timeoutcount = 0;
         m_timeoutevent = TimeoutEvent::none;
         m_status &= ~(IDE_STATUS_BUSY | IDE_STATUS_ERROR);
@@ -391,6 +466,7 @@ void CHardDrive::HandleCommand(uint8_t command)
     case IDE_COMMAND_IDENTIFY:
         //DebugLogFormat(_T("HDD COMMAND {:02x} (IDENTIFY)\r\n"), command);
 
+        AbandonReadAhead();
         IdentifyDrive();  // Prepare the buffer
         m_timeoutcount = 0;
         m_timeoutevent = TimeoutEvent::none;
@@ -462,12 +538,27 @@ std::expected<long, CHardDrive::AddressError> CHardDrive::CalculateOffset() cons
     return static_cast<long>(byteOffset);
 }
 
-void CHardDrive::ReadNextSector()
+void CHardDrive::ScheduleRead(int ticks)
 {
     m_status |= IDE_STATUS_BUSY;
-
-    m_timeoutcount = TIME_PER_SECTOR * 2;  // Timeout while seek for next sector
+    m_timeoutcount = ticks;
     m_timeoutevent = TimeoutEvent::read_sector_done;
+
+    AbandonReadAhead();
+    if (!m_readAheadEnabled || !m_fpFile) return;
+    const auto offset = CalculateOffset();
+    if (!offset) return;
+    if (!m_reader)
+    {
+        try { m_reader = std::make_unique<SectorReader>(); }
+        catch (const std::exception&) { m_readAheadEnabled = false; return; }
+    }
+    m_reader->Start(*m_fpFile, *offset);
+}
+
+void CHardDrive::AbandonReadAhead()
+{
+    if (m_reader) m_reader->usable = false;
 }
 
 void CHardDrive::ReadSectorDone()
@@ -477,24 +568,16 @@ void CHardDrive::ReadSectorDone()
     m_status |= IDE_STATUS_BUFFER_READY;
     m_status |= IDE_STATUS_SEEK_COMPLETE;
 
-    // Read sector from HDD image to the buffer
+    // Guest register writes during the seek can change the requested offset.
+    // A speculative result is usable only when it still matches at this tick.
     const auto fileOffset = CalculateOffset();
-    if (m_fpFile && fileOffset)
+    const bool readable = m_fpFile && fileOffset;
+    const bool read = readable && (m_reader ? m_reader->Read(*m_fpFile, *fileOffset, m_buffer) :
+        ReadFileSector(*m_fpFile, *fileOffset, m_buffer));
+    if (!read)
     {
-        m_fpFile->clear();
-        m_fpFile->seekg(*fileOffset, std::ios::beg);
-    }
-    if (!m_fpFile || !fileOffset || !*m_fpFile)
-    {
-        if (m_fpFile && fileOffset && !*m_fpFile && !m_hostFailure) m_hostFailure = HardDiskError::readFailed;
-        m_status &= ~IDE_STATUS_BUFFER_READY;
-        m_status |= IDE_STATUS_ERROR;
-        m_error = IDE_ERROR_BAD_SECTOR;
-        return;
-    }
-    if (!m_fpFile->read(reinterpret_cast<char*>(m_buffer.data()), IDE_DISK_SECTOR_SIZE))
-    {
-        if (!m_hostFailure) m_hostFailure = HardDiskError::readFailed;
+        AbandonReadAhead();
+        if (readable && !m_hostFailure) m_hostFailure = HardDiskError::readFailed;
         m_status &= ~IDE_STATUS_BUFFER_READY;
         m_status |= IDE_STATUS_ERROR;
         m_error = IDE_ERROR_BAD_SECTOR;
@@ -527,6 +610,7 @@ void CHardDrive::WriteSectorDone()
 
     if (m_fpFile && !m_okReadOnly && fileOffset)
     {
+        if (m_reader) (void)m_reader->Finish();
         m_fpFile->clear();
         m_fpFile->seekp(*fileOffset, std::ios::beg);
     }
@@ -591,7 +675,7 @@ void CHardDrive::ContinueRead()
     m_status &= ~IDE_STATUS_BUSY;
 
     if (m_sectorcount > 0)
-        ReadNextSector();
+        ScheduleRead(TIME_PER_SECTOR * 2);
 }
 
 void CHardDrive::ContinueWrite()

@@ -1,12 +1,11 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #pragma once
 
-#include "ScreenshotImage.h"
 #include <SDL3/SDL.h>
 #include <cstdint>
 #include <expected>
 #include <memory>
-#include <vector>
+#include <span>
 
 namespace sdl_screen
 {
@@ -18,13 +17,13 @@ class Renderer
 {
 public:
     explicit Renderer(SDL_Renderer& renderer);
-    [[nodiscard]] std::expected<void, Error> Draw(const screenshot_image::Image& image,
-        const SDL_FRect& destination);
+    [[nodiscard]] std::expected<void, Error> UploadTopDown(int width, int height, std::span<const std::uint32_t> pixels);
+    [[nodiscard]] std::expected<void, Error> Draw(const SDL_FRect& destination) const;
+    void Invalidate();
 
 private:
     SDL_Renderer* renderer_;
     std::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)> texture_{nullptr, SDL_DestroyTexture};
-    std::vector<std::uint32_t> topDown_;
     int width_ = 0;
     int height_ = 0;
 };

@@ -1,7 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #pragma once
+#include "BackgroundJob.h"
 #include "PreviewRoms.h"
-#include <future>
 #include <optional>
 #include <variant>
 
@@ -17,8 +17,9 @@ public:
         bool cancelled;
         std::expected<Image, Error> image;
     };
+    explicit AsyncLoad(background::Notify notify = {}) : result_(std::move(notify)) {}
     [[nodiscard]] bool Start(std::filesystem::path path, int slot);
-    [[nodiscard]] bool Pending() const { return result_.valid(); }
+    [[nodiscard]] bool Pending() const { return result_.Pending(); }
     [[nodiscard]] bool Cancelled() const { return Pending() && cancelled_; }
     [[nodiscard]] int Slot() const { return slot_; }
     void Cancel() { if (Pending()) cancelled_ = true; }
@@ -29,6 +30,6 @@ private:
     std::filesystem::path path_;
     int slot_ = -1;
     bool cancelled_ = false;
-    std::future<std::expected<Image, Error>> result_;
+    background::Job<std::expected<Image, Error>> result_;
 };
 }

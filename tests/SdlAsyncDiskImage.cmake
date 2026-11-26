@@ -3,6 +3,7 @@ set(disk "${TEST_DIR}/worker-日本.dsk")
 file(REMOVE "${disk}")
 execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
   "UKNCBTL_TEST_DISK_PATH=${disk}" "UKNCBTL_TEST_SCREENSHOT_PATH=${disk}"
+  UKNCBTL_TEST_SAVE_DURING_FRAME=1
   UKNCBTL_TEST_SCREENSHOT_CONFLICT=1 "${APP}" --smoke-test --sound
   RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 25)
 if(NOT result EQUAL 0 OR NOT EXISTS "${disk}")

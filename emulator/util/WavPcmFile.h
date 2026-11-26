@@ -10,11 +10,13 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <span>
 
 enum class WavError
@@ -26,6 +28,12 @@ enum class WavError
     io_error,
     end_of_data,
     invalid_position,
+};
+
+struct WavReadResult
+{
+    std::size_t samples = 0;
+    std::optional<WavError> error;
 };
 
 // A PCM WAV stream. Recordings are mono, 8-bit PCM. Read samples are returned
@@ -50,6 +58,10 @@ public:
     [[nodiscard]] uint32_t Position() const { return position_; }
     [[nodiscard]] std::expected<void, WavError> SetPosition(uint32_t position);
     [[nodiscard]] std::expected<uint32_t, WavError> ReadOne();
+    // Writes complete samples only, preserving a valid prefix on short reads.
+    // A read at the declared end reports end_of_data. A request extending
+    // past that end succeeds with the available samples.
+    [[nodiscard]] WavReadResult ReadSamples(std::span<uint32_t> output);
     [[nodiscard]] std::expected<void, WavError> WriteOne(uint32_t value);
     [[nodiscard]] std::expected<void, WavError> WriteSamples(std::span<const uint8_t> samples);
     [[nodiscard]] uint32_t RecordingLimit() const;

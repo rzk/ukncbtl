@@ -4,4 +4,5 @@
 namespace preview_tape::testing
 {
 void FailRecordingWrites(bool fail);
+void FailPlaybackAt(int position);
 }

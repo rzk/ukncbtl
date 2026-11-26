@@ -20,7 +20,8 @@ struct Image
 // Invalid mode numbers select ScreenScale's default mode; short input fails.
 [[nodiscard]] std::optional<Image> Prepare(std::span<const std::uint32_t> source, int mode);
 
-// Copy bottom-up pixel rows into top-down native 32-bit rows. Input and output
-// must not overlap. Invalid dimensions or short buffers leave output untouched.
-[[nodiscard]] bool CopyTopDown(const Image& image, std::span<std::byte> output);
+// Copy bottom-up pixel rows into top-down native 32-bit rows. A zero pitch
+// selects tightly packed rows. Keep the input and output in separate buffers.
+// Invalid dimensions or short buffers leave output untouched.
+[[nodiscard]] bool CopyTopDown(const Image& image, std::span<std::byte> output, std::size_t pitch = 0);
 }

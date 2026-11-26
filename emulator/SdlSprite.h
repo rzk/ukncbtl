@@ -14,6 +14,7 @@ public:
     explicit Texture(SDL_Renderer& renderer) : renderer_(renderer) {}
     [[nodiscard]] bool Update(std::span<const std::uint32_t> topDown);
     [[nodiscard]] SDL_Texture* Get() const { return texture_.get(); }
+    void Invalidate() { texture_.reset(); }
 private:
     SDL_Renderer& renderer_;
     std::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)> texture_{nullptr, SDL_DestroyTexture};
