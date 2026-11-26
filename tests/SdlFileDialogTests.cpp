@@ -171,19 +171,6 @@ TEST(SdlFileDialog, PreservesSubtitlePurpose)
     EXPECT_EQ(result->path, "listing.lst");
 }
 
-TEST(SdlFileDialog, PreservesLegacySettingsImportChoice)
-{
-    sdl_file_dialog::State state;
-    ASSERT_TRUE(state.Begin());
-    state.Complete({media_slots::Kind::floppy, 4, sdl_file_dialog::Status::selected,
-        "legacy.ini", sdl_file_dialog::Purpose::legacySettings});
-    const auto result = state.Take();
-    ASSERT_TRUE(result);
-    EXPECT_EQ(result->purpose, sdl_file_dialog::Purpose::legacySettings);
-    EXPECT_EQ(result->slot % 3, 1); // Windows-1251.
-    EXPECT_GE(result->slot, 3); // Include media paths.
-}
-
 TEST(SdlFileDialog, PreservesMemoryDumpSelectionAcrossCallback)
 {
     sdl_file_dialog::State state;

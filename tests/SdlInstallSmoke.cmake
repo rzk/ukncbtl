@@ -20,8 +20,32 @@ foreach(file IN ITEMS "bin/${EXE_NAME}" licenses/UKNCBTL-LICENSE licenses/SDL3-L
   endif()
 endforeach()
 
+set(executable "${install_dir}/bin/${EXE_NAME}")
+if(LLVM_READOBJ)
+  execute_process(COMMAND "${LLVM_READOBJ}" --coff-imports "${executable}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE imports ERROR_VARIABLE error)
+  if(NOT result STREQUAL "0")
+    message(FATAL_ERROR "Could not read executable imports: ${error}")
+  endif()
+  string(REGEX MATCHALL "Name: [^\r\n]+" libraries "${imports}")
+  if(NOT libraries)
+    message(FATAL_ERROR "No Windows imports found in ${executable}")
+  endif()
+  foreach(library IN LISTS libraries)
+    string(REGEX REPLACE "^Name: " "" library "${library}")
+    string(TOLOWER "${library}" dll)
+    if(dll MATCHES "^(api-ms-win-crt-|ucrtbase|vcruntime|msvcp[0-9]|msvcr[0-9]|concrt)" OR
+        (NOT dll MATCHES "^(api|ext)-ms-win-" AND NOT EXISTS "$ENV{SystemRoot}/System32/${library}"))
+      message(FATAL_ERROR "Unexpected Windows runtime dependency: ${library}")
+    endif()
+  endforeach()
+endif()
+
+if(ASAN_RUNTIME_DIR)
+  set(ENV{PATH} "${ASAN_RUNTIME_DIR};$ENV{PATH}")
+endif()
 execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-  "${install_dir}/bin/${EXE_NAME}" --smoke-test
+  "${executable}" --smoke-test
   WORKING_DIRECTORY "${install_dir}" RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 30)
 if(NOT result STREQUAL "0")
   message(FATAL_ERROR "Installed frontend smoke test failed (${result}): ${output}\n${error}")

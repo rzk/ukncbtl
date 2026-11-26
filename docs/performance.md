@@ -1,67 +1,34 @@
-# Correctness, benchmarks and profiling
+# Emulator performance and testing
 
-Use GoogleTest for correctness, Google Benchmark for speed measurements, and
-Tracy to locate bottlenecks. Benchmarks and ASan currently require the legacy
-Windows x64/MSVC build; Tracy also supports the SDL frontend. Commands below run from the repository root in a Windows developer
-shell with Ninja, the MSVC compiler and Clang available on `PATH`.
+Run the commands from the repository root in a Windows developer command prompt with CMake, Ninja and Clang configured. Each uses the same SDL3 and Dear ImGui application build.
 
-## Build options and dependencies
+| Option | Purpose |
+| --- | --- |
+| BUILD_TESTING | Build and register the GoogleTest suites and SDL smoke tests. Enabled by default. |
+| UKNCBTL_BUILD_FRAME_BENCHMARK | Build the frame, trace and tape comparisons. |
+| UKNCBTL_BUILD_BENCHMARKS | Build the Google Benchmark CPU, frame and scaling workloads. |
+| UKNCBTL_ENABLE_TRACY | Collect timing zones from the application or benchmarks. |
+| UKNCBTL_ENABLE_ASAN | Instrument a developer build with AddressSanitizer. |
 
-| CMake option | Default | Purpose |
-| --- | --- | --- |
-| `BUILD_TESTING` | `ON` | GoogleTest executables registered with CTest |
-| `UKNCBTL_BUILD_BENCHMARKS` | `OFF` | Headless `EmulatorBenchmarks` executable |
-| `UKNCBTL_ENABLE_TRACY` | `OFF` | Tracy instrumentation in the app and shared core/scaler |
-| `UKNCBTL_ENABLE_ASAN` | `OFF` | MSVC AddressSanitizer for the application, renderer, tests and benchmarks |
-| `UKNCBTL_BUILD_FRAME_BENCHMARK` | `OFF` | Portable, headless frame-overlap, trace, and tape measurements |
-
-CMake fetches GoogleTest 1.17.0, Google Benchmark 1.9.4 and Tracy 0.12.2 by
-pinned commit, as needed. GoogleTest and Benchmark are linked only into their
-respective executables. With Tracy off, profiling macros compile away and no
-Tracy dependency is downloaded or linked. Turning all three options off builds
-the application without fetching any of these dependencies.
-
-The legacy application and fetched libraries use the static MSVC runtime (`/MT`, or
-`/MTd` for Debug). CMake's `FETCHCONTENT_SOURCE_DIR_GOOGLETEST`,
-`FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK` and `FETCHCONTENT_SOURCE_DIR_TRACY`
-can point at local checkouts of the pinned revisions for offline builds.
-Existing populated build directories can use `-DFETCHCONTENT_UPDATES_DISCONNECTED=ON`.
-
-## Correctness
+## Tests and offline builds
 
 ```powershell
-cmake -S . -B build/legacy -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
-cmake --build build/legacy --parallel
-ctest --test-dir build/legacy --output-on-failure
+cmake --preset windows-clang
+cmake --build --preset windows-clang --parallel
+ctest --preset windows-clang
 ```
 
-Use `ctest --test-dir build/legacy -N` to list cases and `-R ProcessorTests`
-to select a suite. `build/legacy/LegacyCoreTests.exe` also accepts native
-GoogleTest options such as `--gtest_filter=ProcessorTests.*` and
-`--gtest_output=xml:build/core-results.xml`.
+Run **ctest --test-dir build/windows-clang -N** to list cases. Use **ctest --preset windows-clang -R ProcessorTests** to filter by name. To use offline source checkouts, set FETCHCONTENT_SOURCE_DIR_SDL3 and FETCHCONTENT_SOURCE_DIR_IMGUI to the pinned dependency sources. Set FETCHCONTENT_SOURCE_DIR_GOOGLETEST, FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK and FETCHCONTENT_SOURCE_DIR_TRACY when enabling the corresponding tools.
 
-The compatibility adapter reports legacy assertion locations, expected/actual
-values and context through GoogleTest. Processor instruction tables are
-initialized and released by a GoogleTest global environment, including when
-CTest executes an individual case. The original standalone regression workloads
-also run under GoogleTest; exhaustive corpus checks remain grouped to avoid
-launching a process per opcode. Keep expected results independent of optimized
-code, and preserve exact flags, memory effects, timing and pixel rounding.
-
-## Memory-safety checks
-
-For memory-safety checks, install the MSVC AddressSanitizer component and run
-from Developer PowerShell so the sanitizer runtime DLL is on `PATH`:
+## AddressSanitizer
 
 ```powershell
-cmake -S . -B build/legacy-asan -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF -DUKNCBTL_ENABLE_ASAN=ON
-cmake --build build/legacy-asan
-ctest --test-dir build/legacy-asan --output-on-failure
+cmake --preset windows-clang -B build/asan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUKNCBTL_ENABLE_ASAN=ON
+cmake --build build/asan --parallel
+ctest --test-dir build/asan --output-on-failure
 ```
 
-The sanitizer option disables incompatible MSVC runtime-check and incremental
-linker settings. MSVC does not provide UBSan. Keep sanitizers off for performance
-measurements.
+Use the sanitizer build for local diagnostics. It uses the Clang sanitizer runtime and shared C/C++ runtime on Windows. Use the standard release build for distribution and performance measurements.
 
 ## Speed measurements
 
@@ -69,7 +36,7 @@ To compare the SDL frame worker with serial video preparation without fetching a
 benchmark library, enable the portable frame workload in a Release build:
 
 ```powershell
-cmake -S . -B build/windows-clang -DUKNCBTL_BUILD_FRAME_BENCHMARK=ON
+cmake --preset windows-clang -DUKNCBTL_BUILD_FRAME_BENCHMARK=ON
 cmake --build build/windows-clang --target FrameOverlapBenchmark --parallel
 ./build/windows-clang/FrameOverlapBenchmark.exe
 ```
@@ -115,9 +82,9 @@ The benchmark excludes SDL rendering, audio output and pacing. Storage latency a
 substantially from a user's tape workload.
 
 ```powershell
-cmake -S . -B build/legacy -DUKNCBTL_BUILD_BENCHMARKS=ON -DUKNCBTL_ENABLE_TRACY=OFF
-cmake --build build/legacy --target EmulatorBenchmarks --parallel
-./build/legacy/EmulatorBenchmarks.exe --benchmark_min_time=0.5s --benchmark_repetitions=5 --benchmark_out=build/legacy/benchmark.json --benchmark_out_format=json
+cmake --preset windows-clang -B build/benchmarks -DUKNCBTL_BUILD_BENCHMARKS=ON -DUKNCBTL_ENABLE_TRACY=OFF
+cmake --build build/benchmarks --target EmulatorBenchmarks --parallel
+./build/benchmarks/EmulatorBenchmarks.exe --benchmark_min_time=0.5s --benchmark_repetitions=5 --benchmark_out=build/benchmarks/benchmark.json --benchmark_out_format=json
 ```
 
 The benchmark executable has no GUI, ROM, disk image or GoogleTest dependency:
@@ -143,9 +110,9 @@ build configuration, and measure with Tracy disabled. A quick smoke run uses
 Use a separate directory to keep instrumented timings out of benchmark baselines:
 
 ```powershell
-cmake -S . -B build/profile -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF -DUKNCBTL_ENABLE_TRACY=ON
-cmake --build build/profile --target ukncbtl-sdl --parallel
-./build/profile/ukncbtl-sdl.exe
+cmake --preset windows-clang -B build/profile -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF -DUKNCBTL_ENABLE_TRACY=ON
+cmake --build build/profile --target ukncbtl --parallel
+./build/profile/ukncbtl.exe
 ```
 
 Open the Tracy **0.12.2** profiler from the [upstream release](https://github.com/wolfpld/tracy/releases/tag/v0.12.2)
@@ -166,8 +133,7 @@ read on the read-ahead worker or on the board owner when a synchronous read
 is needed. `Hard disk read handoff` measures the time to collect a pending
 sector when the emulated seek ends, a write needs the stream, or a replacement
 read reuses the worker. `Floppy host track read` measures host track reads, and
-`Floppy track read handoff` measures collection of floppy read-ahead work. The
-legacy frontend also reports `Prepare screen` and `Audio buffer wait`.
+`Floppy track read handoff` measures collection of floppy read-ahead work.
 Audio and pacing waits are deliberate
 throttling, so inspect them separately from computation. The screen-scaling zone
 appears only on paths that call the CPU scaler. No per-instruction or per-sample

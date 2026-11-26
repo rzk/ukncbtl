@@ -241,8 +241,8 @@ TEST_F(WavFile, EmptyAndLegacyUnpaddedOddDataAccepted)
 }
 TEST_F(WavFile, InvalidArgumentsAndOpenFailure)
 {
-    EXPECT_EQ(WavError::invalid_argument,WavPcmFile::Open(nullptr).error());
-    EXPECT_EQ(WavError::invalid_argument,WavPcmFile::Create(nullptr,44100).error());
+    EXPECT_EQ(WavError::invalid_argument,WavPcmFile::Open({}).error());
+    EXPECT_EQ(WavError::invalid_argument,WavPcmFile::Create({},44100).error());
     EXPECT_EQ(WavError::invalid_argument,WavPcmFile::Create(path,0).error());
     EXPECT_EQ(WavError::invalid_argument,WavPcmFile::Create(path,-1).error());
     ASSERT_TRUE(std::filesystem::remove(path)); EXPECT_EQ(WavError::open_failed,WavPcmFile::Open(path).error());

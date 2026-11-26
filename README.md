@@ -1,108 +1,27 @@
-# ukncbtl
-UKNCBTL — UKNC Back to Life! emulator, Windows x86-64 version.
+# UKNCBTL
 
-### Portable build during the SDL migration
+UKNCBTL (UKNC Back to Life!) is a UKNC emulator with an SDL3 and Dear ImGui interface.
 
-The experimental SDL3 and Dear ImGui frontend builds on Windows with CMake,
-Ninja and Clang. It includes the emulator's ROM and UI font in the executable.
-The frontend is still being tested and is not yet a verified release. Linux
-and macOS frontend builds and validation remain future work.
+## Build and install on Windows
 
-From a Windows developer command prompt with Clang and Ninja on `PATH`, a
-Windows SDK, and a compatible C++ standard library and linker, build it with:
+The supported build uses CMake, Ninja, and Clang. Open an x64 developer command prompt with the Windows SDK, C++ standard library, and linker configured. Put CMake, Ninja, and Clang on PATH. The presets use clang-cl for C and C++ and require C++23 for the emulator.
 
 ```powershell
 cmake --preset windows-clang
 cmake --build --preset windows-clang
 ctest --preset windows-clang
-cmake --install build/windows-clang --prefix <destination>
+cmake --install build/windows-clang --prefix build/install
 ```
 
-Run `build/windows-clang/ukncbtl-sdl.exe` or the installed `bin/ukncbtl-sdl.exe`.
-The `windows-clang-debug` preset provides the same workflow for debug builds.
-SDL3 and Dear ImGui are enabled by default for fresh CMake configurations.
-Existing build directories retain their cached options; reconfigure them with
-`UKNCBTL_BUILD_LEGACY=OFF`, `UKNCBTL_ENABLE_SDL3=ON`, and
-`UKNCBTL_ENABLE_IMGUI=ON`, or use a fresh preset build directory.
-To use a separate configuration, start it with `--settings <path-to-ini>`;
-the parent directory must already exist. The selected file contains that
-instance's preferences and saved media paths.
-The installation includes the application and its license notices. SDL3,
-Dear ImGui and GoogleTest are fetched at pinned versions on first configure;
-`FETCHCONTENT_SOURCE_DIR_SDL3`, `FETCHCONTENT_SOURCE_DIR_IMGUI` and
-`FETCHCONTENT_SOURCE_DIR_GOOGLETEST` can point to offline source checkouts.
-The smoke tests use dummy video and audio drivers and do not replace interactive
-testing of the actual Windows display, audio and file dialogs.
+Run **build/install/bin/ukncbtl.exe**. The ROM, interface font, SDL3, Dear ImGui, and C/C++ runtime are built into the standard Windows release. The install also includes the applicable license notices.
 
-The headless core and tests can also be built without the frontend. The legacy
-application still requires the Windows toolchain documented below.
+Use the windows-clang-debug preset for a debug build. Pass -DBUILD_TESTING=OFF for an application-only build. CMake fetches pinned dependency sources at configure time. See the [performance and testing guide](docs/performance.md) for offline builds and optional developer tools.
 
-With a Clang toolchain available on `PATH`, configure and run the headless tests:
+Use **ukncbtl --help** for startup options or **--settings path-to-ini** to choose a settings file in an existing directory. Existing SDL preferences and saved tool layout are picked up automatically. To migrate settings from the retired Win32 frontend, use a previous SDL build that still offers **Import legacy settings and exit**, then open the updated application.
 
-```sh
-cmake -S . -B build/portable -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
-cmake --build build/portable
-ctest --test-dir build/portable --output-on-failure
-```
-
-On Windows set both `CMAKE_C_COMPILER` and `CMAKE_CXX_COMPILER` to `clang-cl`
-from an environment that provides the SDK, standard library and linker. Clang's
-`clang` driver must also be on `PATH` to assemble the CPU overflow routines;
-alternatively set `UKNCBTL_CLANG_ASSEMBLER` to its full path. GoogleTest is fetched at its
-pinned commit; offline builds can use `FETCHCONTENT_SOURCE_DIR_GOOGLETEST` as
-described in [testing and performance](docs/performance.md). The portable
-build defaults to enabled tests; `BUILD_TESTING=OFF` configures without test
-targets. Benchmarks, Tracy and ASan remain legacy-only for now. The migration
-checklist is in [docs/sdl-migration-baseline.md](docs/sdl-migration-baseline.md).
-
-The overflow assembly has x86-64 and ARM64 implementations for Windows, Linux
-and macOS. CMake selects a single target architecture; macOS universal builds
-must currently be made as separate architecture builds. Windows x86-64 has
-been executed locally; the other combinations still require native CI or hardware
-verification even though their objects have been cross-assembled.
-
-### Building the legacy Windows reference
-
-From a Windows developer command prompt with the SDK, C++ runtime, Clang and
-Ninja available, configure the optional reference in a separate directory:
-
-```powershell
-cmake -S . -B build/legacy -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DUKNCBTL_BUILD_LEGACY=ON -DUKNCBTL_ENABLE_IMGUI=OFF -DUKNCBTL_ENABLE_SDL3=OFF
-cmake --build build/legacy
-```
-
-The executable is `build/legacy/UKNCBTL.exe`. Use a separate build directory
-with `-DCMAKE_BUILD_TYPE=Debug` for a debug build.
-All C++ targets require C++23, including the renderer, tests and benchmarks.
-CMake selects the compiler's corresponding standard mode (MSVC may spell this
-`/std:c++latest`). Use a current MSVC toolset with `std::expected`, `std::print`
-and C++23 ranges support. The reference requires an x64 target.
-The reference frontend uses the shared built-in screen scaler and does not load
-renderer plugins. `cmake --install build/legacy --prefix <destination>`
-installs the executable.
-The ROM and other resources are embedded in the executable. This modern build
-uses the current Microsoft toolchain and Windows SDK and does not target Windows
-XP.
-
-Run the CMake test suite after building the corresponding configuration:
-
-```powershell
-ctest --test-dir build/legacy --output-on-failure
-```
-
-The suite uses GoogleTest and CTest, including the existing core tests, exhaustive
-disassembly and hint checks, and screenshot, WAV, and bitmap tests. Each legacy
-core case is registered separately through a compatibility adapter, preserving
-the Microsoft test sources and their abort-on-failure behavior. New cases can use
-GoogleTest directly. Configure with `-DBUILD_TESTING=OFF` to omit the test targets.
-
-GoogleTest, Google Benchmark and Tracy use pinned release commits fetched by
-CMake only when their corresponding options are enabled. The first configure
-needs Git and access to GitHub. See [testing and performance](docs/performance.md)
-for offline builds, benchmarks and profiling.
+Windows is the current validation target. The [desktop release checklist](docs/desktop-release-checklist.md) covers native display, audio, dialogs, clipboard, and other behavior beyond the dummy-driver smoke tests.
 
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
-[![Build status](https://ci.appveyor.com/api/projects/status/xicur65lusd5c3ab?svg=true)](https://ci.appveyor.com/project/nzeemin/ukncbtl)
 [![CodeFactor](https://www.codefactor.io/repository/github/nzeemin/ukncbtl/badge)](https://www.codefactor.io/repository/github/nzeemin/ukncbtl)
 
 ![GitHub all releases](https://img.shields.io/github/downloads/nzeemin/ukncbtl/total)
@@ -160,7 +79,7 @@ NOT emulated yet: network card, RAM disks, joysticks.
 -----
 
 The UKNCBTL project consists of:
-* [ukncbtl](https://github.com/nzeemin/ukncbtl/) the Windows x86-64 version.
+* [ukncbtl](https://github.com/nzeemin/ukncbtl/) the SDL3 and Dear ImGui version.
 * [ukncbtl-renders](https://github.com/nzeemin/ukncbtl-renders/) — renderers for UKNCBTL Win32.
 * [ukncbtl-qt](https://github.com/nzeemin/ukncbtl-qt/) is based on Qt framework and works under Windows, Linux and Mac OS X.
 * [ukncbtl-testbench](https://github.com/nzeemin/ukncbtl-testbench/) — test bench for regression and performance testing.

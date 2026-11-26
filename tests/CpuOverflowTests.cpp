@@ -1,18 +1,14 @@
 #include <gtest/gtest.h>
 #include <cstdint>
-#include <array>
-extern "C" int CpuAddOverflow8(uint8_t, uint8_t);
-extern "C" int CpuAddOverflow16(uint16_t, uint16_t);
-extern "C" int CpuSubOverflow8(uint8_t, uint8_t);
-extern "C" int CpuSubOverflow16(uint16_t, uint16_t);
+#include "emubase/Processor.h"
 static testing::AssertionResult CheckOverflow(unsigned a,unsigned b,unsigned bits)
 {
     const int limit=1<<(bits-1);
     const int x=a<static_cast<unsigned>(limit)?static_cast<int>(a):static_cast<int>(a)-2*limit;
     const int y=b<static_cast<unsigned>(limit)?static_cast<int>(b):static_cast<int>(b)-2*limit;
     const bool add=x+y < -limit || x+y>=limit,sub=x-y < -limit || x-y>=limit;
-    const int actualAdd=bits==8?CpuAddOverflow8(a,b):CpuAddOverflow16(a,b);
-    const int actualSub=bits==8?CpuSubOverflow8(a,b):CpuSubOverflow16(a,b);
+    const int actualAdd=bits==8?cpu_overflow::Add<uint8_t>(a,b):cpu_overflow::Add<uint16_t>(a,b);
+    const int actualSub=bits==8?cpu_overflow::Subtract<uint8_t>(a,b):cpu_overflow::Subtract<uint16_t>(a,b);
     if(actualAdd==static_cast<int>(add) && actualSub==static_cast<int>(sub)) return testing::AssertionSuccess();
     return testing::AssertionFailure()<<bits<<" bits, a="<<a<<", b="<<b<<": add="<<actualAdd<<" expected "<<add<<", sub="<<actualSub<<" expected "<<sub;
 }

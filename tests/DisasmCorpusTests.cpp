@@ -1,5 +1,4 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include <gtest/gtest.h>
 #include "emubase/Emubase.h"
 #include <array>
@@ -7,16 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 
-#ifdef _DEBUG
-BOOL AssertFailedLine(LPCSTR file, int line)
-{
-    std::fprintf(stderr, "Assertion failed at %s:%d\n", file, line);
-    std::abort();
-}
-#endif
-void DebugLog(LPCTSTR) {}
-const TCHAR* REGISTER_NAME[] = { _T("R0"), _T("R1"), _T("R2"), _T("R3"),
-                                 _T("R4"), _T("R5"), _T("SP"), _T("PC") };
 
 static uint64_t DisassemblyHash()
 {
@@ -50,7 +39,7 @@ static uint64_t HintHash()
         hash = (hash ^ (value & 0xff)) * 1099511628211ull;
         hash = (hash ^ (value >> 8)) * 1099511628211ull;
     };
-    const auto addText = [&add](const TcharString& value) {
+    const auto addText = [&add](const std::wstring& value) {
         for (const auto ch : value) add(static_cast<uint16_t>(ch));
         add(0);
     };

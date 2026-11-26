@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "MediaSlots.h"
+#include "util/PathIdentity.h"
 #include "emubase/Emubase.h"
 #include <utility>
 
@@ -9,12 +10,6 @@ bool Valid(media_slots::Kind kind, int slot)
 {
     return slot >= 0 && ((kind == media_slots::Kind::floppy && slot < 4) ||
                          (kind == media_slots::Kind::hardDisk && slot < 2));
-}
-bool SameFile(const std::filesystem::path& first, const std::filesystem::path& second)
-{
-    if (first == second) return true;
-    std::error_code error;
-    return std::filesystem::equivalent(first, second, error) && !error;
 }
 }
 
@@ -51,9 +46,7 @@ bool media_slots::Slots::Conflicts(const std::filesystem::path& path) const
         for (int slot = 0; slot < (kind == Kind::floppy ? 4 : 2); ++slot)
             if (const auto* mounted = Path(kind, slot))
             {
-                if (*mounted == path) return true;
-                std::error_code error;
-                if (std::filesystem::equivalent(*mounted, path, error) && !error) return true;
+                if (path_identity::SameFile(*mounted, path)) return true;
             }
     return false;
 }
@@ -66,7 +59,7 @@ std::expected<void, media_slots::Error> media_slots::Slots::CheckAttach(
     if (Attached(kind, slot)) return std::unexpected(Error::occupied);
     for (const auto mountedKind : {Kind::floppy, Kind::hardDisk})
         for (int mountedSlot = 0; mountedSlot < (mountedKind == Kind::floppy ? 4 : 2); ++mountedSlot)
-            if (const auto* mounted = Path(mountedKind, mountedSlot); mounted && SameFile(*mounted, path) &&
+            if (const auto* mounted = Path(mountedKind, mountedSlot); mounted && path_identity::SameFile(*mounted, path) &&
                 (!readOnly || !ReadOnly(mountedKind, mountedSlot))) return std::unexpected(Error::already_mounted);
     if (kind == Kind::hardDisk && !board_.IsROMCartridgeLoaded(slot + 1))
         return std::unexpected(Error::missing_cartridge);

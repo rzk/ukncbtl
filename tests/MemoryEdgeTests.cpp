@@ -1,14 +1,8 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include <gtest/gtest.h>
 #include "emubase/Emubase.h"
 #include <memory>
 
-void DebugLog(LPCTSTR) {}
-const TCHAR* REGISTER_NAME[] = {L"R0",L"R1",L"R2",L"R3",L"R4",L"R5",L"SP",L"PC"};
-#ifdef _DEBUG
-int AssertFailedLine(const char*,int) { std::abort(); }
-#endif
 class MemoryEdges : public testing::Test
 {
 protected:

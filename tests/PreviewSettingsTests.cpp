@@ -1,6 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PreviewSettings.h"
-#include "AsyncSettingsImport.h"
+#include "util/PathIdentity.h"
 #include <gtest/gtest.h>
 #include <chrono>
 #include <filesystem>
@@ -70,139 +70,6 @@ TEST_F(PreviewSettingsTest, MissingFileUsesDefaultsWithoutCreatingIt)
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
-TEST_F(PreviewSettingsTest, AsyncImportOwnsSnapshotAndPreservesSourceAndDestinationEntries)
-{
-    const std::string source = "[UKNCBTL]\nSound=0\n";
-    Write(source);
-    const auto destination = directory / "imported.ini";
-    { std::ofstream file(destination); file << "[Custom]\nKeep=yes\n"; }
-    preview_settings::Settings current;
-    current.volume = 32;
-    preview_settings::AsyncImport import;
-    ASSERT_TRUE(import.Start(path, destination, preview_settings::ImportEncoding::unicode, current, false));
-    current.volume = 80;
-    EXPECT_EQ(import.Path(), path);
-    EXPECT_FALSE(import.Start(path, destination, preview_settings::ImportEncoding::unicode, current, false));
-    const auto result = import.Finish();
-    ASSERT_TRUE(result && *result);
-    EXPECT_TRUE(import.Path().empty());
-    const auto saved = preview_settings::Load(destination);
-    ASSERT_TRUE(saved);
-    EXPECT_FALSE(saved->sound);
-    EXPECT_EQ(saved->volume, 32);
-    const auto ini = IniFile::Open(destination);
-    ASSERT_TRUE(ini);
-    EXPECT_EQ(ini->Document().Get(L"Custom", L"Keep"), L"yes");
-    EXPECT_EQ(Read(), source);
-}
-
-TEST_F(PreviewSettingsTest, AsyncImportRejectsAliasesAndFailedImportsCanBeRetried)
-{
-    const auto destination = directory / "imported.ini";
-    const std::string original = "[SDLPreview]\nSound=1\n";
-    { std::ofstream file(destination, std::ios::binary); file << original; }
-    Write("[Other]\nUnrecognized=1\n");
-    preview_settings::AsyncImport import;
-    EXPECT_FALSE(import.Start(path, directory / "." / path.filename(), preview_settings::ImportEncoding::unicode, {}, false));
-    ASSERT_TRUE(import.Start(path, destination, preview_settings::ImportEncoding::unicode, {}, false));
-    const auto failed = import.Finish();
-    ASSERT_TRUE(failed && !*failed);
-    EXPECT_EQ(failed->error(), IniFileError::invalid_entry);
-    {
-        std::ifstream file(destination, std::ios::binary);
-        EXPECT_EQ(std::string(std::istreambuf_iterator<char>(file), {}), original);
-    }
-    Write("[UKNCBTL]\nSound=0\n");
-    ASSERT_TRUE(import.Start(path, directory / "missing" / "settings.ini", preview_settings::ImportEncoding::unicode, {}, false));
-    const auto badDestination = import.Finish();
-    ASSERT_TRUE(badDestination && !*badDestination);
-    ASSERT_TRUE(import.Start(path, destination, preview_settings::ImportEncoding::unicode, {}, false));
-    const auto retry = import.Finish();
-    ASSERT_TRUE(retry && *retry);
-}
-
-TEST_F(PreviewSettingsTest, ImportsCompatibleLegacyValuesAndKeepsUnrelatedSettings)
-{
-    Write("[UKNCBTL]\nSound=0\nSoundAY=1\nMouse=1\nKeyboard=0\nAutostart=0\n"
-          "ScreenViewMode=2\nScreenshotMode=6\nRealSpeed=2\nSoundVolume=32768\n"
-          "Debug=1\nDebugCpuPpu=1\nNetStation=123\nSpriteWidth=7\nSpriteMode=3\n");
-    preview_settings::Settings current;
-    current.windowWidth = 1200;
-    current.cpuBreakpoints[0] = 01000;
-    const auto result = preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::unicode, current);
-    ASSERT_TRUE(result);
-    EXPECT_FALSE(result->sound);
-    EXPECT_TRUE(result->soundAY);
-    EXPECT_TRUE(result->mouse);
-    EXPECT_FALSE(result->keyboard);
-    EXPECT_FALSE(result->autostart);
-    EXPECT_EQ(result->paletteMode, 2);
-    EXPECT_EQ(result->screenshotMode, 6);
-    EXPECT_EQ(result->speed, 2);
-    EXPECT_EQ(result->volume, 50);
-    EXPECT_TRUE(result->debuggerVisible);
-    EXPECT_FALSE(result->debuggerPpu);
-    EXPECT_EQ(result->networkStation, 123);
-    EXPECT_EQ(result->spriteWidth, 7);
-    EXPECT_EQ(result->spriteMode, 3);
-    EXPECT_EQ(result->windowWidth, 1200);
-    EXPECT_EQ(result->cpuBreakpoints[0], 01000);
-    EXPECT_NE(Read().find("[UKNCBTL]"), std::string::npos);
-}
-
-TEST_F(PreviewSettingsTest, ImportsLegacyDebuggerPreferencesAndValidBreakpoints)
-{
-    Write("[UKNCBTL]\nToolbar=0\nDebugMemoryMode=2\nDebugMemoryByte=1\nDebugMemoryNumeral=1\n"
-          "DebugBreakptCpu0=4096\nDebugBreakptCpu1=512\nDebugBreakptCpu2=512\n"
-          "DebugBreakptCpu3=513\nDebugBreakptCpuF=65534\nDebugBreakptPpu0=1024\n");
-    preview_settings::Settings current;
-    current.ppuBreakpoints[0] = 01000;
-    const auto result = preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::unicode, current);
-    ASSERT_TRUE(result);
-    EXPECT_FALSE(result->toolbar);
-    EXPECT_EQ(result->memorySource, 5);
-    EXPECT_TRUE(result->memoryBytes);
-    EXPECT_TRUE(result->memoryHex);
-    EXPECT_EQ(result->cpuBreakpoints[0], 01000);
-    EXPECT_EQ(result->cpuBreakpoints[1], 010000);
-    EXPECT_EQ(result->cpuBreakpoints[2], 0177776);
-    EXPECT_EQ(result->cpuBreakpoints[3], BreakpointSet::NoBreakpoint);
-    EXPECT_EQ(result->ppuBreakpoints[0], 02000);
-    EXPECT_EQ(result->ppuBreakpoints[1], BreakpointSet::NoBreakpoint);
-}
-
-TEST_F(PreviewSettingsTest, MediaImportIsOptInAndUsesLegacySlotsAndEncoding)
-{
-    Write("[UKNCBTL]\nSound=0\nFloppy0=disk-\xcf.dsk\nFloppy1=\nCartridge1=cart1.rom\n"
-          "Cartridge2=cart2.rom\nHard2=hard1.img\nHard3=hard2.img\n");
-    preview_settings::Settings current;
-    current.floppies[1] = directory / "keep.dsk";
-    current.floppyReadOnly[0] = true; current.hardDiskReadOnly[0] = true;
-    const auto normal = preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::windows1251, current);
-    ASSERT_TRUE(normal);
-    EXPECT_FALSE(normal->restoreMedia);
-    EXPECT_TRUE(normal->floppies[0].empty());
-    EXPECT_EQ(normal->floppies[1], current.floppies[1]);
-    const auto withMedia = preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::windows1251, current, true);
-    ASSERT_TRUE(withMedia);
-    EXPECT_TRUE(withMedia->restoreMedia);
-    EXPECT_EQ(withMedia->floppies[0], directory / std::filesystem::path(u8"disk-\u041f.dsk"));
-    EXPECT_TRUE(withMedia->floppies[1].empty());
-    EXPECT_EQ(withMedia->cartridges[0], directory / "cart1.rom");
-    EXPECT_EQ(withMedia->cartridges[1], directory / "cart2.rom");
-    EXPECT_EQ(withMedia->hardDisks[0], directory / "hard1.img");
-    EXPECT_EQ(withMedia->hardDisks[1], directory / "hard2.img");
-    EXPECT_FALSE(withMedia->floppyReadOnly[0]);
-    EXPECT_FALSE(withMedia->hardDiskReadOnly[0]);
-    const auto destination = directory / "imported.ini";
-    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{destination};
-    ASSERT_TRUE(preview_settings::Save(destination, *withMedia));
-    const auto reread = preview_settings::Load(destination);
-    ASSERT_TRUE(reread);
-    EXPECT_EQ(reread->floppies[0], withMedia->floppies[0]);
-    EXPECT_EQ(reread->hardDisks, withMedia->hardDisks);
-}
-
 TEST_F(PreviewSettingsTest, MediaPathsRoundTripAndInvalidEncodedPathsAreIgnored)
 {
     preview_settings::Settings input;
@@ -240,32 +107,13 @@ TEST_F(PreviewSettingsTest, SameFileDetectsExistingAndFuturePathAliases)
 {
     const auto alias = directory / "alias.ini";
     struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{alias};
-    EXPECT_TRUE(preview_settings::SameFile(path, directory / "." / path.filename()));
-    EXPECT_FALSE(preview_settings::SameFile(path, alias));
-    EXPECT_FALSE(preview_settings::SameFile({}, path));
+    EXPECT_TRUE(path_identity::SameFile(path, directory / "." / path.filename()));
+    EXPECT_FALSE(path_identity::SameFile(path, alias));
+    EXPECT_FALSE(path_identity::SameFile({}, path));
     Write("[SDLPreview]\nSound=1\n");
     std::error_code error;
     std::filesystem::create_hard_link(path, alias, error);
-    if (!error) EXPECT_TRUE(preview_settings::SameFile(path, alias));
-}
-
-TEST_F(PreviewSettingsTest, ImportRejectsUnrecognizedFilesAndIgnoresInvalidValues)
-{
-    Write("[Other]\nSound=1\n");
-    EXPECT_FALSE(preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::unicode, {}));
-    Write("[UKNCBTL]\nSound=2\nRealSpeed=65536\nSpriteWidth=0\nMouse=1\n");
-    preview_settings::Settings current;
-    current.sound = false;
-    current.speed = 2;
-    current.spriteWidth = 8;
-    const auto result = preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::windows1251, current);
-    ASSERT_TRUE(result);
-    EXPECT_FALSE(result->sound);
-    EXPECT_EQ(result->speed, 2);
-    EXPECT_EQ(result->spriteWidth, 8);
-    EXPECT_TRUE(result->mouse);
-    Write("\xff\xfe[\0");
-    EXPECT_FALSE(preview_settings::ImportLegacy(path, preview_settings::ImportEncoding::windows1252, current));
+    if (!error) EXPECT_TRUE(path_identity::SameFile(path, alias));
 }
 
 TEST_F(PreviewSettingsTest, RoundTripsAndPreservesUnrelatedEntries)

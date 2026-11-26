@@ -66,15 +66,7 @@ struct Settings
 
 inline constexpr std::size_t MaxUiLayoutBytes = 64 * 1024;
 
-enum class ImportEncoding { unicode, windows1251, windows1252 };
-// Imports recognized values into the supplied settings without changing the source.
-// Unrecognized or invalid values leave the corresponding current setting intact.
-[[nodiscard]] std::expected<Settings, IniFileError> ImportLegacy(
-    const std::filesystem::path& path, ImportEncoding encoding, const Settings& current, bool importMedia = false);
-
 [[nodiscard]] bool ValidWindowSize(int width, int height);
-// Compares existing aliases and normalized paths that may not exist yet.
-[[nodiscard]] bool SameFile(const std::filesystem::path& first, const std::filesystem::path& second);
 // Missing files and invalid individual values use defaults. Other read errors
 // are returned to the caller, which should avoid overwriting the file.
 [[nodiscard]] std::expected<Settings, IniFileError> Load(const std::filesystem::path& path);

@@ -19,12 +19,11 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 // of the drive gives the complement of the words of a non-inverted image ("QBUS inverts the bits",
 // see the comments in Hard.cpp); an inverted image of the same disk gives the same words.
 
-#include "stdafx.h"
-#include <CppUnitTest.h>
+#include <gtest/gtest.h>
+#include <cwchar>
+#include <iterator>
 #include <vector>
 #include "TestHelpers.h"
-
-using namespace Microsoft::VisualStudio::CppUnitTestFramework;
 
 namespace
 {
@@ -87,9 +86,9 @@ uint16_t PortWord(const std::vector<uint8_t>& image, int lba, int k)
 }
 
 // Drive that is attached and has finished the reset
-void StartDrive(CHardDrive& hd, const TCHAR* path)
+void StartDrive(CHardDrive& hd, const std::filesystem::path& path)
 {
-    Assert::IsTrue(hd.AttachImage(path), _T("attach"));
+    ASSERT_TRUE(hd.AttachImage(path)) << L"attach";
     hd.Reset();
     hd.Periodic();
     hd.Periodic();
@@ -107,7 +106,7 @@ uint8_t WaitNotBusy(CHardDrive& hd)
             return status;
         hd.Periodic();
     }
-    Assert::Fail(_T("the drive stays busy"));
+    ADD_FAILURE() << "the drive stays busy";
     return 0;
 }
 
@@ -153,7 +152,7 @@ void WriteSector(CHardDrive& hd, int cylinder, int head, int sector, const uint1
 {
     SetupChs(hd, cylinder, head, sector, 1);
     hd.WritePort(PORT_STATUS, CMD_WRITE);
-    Assert::IsTrue((Status(hd) & STATUS_DRQ) != 0, _T("the drive asks for the data"));
+    ASSERT_TRUE((Status(hd) & STATUS_DRQ) != 0) << L"the drive asks for the data";
     for (int i = 0; i < 256; i++)
         hd.WritePort(PORT_DATA, words[i]);
 }
@@ -165,414 +164,410 @@ int LbaOf(const Geometry& g, int cylinder, int head, int sector /*1-based*/)
 
 }
 
-TEST_CLASS(HardDriveTests)
+// Attaching the image
+
+TEST(HardDriveTests, Hdd_AttachDetectsTheGeometry)
 {
-public:
-    // Attaching the image
+    TempFile file(L".img");
+    file.Write(MakeHardImage(GEO));
+    CHardDrive hd;
+    ASSERT_TRUE(hd.AttachImage(file.Path()));
+    ASSERT_FALSE(hd.IsReadOnly());
+}
 
-    TEST_METHOD(Hdd_AttachDetectsTheGeometry)
+TEST(HardDriveTests, Hdd_AttachMissingFileFails)
+{
+    TempFile file(L".img");
+    CHardDrive hd;
+    ASSERT_FALSE(hd.AttachImage(file.Path()));
+}
+
+TEST(HardDriveTests, Hdd_AttachRejectsAFileThatIsNotWholeSectors)
+{
+    TempFile file(L".img");
+    std::vector<uint8_t> image = MakeHardImage(GEO);
+    image.push_back(0);
+    file.Write(image);
+    CHardDrive hd;
+    ASSERT_FALSE(hd.AttachImage(file.Path()));
+}
+
+TEST(HardDriveTests, Hdd_AttachRejectsAnImageWithoutGeometry)
+{
+    TempFile file(L".img");
+    std::vector<uint8_t> image = MakeHardImage(GEO);
+    image[0] = 0;  // zero sectors per track
+    file.Write(image);
+    CHardDrive hd;
+    ASSERT_FALSE(hd.AttachImage(file.Path()));
+}
+
+TEST(HardDriveTests, Hdd_AttachRejectsAnEmptyFile)
+{
+    TempFile file(L".img");
+    file.Write(std::vector<uint8_t>());
+    CHardDrive hd;
+    ASSERT_FALSE(hd.AttachImage(file.Path()));
+}
+
+TEST(HardDriveTests, Hdd_ReadOnlyFile)
+{
+    TempFile file(L".img");
+    file.Write(MakeHardImage(GEO));
+    file.SetReadOnly(true);
+    CHardDrive hd;
+    ASSERT_TRUE(hd.AttachImage(file.Path()));
+    ASSERT_TRUE(hd.IsReadOnly());
+}
+
+// Status
+
+TEST(HardDriveTests, Hdd_ResetThenReady)
+{
+    TempFile file(L".img");
+    file.Write(MakeHardImage(GEO));
+    CHardDrive hd;
+    ASSERT_TRUE(hd.AttachImage(file.Path()));
+    ASSERT_EQ(STATUS_BUSY, Status(hd)) << L"busy after the attach";
+
+    hd.Reset();
+    ASSERT_EQ(STATUS_BUSY, Status(hd)) << L"busy after the reset";
+    for (int i = 0; i < 2000 && (Status(hd) & STATUS_BUSY); i++)
+        hd.Periodic();
+    ASSERT_EQ(STATUS_READY | STATUS_SEEK_DONE, Status(hd)) << L"ready, seek complete";
+    ASSERT_EQ(0xFF00 | (STATUS_READY | STATUS_SEEK_DONE), hd.ReadPort(PORT_STATUS)) << L"the unused bits read as ones";
+}
+
+TEST(HardDriveTests, Hdd_RegistersKeepTheirValues)
+{
+    TempFile file(L".img");
+    file.Write(MakeHardImage(GEO));
+    CHardDrive hd;
+    StartDrive(hd, file.Path());
+
+    hd.WritePort(PORT_COUNT, 5);
+    hd.WritePort(PORT_SECTOR, 3);
+    hd.WritePort(PORT_CYL_LSB, 0x34);
+    hd.WritePort(PORT_CYL_MSB, 0x12);
+    hd.WritePort(PORT_HEAD, 0xA1);
+    ASSERT_EQ(5, hd.ReadPort(PORT_COUNT) & 0xFF) << L"sector count";
+    ASSERT_EQ(3, hd.ReadPort(PORT_SECTOR) & 0xFF) << L"sector number";
+    ASSERT_EQ(0x34, hd.ReadPort(PORT_CYL_LSB) & 0xFF) << L"cylinder low";
+    ASSERT_EQ(0x12, hd.ReadPort(PORT_CYL_MSB) & 0xFF) << L"cylinder high";
+    ASSERT_EQ(0xA1, hd.ReadPort(PORT_HEAD) & 0xFF) << L"head";
+    ASSERT_EQ(0xFF00 | 5, hd.ReadPort(PORT_COUNT)) << L"the upper byte reads as ones";
+}
+
+// Reading
+
+TEST(HardDriveTests, Hdd_ReadFirstSector)
+{
+    std::vector<uint8_t> image = MakeHardImage(GEO);
+    TempFile file(L".img");
+    file.Write(image);
+    CHardDrive hd;
+    StartDrive(hd, file.Path());
+
+    uint16_t words[256];
+    ASSERT_TRUE(ReadSectors(hd, 0, 0, 1, 1, words)) << L"read";
+    ASSERT_TRUE(SectorEquals(words, image, 0)) << L"sector 0 data";
+    ASSERT_EQ(STATUS_READY | STATUS_SEEK_DONE, Status(hd)) << L"idle after the transfer";
+}
+
+TEST(HardDriveTests, Hdd_ReadSectorsByChs)
+{
+    // LBA = (cylinder * heads + head) * sectors per track + (sector - 1)
+    std::vector<uint8_t> image = MakeHardImage(GEO);
+    TempFile file(L".img");
+    file.Write(image);
+    CHardDrive hd;
+    StartDrive(hd, file.Path());
+
+    static const int chs[][3] = { { 0, 0, 8 }, { 0, 1, 1 }, { 1, 0, 1 }, { 2, 1, 5 }, { 3, 1, 8 } };
+    for (size_t i = 0; i < sizeof(chs) / sizeof(chs[0]); i++)
     {
-        TempFile file(_T(".img"));
-        file.Write(MakeHardImage(GEO));
-        CHardDrive hd;
-        Assert::IsTrue(hd.AttachImage(file.Path()));
-        Assert::IsFalse(hd.IsReadOnly());
+        uint16_t words[256];
+        ASSERT_TRUE(ReadSectors(hd, chs[i][0], chs[i][1], chs[i][2], 1, words));
+        wchar_t msg[60];
+        std::swprintf(msg, std::size(msg), L"cylinder %d head %d sector %d", chs[i][0], chs[i][1], chs[i][2]);
+        ASSERT_TRUE(SectorEquals(words, image, LbaOf(GEO, chs[i][0], chs[i][1], chs[i][2]))) << msg;
     }
+}
 
-    TEST_METHOD(Hdd_AttachMissingFileFails)
+TEST(HardDriveTests, Hdd_ReadSeveralSectorsAcrossTheTrackAndCylinder)
+{
+    // 20 sectors from (0, 0, 7): the last sector of the head 0, the head 1, the next cylinder
+    std::vector<uint8_t> image = MakeHardImage(GEO);
+    TempFile file(L".img");
+    file.Write(image);
+    CHardDrive hd;
+    StartDrive(hd, file.Path());
+
+    std::vector<uint16_t> words(20 * 256);
+    ASSERT_TRUE(ReadSectors(hd, 0, 0, 7, 20, &words[0]));
+    int first = LbaOf(GEO, 0, 0, 7);
+    for (int n = 0; n < 20; n++)
     {
-        TempFile file(_T(".img"));
-        CHardDrive hd;
-        Assert::IsFalse(hd.AttachImage(file.Path()));
+        wchar_t msg[40];
+        std::swprintf(msg, std::size(msg), L"sector #%d of the command", n);
+        ASSERT_TRUE(SectorEquals(&words[n * 256], image, first + n)) << msg;
     }
+}
 
-    TEST_METHOD(Hdd_AttachRejectsAFileThatIsNotWholeSectors)
+TEST(HardDriveTests, Hdd_InvertedImageGivesTheSameData)
+{
+    std::vector<uint8_t> image = MakeHardImage(GEO);
+    TempFile file(L".img");
+    file.Write(Invert(image));
+    CHardDrive hd;
+    StartDrive(hd, file.Path());
+
+    uint16_t words[256];
+    ASSERT_TRUE(ReadSectors(hd, 0, 0, 1, 1, words)) << L"read the first sector";
+    ASSERT_TRUE(SectorEquals(words, image, 0)) << L"first sector";
+    ASSERT_TRUE(ReadSectors(hd, 2, 1, 5, 1, words)) << L"read another sector";
+    ASSERT_TRUE(SectorEquals(words, image, LbaOf(GEO, 2, 1, 5))) << L"another sector";
+}
+
+TEST(HardDriveTests, Hdd_ReadBeyondTheEndIsAnError)
+{
+    std::vector<uint8_t> image = MakeHardImage(GEO);
+    TempFile file(L".img");
+    file.Write(image);
+    CHardDrive hd;
+    StartDrive(hd, file.Path());
+
+    SetupChs(hd, GEO.cylinders, 0, 1, 1);  // the cylinder after the last one
+    hd.WritePort(PORT_STATUS, CMD_READ);
+    uint8_t status = WaitNotBusy(hd);
+    ASSERT_TRUE((status & STATUS_ERROR) != 0) << L"error flag";
+    ASSERT_TRUE((hd.ReadPort(PORT_ERROR) & 0xFF) != 0) << L"error register";
+}
+
+// Writing
+
+TEST(HardDriveTests, Hdd_WriteThenRead)
+{
+    std::vector<uint8_t> image = MakeHardImage(GEO);
+    TempFile file(L".img");
+    file.Write(image);
+    uint16_t written[256];
+    for (int i = 0; i < 256; i++)
+        written[i] = (uint16_t) (0x1357 + i * 11);
     {
-        TempFile file(_T(".img"));
-        std::vector<uint8_t> image = MakeHardImage(GEO);
-        image.push_back(0);
-        file.Write(image);
-        CHardDrive hd;
-        Assert::IsFalse(hd.AttachImage(file.Path()));
-    }
-
-    TEST_METHOD(Hdd_AttachRejectsAnImageWithoutGeometry)
-    {
-        TempFile file(_T(".img"));
-        std::vector<uint8_t> image = MakeHardImage(GEO);
-        image[0] = 0;  // zero sectors per track
-        file.Write(image);
-        CHardDrive hd;
-        Assert::IsFalse(hd.AttachImage(file.Path()));
-    }
-
-    TEST_METHOD(Hdd_AttachRejectsAnEmptyFile)
-    {
-        TempFile file(_T(".img"));
-        file.Write(std::vector<uint8_t>());
-        CHardDrive hd;
-        Assert::IsFalse(hd.AttachImage(file.Path()));
-    }
-
-    TEST_METHOD(Hdd_ReadOnlyFile)
-    {
-        TempFile file(_T(".img"));
-        file.Write(MakeHardImage(GEO));
-        file.SetReadOnly(true);
-        CHardDrive hd;
-        Assert::IsTrue(hd.AttachImage(file.Path()));
-        Assert::IsTrue(hd.IsReadOnly());
-    }
-
-    // Status
-
-    TEST_METHOD(Hdd_ResetThenReady)
-    {
-        TempFile file(_T(".img"));
-        file.Write(MakeHardImage(GEO));
-        CHardDrive hd;
-        Assert::IsTrue(hd.AttachImage(file.Path()));
-        Eq(STATUS_BUSY, Status(hd), _T("busy after the attach"));
-
-        hd.Reset();
-        Eq(STATUS_BUSY, Status(hd), _T("busy after the reset"));
-        for (int i = 0; i < 2000 && (Status(hd) & STATUS_BUSY); i++)
-            hd.Periodic();
-        Eq(STATUS_READY | STATUS_SEEK_DONE, Status(hd), _T("ready, seek complete"));
-        Eq(0xFF00 | (STATUS_READY | STATUS_SEEK_DONE), hd.ReadPort(PORT_STATUS), _T("the unused bits read as ones"));
-    }
-
-    TEST_METHOD(Hdd_RegistersKeepTheirValues)
-    {
-        TempFile file(_T(".img"));
-        file.Write(MakeHardImage(GEO));
         CHardDrive hd;
         StartDrive(hd, file.Path());
-
-        hd.WritePort(PORT_COUNT, 5);
-        hd.WritePort(PORT_SECTOR, 3);
-        hd.WritePort(PORT_CYL_LSB, 0x34);
-        hd.WritePort(PORT_CYL_MSB, 0x12);
-        hd.WritePort(PORT_HEAD, 0xA1);
-        Eq(5, hd.ReadPort(PORT_COUNT) & 0xFF, _T("sector count"));
-        Eq(3, hd.ReadPort(PORT_SECTOR) & 0xFF, _T("sector number"));
-        Eq(0x34, hd.ReadPort(PORT_CYL_LSB) & 0xFF, _T("cylinder low"));
-        Eq(0x12, hd.ReadPort(PORT_CYL_MSB) & 0xFF, _T("cylinder high"));
-        Eq(0xA1, hd.ReadPort(PORT_HEAD) & 0xFF, _T("head"));
-        Eq(0xFF00 | 5, hd.ReadPort(PORT_COUNT), _T("the upper byte reads as ones"));
-    }
-
-    // Reading
-
-    TEST_METHOD(Hdd_ReadFirstSector)
-    {
-        std::vector<uint8_t> image = MakeHardImage(GEO);
-        TempFile file(_T(".img"));
-        file.Write(image);
-        CHardDrive hd;
-        StartDrive(hd, file.Path());
+        WriteSector(hd, 1, 1, 3, written);
+        uint8_t status = WaitNotBusy(hd);
+        ASSERT_FALSE((status & STATUS_ERROR) != 0) << L"no error";
 
         uint16_t words[256];
-        Assert::IsTrue(ReadSectors(hd, 0, 0, 1, 1, words), _T("read"));
-        Assert::IsTrue(SectorEquals(words, image, 0), _T("sector 0 data"));
-        Eq(STATUS_READY | STATUS_SEEK_DONE, Status(hd), _T("idle after the transfer"));
-    }
+        ASSERT_TRUE(ReadSectors(hd, 1, 1, 3, 1, words));
+        for (int i = 0; i < 256; i++)
+            ASSERT_EQ(written[i], words[i]) << L"the written word is read back";
 
-    TEST_METHOD(Hdd_ReadSectorsByChs)
+        // the neighbours are not touched
+        ASSERT_TRUE(ReadSectors(hd, 1, 1, 2, 1, words));
+        ASSERT_TRUE(SectorEquals(words, image, LbaOf(GEO, 1, 1, 2))) << L"sector before";
+        ASSERT_TRUE(ReadSectors(hd, 1, 1, 4, 1, words));
+        ASSERT_TRUE(SectorEquals(words, image, LbaOf(GEO, 1, 1, 4))) << L"sector after";
+    }
+    // The file holds the complement of the words of a non-inverted image, and only one sector differs
+    std::vector<uint8_t> result = file.Read();
+    ASSERT_EQ(image.size(), result.size()) << L"file size";
+    int lba = LbaOf(GEO, 1, 1, 3);
+    for (int i = 0; i < 256; i++)
     {
-        // LBA = (cylinder * heads + head) * sectors per track + (sector - 1)
-        std::vector<uint8_t> image = MakeHardImage(GEO);
-        TempFile file(_T(".img"));
+        uint16_t stored = (uint16_t) (result[lba * 512 + i * 2] | (result[lba * 512 + i * 2 + 1] << 8));
+        ASSERT_EQ((uint16_t) ~written[i], stored) << L"word stored in the file";
+    }
+    for (size_t i = 0; i < image.size(); i++)
+    {
+        if ((int) (i / 512) == lba) continue;
+        ASSERT_EQ((int) image[i], (int) result[i]) << L"other sectors are unchanged";
+    }
+}
+
+TEST(HardDriveTests, Hdd_WriteToReadOnlyImageIsAnError)
+{
+    std::vector<uint8_t> image = MakeHardImage(GEO);
+    TempFile file(L".img");
+    file.Write(image);
+    file.SetReadOnly(true);
+    CHardDrive hd;
+    StartDrive(hd, file.Path());
+    ASSERT_TRUE(hd.IsReadOnly());
+
+    uint16_t written[256] = { 0 };
+    WriteSector(hd, 0, 1, 1, written);
+    uint8_t status = WaitNotBusy(hd);
+    ASSERT_TRUE((status & STATUS_ERROR) != 0) << L"error flag";
+}
+
+// Commands
+
+TEST(HardDriveTests, Hdd_IdentifyDrive)
+{
+    TempFile file(L".img");
+    file.Write(MakeHardImage(GEO));
+    CHardDrive hd;
+    StartDrive(hd, file.Path());
+
+    hd.WritePort(PORT_STATUS, CMD_IDENTIFY);
+    ASSERT_EQ(STATUS_READY | STATUS_SEEK_DONE | STATUS_DRQ, Status(hd)) << L"data request";
+    uint16_t words[256];
+    ReadWords(hd, words);
+
+    // The words of the ATA IDENTIFY DEVICE data; the polarity does not matter for the check
+    bool inverted = (words[1] != GEO.cylinders);
+    for (int i = 0; i < 256; i++)
+        if (inverted) words[i] = (uint16_t) ~words[i];
+    ASSERT_EQ(GEO.cylinders, words[1]) << L"cylinders";
+    ASSERT_EQ(GEO.heads, words[3]) << L"heads";
+    ASSERT_EQ(GEO.sectors, words[6]) << L"sectors per track";
+    ASSERT_EQ(GEO.cylinders, words[54]) << L"current cylinders";
+    ASSERT_EQ(GEO.heads, words[55]) << L"current heads";
+    ASSERT_EQ(GEO.sectors, words[56]) << L"current sectors per track";
+    ASSERT_EQ(GEO.Total(), words[57] | (words[58] << 16)) << L"current CHS capacity";
+    ASSERT_EQ(GEO.Total(), words[60] | (words[61] << 16)) << L"total sectors";
+
+    // Model number: words 27..46, the first character of a pair in the high byte
+    char model[41] = { 0 };
+    for (int i = 0; i < 20; i++)
+    {
+        model[i * 2] = (char) (words[27 + i] >> 8);
+        model[i * 2 + 1] = (char) (words[27 + i] & 0xFF);
+    }
+    ASSERT_TRUE(strncmp(model, "UKNCBTL Hard Disk", 17) == 0) << L"model number";
+}
+
+TEST(HardDriveTests, Hdd_SetConfigChangesTheGeometry)
+{
+    // INITIALIZE DEVICE PARAMETERS: the sector count = sectors per track, the head = the last head
+    std::vector<uint8_t> image = MakeHardImage(GEO);
+    TempFile file(L".img");
+    file.Write(image);
+    CHardDrive hd;
+    StartDrive(hd, file.Path());
+
+    hd.WritePort(PORT_COUNT, 4);
+    hd.WritePort(PORT_HEAD, 3);
+    hd.WritePort(PORT_STATUS, CMD_SET_CONFIG);
+
+    // Now (cylinder 0, head 1, sector 1) is the sector 4
+    uint16_t words[256];
+    ASSERT_TRUE(ReadSectors(hd, 0, 1, 1, 1, words));
+    ASSERT_TRUE(SectorEquals(words, image, 4)) << L"sector addressing follows the new geometry";
+}
+
+// The motherboard
+
+TEST(HardDriveTests, Hdd_BoardAttachAndDetach)
+{
+    TempFile file(L".img");
+    file.Write(MakeHardImage(GEO));
+    TestBoard tb;
+    for (int slot = 1; slot <= 2; slot++)
+        ASSERT_FALSE(tb.Board()->IsHardImageAttached(slot)) << L"empty at the start";
+
+    ASSERT_TRUE(tb.Board()->AttachHardImage(2, file.Path()));
+    ASSERT_TRUE(tb.Board()->IsHardImageAttached(2)) << L"attached";
+    ASSERT_FALSE(tb.Board()->IsHardImageAttached(1)) << L"the other slot is not affected";
+    ASSERT_FALSE(tb.Board()->IsHardImageReadOnly(2));
+
+    tb.Board()->DetachHardImage(2);
+    ASSERT_FALSE(tb.Board()->IsHardImageAttached(2)) << L"detached";
+}
+
+TEST(HardDriveTests, Hdd_BoardReadOnlyImage)
+{
+    TempFile file(L".img");
+    file.Write(MakeHardImage(GEO));
+    file.SetReadOnly(true);
+    TestBoard tb;
+    ASSERT_TRUE(tb.Board()->AttachHardImage(1, file.Path()));
+    ASSERT_TRUE(tb.Board()->IsHardImageReadOnly(1));
+}
+
+TEST(HardDriveTests, Hdd_BoardPortsOfThePpu)
+{
+    // The drive registers are at 110000..110016 of the PPU in the window of the cartridge slot,
+    // in the reverse order: 110000 = status/command, 110002 = head, 110004/110006 = cylinder high/low,
+    // 110010 = sector, 110012 = count, 110014 = error, 110016 = data. What the PPU writes it reads back.
+    TempFile file(L".img");
+    file.Write(MakeHardImage(GEO));
+    TestBoard tb;
+    ASSERT_TRUE(tb.Board()->AttachHardImage(1, file.Path()));
+    tb.SetPpuWord(0177054, 02);  // the window 100000-117777 = slot 1
+
+    CMemoryController* pCtl = tb.Board()->GetPPUMemoryController();
+    pCtl->SetWord(0110012, false, 0x35);  // sector count
+    pCtl->SetWord(0110010, false, 0x21);  // sector number
+    pCtl->SetWord(0110006, false, 0x34);  // cylinder low
+    pCtl->SetWord(0110004, false, 0x12);  // cylinder high
+    pCtl->SetWord(0110002, false, 0x05);  // head
+    ASSERT_EQ(0x35, pCtl->GetWord(0110012, false, false) & 0xFF) << L"sector count";
+    ASSERT_EQ(0x21, pCtl->GetWord(0110010, false, false) & 0xFF) << L"sector number";
+    ASSERT_EQ(0x34, pCtl->GetWord(0110006, false, false) & 0xFF) << L"cylinder low";
+    ASSERT_EQ(0x12, pCtl->GetWord(0110004, false, false) & 0xFF) << L"cylinder high";
+    ASSERT_EQ(0x05, pCtl->GetWord(0110002, false, false) & 0xFF) << L"head";
+}
+
+TEST(HardDriveTests, Hdd_BoardWindowAddressTypes)
+{
+    TempFile file(L".img");
+    file.Write(MakeHardImage(GEO));
+    TestBoard tb;
+    uint16_t offset;
+    tb.SetPpuWord(0177054, 02);
+    ASSERT_EQ(ADDRTYPE_DENY, tb.PpuMem()->TranslateAddress(0110000, false, false, &offset, true)) << L"no drive: access denied";
+
+    ASSERT_TRUE(tb.Board()->AttachHardImage(1, file.Path()));
+    ASSERT_EQ(ADDRTYPE_IO, tb.PpuMem()->TranslateAddress(0110000, false, false, &offset, true)) << L"the drive ports";
+    ASSERT_EQ(ADDRTYPE_IO, tb.PpuMem()->TranslateAddress(0117776, false, false, &offset, true)) << L"the end of the port window";
+}
+
+TEST(HardDriveTests, Hdd_IdentifyDoesNotDependOnTheImagePolarity)
+{
+    std::vector<uint8_t> image = MakeHardImage(GEO);
+    uint16_t normal[256], inverted[256];
+    {
+        TempFile file(L".img");
         file.Write(image);
         CHardDrive hd;
         StartDrive(hd, file.Path());
-
-        static const int chs[][3] = { { 0, 0, 8 }, { 0, 1, 1 }, { 1, 0, 1 }, { 2, 1, 5 }, { 3, 1, 8 } };
-        for (size_t i = 0; i < sizeof(chs) / sizeof(chs[0]); i++)
-        {
-            uint16_t words[256];
-            Assert::IsTrue(ReadSectors(hd, chs[i][0], chs[i][1], chs[i][2], 1, words));
-            TCHAR msg[60];
-            _stprintf_s(msg, _T("cylinder %d head %d sector %d"), chs[i][0], chs[i][1], chs[i][2]);
-            Assert::IsTrue(SectorEquals(words, image, LbaOf(GEO, chs[i][0], chs[i][1], chs[i][2])), msg);
-        }
+        hd.WritePort(PORT_STATUS, CMD_IDENTIFY);
+        ReadWords(hd, normal);
     }
-
-    TEST_METHOD(Hdd_ReadSeveralSectorsAcrossTheTrackAndCylinder)
     {
-        // 20 sectors from (0, 0, 7): the last sector of the head 0, the head 1, the next cylinder
-        std::vector<uint8_t> image = MakeHardImage(GEO);
-        TempFile file(_T(".img"));
-        file.Write(image);
-        CHardDrive hd;
-        StartDrive(hd, file.Path());
-
-        std::vector<uint16_t> words(20 * 256);
-        Assert::IsTrue(ReadSectors(hd, 0, 0, 7, 20, &words[0]));
-        int first = LbaOf(GEO, 0, 0, 7);
-        for (int n = 0; n < 20; n++)
-        {
-            TCHAR msg[40];
-            _stprintf_s(msg, _T("sector #%d of the command"), n);
-            Assert::IsTrue(SectorEquals(&words[n * 256], image, first + n), msg);
-        }
-    }
-
-    TEST_METHOD(Hdd_InvertedImageGivesTheSameData)
-    {
-        std::vector<uint8_t> image = MakeHardImage(GEO);
-        TempFile file(_T(".img"));
+        TempFile file(L".img");
         file.Write(Invert(image));
         CHardDrive hd;
         StartDrive(hd, file.Path());
-
-        uint16_t words[256];
-        Assert::IsTrue(ReadSectors(hd, 0, 0, 1, 1, words), _T("read the first sector"));
-        Assert::IsTrue(SectorEquals(words, image, 0), _T("first sector"));
-        Assert::IsTrue(ReadSectors(hd, 2, 1, 5, 1, words), _T("read another sector"));
-        Assert::IsTrue(SectorEquals(words, image, LbaOf(GEO, 2, 1, 5)), _T("another sector"));
-    }
-
-    TEST_METHOD(Hdd_ReadBeyondTheEndIsAnError)
-    {
-        std::vector<uint8_t> image = MakeHardImage(GEO);
-        TempFile file(_T(".img"));
-        file.Write(image);
-        CHardDrive hd;
-        StartDrive(hd, file.Path());
-
-        SetupChs(hd, GEO.cylinders, 0, 1, 1);  // the cylinder after the last one
-        hd.WritePort(PORT_STATUS, CMD_READ);
-        uint8_t status = WaitNotBusy(hd);
-        Assert::IsTrue((status & STATUS_ERROR) != 0, _T("error flag"));
-        Assert::IsTrue((hd.ReadPort(PORT_ERROR) & 0xFF) != 0, _T("error register"));
-    }
-
-    // Writing
-
-    TEST_METHOD(Hdd_WriteThenRead)
-    {
-        std::vector<uint8_t> image = MakeHardImage(GEO);
-        TempFile file(_T(".img"));
-        file.Write(image);
-        uint16_t written[256];
-        for (int i = 0; i < 256; i++)
-            written[i] = (uint16_t) (0x1357 + i * 11);
-        {
-            CHardDrive hd;
-            StartDrive(hd, file.Path());
-            WriteSector(hd, 1, 1, 3, written);
-            uint8_t status = WaitNotBusy(hd);
-            Assert::IsFalse((status & STATUS_ERROR) != 0, _T("no error"));
-
-            uint16_t words[256];
-            Assert::IsTrue(ReadSectors(hd, 1, 1, 3, 1, words));
-            for (int i = 0; i < 256; i++)
-                Eq(written[i], words[i], _T("the written word is read back"));
-
-            // the neighbours are not touched
-            Assert::IsTrue(ReadSectors(hd, 1, 1, 2, 1, words));
-            Assert::IsTrue(SectorEquals(words, image, LbaOf(GEO, 1, 1, 2)), _T("sector before"));
-            Assert::IsTrue(ReadSectors(hd, 1, 1, 4, 1, words));
-            Assert::IsTrue(SectorEquals(words, image, LbaOf(GEO, 1, 1, 4)), _T("sector after"));
-        }
-        // The file holds the complement of the words of a non-inverted image, and only one sector differs
-        std::vector<uint8_t> result = file.Read();
-        Eq(image.size(), result.size(), _T("file size"));
-        int lba = LbaOf(GEO, 1, 1, 3);
-        for (int i = 0; i < 256; i++)
-        {
-            uint16_t stored = (uint16_t) (result[lba * 512 + i * 2] | (result[lba * 512 + i * 2 + 1] << 8));
-            Eq((uint16_t) ~written[i], stored, _T("word stored in the file"));
-        }
-        for (size_t i = 0; i < image.size(); i++)
-        {
-            if ((int) (i / 512) == lba) continue;
-            Assert::AreEqual((int) image[i], (int) result[i], _T("other sectors are unchanged"));
-        }
-    }
-
-    TEST_METHOD(Hdd_WriteToReadOnlyImageIsAnError)
-    {
-        std::vector<uint8_t> image = MakeHardImage(GEO);
-        TempFile file(_T(".img"));
-        file.Write(image);
-        file.SetReadOnly(true);
-        CHardDrive hd;
-        StartDrive(hd, file.Path());
-        Assert::IsTrue(hd.IsReadOnly());
-
-        uint16_t written[256] = { 0 };
-        WriteSector(hd, 0, 1, 1, written);
-        uint8_t status = WaitNotBusy(hd);
-        Assert::IsTrue((status & STATUS_ERROR) != 0, _T("error flag"));
-    }
-
-    // Commands
-
-    TEST_METHOD(Hdd_IdentifyDrive)
-    {
-        TempFile file(_T(".img"));
-        file.Write(MakeHardImage(GEO));
-        CHardDrive hd;
-        StartDrive(hd, file.Path());
-
         hd.WritePort(PORT_STATUS, CMD_IDENTIFY);
-        Eq(STATUS_READY | STATUS_SEEK_DONE | STATUS_DRQ, Status(hd), _T("data request"));
-        uint16_t words[256];
-        ReadWords(hd, words);
-
-        // The words of the ATA IDENTIFY DEVICE data; the polarity does not matter for the check
-        bool inverted = (words[1] != GEO.cylinders);
-        for (int i = 0; i < 256; i++)
-            if (inverted) words[i] = (uint16_t) ~words[i];
-        Eq(GEO.cylinders, words[1], _T("cylinders"));
-        Eq(GEO.heads, words[3], _T("heads"));
-        Eq(GEO.sectors, words[6], _T("sectors per track"));
-        Eq(GEO.cylinders, words[54], _T("current cylinders"));
-        Eq(GEO.heads, words[55], _T("current heads"));
-        Eq(GEO.sectors, words[56], _T("current sectors per track"));
-        Eq(GEO.Total(), words[57] | (words[58] << 16), _T("current CHS capacity"));
-        Eq(GEO.Total(), words[60] | (words[61] << 16), _T("total sectors"));
-
-        // Model number: words 27..46, the first character of a pair in the high byte
-        char model[41] = { 0 };
-        for (int i = 0; i < 20; i++)
-        {
-            model[i * 2] = (char) (words[27 + i] >> 8);
-            model[i * 2 + 1] = (char) (words[27 + i] & 0xFF);
-        }
-        Assert::IsTrue(strncmp(model, "UKNCBTL Hard Disk", 17) == 0, _T("model number"));
+        ReadWords(hd, inverted);
     }
+    for (int i = 0; i < 256; i++)
+        ASSERT_EQ(normal[i], inverted[i]) << L"the same IDENTIFY word for both images";
+}
 
-    TEST_METHOD(Hdd_SetConfigChangesTheGeometry)
-    {
-        // INITIALIZE DEVICE PARAMETERS: the sector count = sectors per track, the head = the last head
-        std::vector<uint8_t> image = MakeHardImage(GEO);
-        TempFile file(_T(".img"));
-        file.Write(image);
-        CHardDrive hd;
-        StartDrive(hd, file.Path());
+TEST(HardDriveTests, Hdd_WriteCompleteClearsTheDataRequest)
+{
+    TempFile file(L".img");
+    file.Write(MakeHardImage(GEO));
+    CHardDrive hd;
+    StartDrive(hd, file.Path());
+    uint16_t written[256] = { 0 };
+    WriteSector(hd, 0, 0, 2, written);
+    uint8_t status = WaitNotBusy(hd);
+    ASSERT_FALSE((status & STATUS_ERROR) != 0) << L"no error";
+    ASSERT_EQ(0, status & STATUS_DRQ) << L"no data request after the last sector";
+}
 
-        hd.WritePort(PORT_COUNT, 4);
-        hd.WritePort(PORT_HEAD, 3);
-        hd.WritePort(PORT_STATUS, CMD_SET_CONFIG);
-
-        // Now (cylinder 0, head 1, sector 1) is the sector 4
-        uint16_t words[256];
-        Assert::IsTrue(ReadSectors(hd, 0, 1, 1, 1, words));
-        Assert::IsTrue(SectorEquals(words, image, 4), _T("sector addressing follows the new geometry"));
-    }
-
-    // The motherboard
-
-    TEST_METHOD(Hdd_BoardAttachAndDetach)
-    {
-        TempFile file(_T(".img"));
-        file.Write(MakeHardImage(GEO));
-        TestBoard tb;
-        for (int slot = 1; slot <= 2; slot++)
-            Assert::IsFalse(tb.Board()->IsHardImageAttached(slot), _T("empty at the start"));
-
-        Assert::IsTrue(tb.Board()->AttachHardImage(2, file.Path()));
-        Assert::IsTrue(tb.Board()->IsHardImageAttached(2), _T("attached"));
-        Assert::IsFalse(tb.Board()->IsHardImageAttached(1), _T("the other slot is not affected"));
-        Assert::IsFalse(tb.Board()->IsHardImageReadOnly(2));
-
-        tb.Board()->DetachHardImage(2);
-        Assert::IsFalse(tb.Board()->IsHardImageAttached(2), _T("detached"));
-    }
-
-    TEST_METHOD(Hdd_BoardReadOnlyImage)
-    {
-        TempFile file(_T(".img"));
-        file.Write(MakeHardImage(GEO));
-        file.SetReadOnly(true);
-        TestBoard tb;
-        Assert::IsTrue(tb.Board()->AttachHardImage(1, file.Path()));
-        Assert::IsTrue(tb.Board()->IsHardImageReadOnly(1));
-    }
-
-    TEST_METHOD(Hdd_BoardPortsOfThePpu)
-    {
-        // The drive registers are at 110000..110016 of the PPU in the window of the cartridge slot,
-        // in the reverse order: 110000 = status/command, 110002 = head, 110004/110006 = cylinder high/low,
-        // 110010 = sector, 110012 = count, 110014 = error, 110016 = data. What the PPU writes it reads back.
-        TempFile file(_T(".img"));
-        file.Write(MakeHardImage(GEO));
-        TestBoard tb;
-        Assert::IsTrue(tb.Board()->AttachHardImage(1, file.Path()));
-        tb.SetPpuWord(0177054, 02);  // the window 100000-117777 = slot 1
-
-        CMemoryController* pCtl = tb.Board()->GetPPUMemoryController();
-        pCtl->SetWord(0110012, false, 0x35);  // sector count
-        pCtl->SetWord(0110010, false, 0x21);  // sector number
-        pCtl->SetWord(0110006, false, 0x34);  // cylinder low
-        pCtl->SetWord(0110004, false, 0x12);  // cylinder high
-        pCtl->SetWord(0110002, false, 0x05);  // head
-        Eq(0x35, pCtl->GetWord(0110012, false, false) & 0xFF, _T("sector count"));
-        Eq(0x21, pCtl->GetWord(0110010, false, false) & 0xFF, _T("sector number"));
-        Eq(0x34, pCtl->GetWord(0110006, false, false) & 0xFF, _T("cylinder low"));
-        Eq(0x12, pCtl->GetWord(0110004, false, false) & 0xFF, _T("cylinder high"));
-        Eq(0x05, pCtl->GetWord(0110002, false, false) & 0xFF, _T("head"));
-    }
-
-    TEST_METHOD(Hdd_BoardWindowAddressTypes)
-    {
-        TempFile file(_T(".img"));
-        file.Write(MakeHardImage(GEO));
-        TestBoard tb;
-        uint16_t offset;
-        tb.SetPpuWord(0177054, 02);
-        Eq(ADDRTYPE_DENY, tb.PpuMem()->TranslateAddress(0110000, false, false, &offset, true), _T("no drive: access denied"));
-
-        Assert::IsTrue(tb.Board()->AttachHardImage(1, file.Path()));
-        Eq(ADDRTYPE_IO, tb.PpuMem()->TranslateAddress(0110000, false, false, &offset, true), _T("the drive ports"));
-        Eq(ADDRTYPE_IO, tb.PpuMem()->TranslateAddress(0117776, false, false, &offset, true), _T("the end of the port window"));
-    }
-
-    TEST_METHOD(Hdd_IdentifyDoesNotDependOnTheImagePolarity)
-    {
-        std::vector<uint8_t> image = MakeHardImage(GEO);
-        uint16_t normal[256], inverted[256];
-        {
-            TempFile file(_T(".img"));
-            file.Write(image);
-            CHardDrive hd;
-            StartDrive(hd, file.Path());
-            hd.WritePort(PORT_STATUS, CMD_IDENTIFY);
-            ReadWords(hd, normal);
-        }
-        {
-            TempFile file(_T(".img"));
-            file.Write(Invert(image));
-            CHardDrive hd;
-            StartDrive(hd, file.Path());
-            hd.WritePort(PORT_STATUS, CMD_IDENTIFY);
-            ReadWords(hd, inverted);
-        }
-        for (int i = 0; i < 256; i++)
-            Eq(normal[i], inverted[i], _T("the same IDENTIFY word for both images"));
-    }
-
-    TEST_METHOD(Hdd_WriteCompleteClearsTheDataRequest)
-    {
-        TempFile file(_T(".img"));
-        file.Write(MakeHardImage(GEO));
-        CHardDrive hd;
-        StartDrive(hd, file.Path());
-        uint16_t written[256] = { 0 };
-        WriteSector(hd, 0, 0, 2, written);
-        uint8_t status = WaitNotBusy(hd);
-        Assert::IsFalse((status & STATUS_ERROR) != 0, _T("no error"));
-        Eq(0, status & STATUS_DRQ, _T("no data request after the last sector"));
-    }
-
-    TEST_METHOD(Hdd_FailedAttachLeavesTheSlotEmpty)
-    {
-        TempFile file(_T(".img"));  // the file does not exist
-        TestBoard tb;
-        Assert::IsFalse(tb.Board()->AttachHardImage(1, file.Path()), _T("the attach fails"));
-        Assert::IsFalse(tb.Board()->IsHardImageAttached(1), _T("the slot stays empty"));
-    }
-};
+TEST(HardDriveTests, Hdd_FailedAttachLeavesTheSlotEmpty)
+{
+    TempFile file(L".img");  // the file does not exist
+    TestBoard tb;
+    ASSERT_FALSE(tb.Board()->AttachHardImage(1, file.Path())) << L"the attach fails";
+    ASSERT_FALSE(tb.Board()->IsHardImageAttached(1)) << L"the slot stays empty";
+}

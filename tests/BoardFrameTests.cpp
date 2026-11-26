@@ -1,5 +1,4 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include <gtest/gtest.h>
 #include "emubase/Emubase.h"
 #include <algorithm>
@@ -7,11 +6,6 @@
 #include <memory>
 #include <vector>
 
-void DebugLog(LPCTSTR) {}
-const TCHAR* REGISTER_NAME[] = {L"R0",L"R1",L"R2",L"R3",L"R4",L"R5",L"SP",L"PC"};
-#ifdef _DEBUG
-int AssertFailedLine(const char*,int) { std::abort(); }
-#endif
 namespace {
 struct Capture
 {
@@ -25,25 +19,25 @@ struct Capture
     std::vector<uint8_t> serial, network, parallel, terminal;
 };
 Capture* capture;
-bool CALLBACK TapeRead(unsigned samples)
+bool TapeRead(unsigned samples)
 {
     capture->samples+=samples; ++capture->tapeCalls; capture->maxBatch=std::max(capture->maxBatch,samples);
     if (capture->stopRead) capture->board->SetTapeReadCallback(nullptr,0);
     return capture->readBit;
 }
-void CALLBACK TapeWrite(int value,unsigned samples)
+void TapeWrite(int value,unsigned samples)
 {
     capture->samples+=samples; ++capture->tapeCalls; capture->maxBatch=std::max(capture->maxBatch,samples);
     capture->tapeValues.push_back(static_cast<uint32_t>(value));
     if (capture->stopWrite) capture->board->SetTapeWriteCallback(nullptr,0);
 }
-void CALLBACK Sound(unsigned short left,unsigned short right) { capture->sound.emplace_back(left,right); }
-bool CALLBACK SerialIn(uint8_t* byte) { ++capture->serialPolls; *byte=capture->inputByte; return capture->input; }
-bool CALLBACK NetworkIn(uint8_t* byte) { ++capture->networkPolls; *byte=capture->inputByte; return capture->input; }
-bool CALLBACK SerialOut(uint8_t byte) { capture->serial.push_back(byte); return true; }
-bool CALLBACK NetworkOut(uint8_t byte) { capture->network.push_back(byte); return true; }
-bool CALLBACK Parallel(uint8_t byte) { capture->parallel.push_back(byte); return true; }
-void CALLBACK Terminal(uint8_t byte) { capture->terminal.push_back(byte); }
+void Sound(unsigned short left,unsigned short right) { capture->sound.emplace_back(left,right); }
+bool SerialIn(uint8_t* byte) { ++capture->serialPolls; *byte=capture->inputByte; return capture->input; }
+bool NetworkIn(uint8_t* byte) { ++capture->networkPolls; *byte=capture->inputByte; return capture->input; }
+bool SerialOut(uint8_t byte) { capture->serial.push_back(byte); return true; }
+bool NetworkOut(uint8_t byte) { capture->network.push_back(byte); return true; }
+bool Parallel(uint8_t byte) { capture->parallel.push_back(byte); return true; }
+void Terminal(uint8_t byte) { capture->terminal.push_back(byte); }
 }
 class BoardFrames : public testing::Test
 {

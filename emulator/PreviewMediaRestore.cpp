@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PreviewMediaRestore.h"
+#include "util/PathIdentity.h"
 #include "AsyncDiskMount.h"
 #include "MediaSlots.h"
 #include "PreviewRoms.h"
@@ -57,17 +58,17 @@ void AddSavedMedia(std::vector<Request>& requests, const preview_settings::Setti
 {
     if (!settings.restoreMedia || options.smokeTest) return;
     const auto reservedForInput = [&](const auto& path) {
-        return preview_settings::SameFile(path, protectedSettings) ||
-            (options.tape && preview_settings::SameFile(path, *options.tape)) ||
-            (options.state && preview_settings::SameFile(path, *options.state));
+        return path_identity::SameFile(path, protectedSettings) ||
+            (options.tape && path_identity::SameFile(path, *options.tape)) ||
+            (options.state && path_identity::SameFile(path, *options.state));
     };
     const auto conflictsWithCommandLine = [&](const auto& path, bool readOnly) {
         if (reservedForInput(path)) return true;
         for (std::size_t i = 0; i < options.floppies.size(); ++i)
-            if (options.floppies[i] && preview_settings::SameFile(path, *options.floppies[i]) &&
+            if (options.floppies[i] && path_identity::SameFile(path, *options.floppies[i]) &&
                 (!readOnly || !options.floppyReadOnly[i])) return true;
         for (std::size_t i = 0; i < options.hardDisks.size(); ++i)
-            if (options.hardDisks[i] && preview_settings::SameFile(path, *options.hardDisks[i]) &&
+            if (options.hardDisks[i] && path_identity::SameFile(path, *options.hardDisks[i]) &&
                 (!readOnly || !options.hardDiskReadOnly[i])) return true;
         return false;
     };
@@ -177,7 +178,7 @@ std::expected<preview_media_restore::StartupMedia, std::string> Load(
             std::error_code error;
             // An alias must wait for earlier installation and conflict checks.
             const bool alias = std::ranges::any_of(requests.first(next), [&](const auto& previous) {
-                return preview_settings::SameFile(previous.path, request.path);
+                return path_identity::SameFile(previous.path, request.path);
             });
             if (alias || !std::filesystem::is_regular_file(request.path, error) ||
                 media.Conflicts(request.path) || roms.Conflicts(request.path) || (tape && tape->Conflicts(request.path)))
@@ -233,7 +234,7 @@ std::expected<preview_media_restore::StartupMedia, std::string> preview_media_re
     const std::filesystem::path& protectedSettings, std::stop_token stop)
 {
     if (stop.stop_requested()) return std::unexpected(Cancelled);
-    const auto isSettings = [&](const auto& path) { return preview_settings::SameFile(path, protectedSettings); };
+    const auto isSettings = [&](const auto& path) { return path_identity::SameFile(path, protectedSettings); };
     const auto sameAsSettings = [&](const auto& path) { return path && isSettings(*path); };
     if (sameAsSettings(options.rom) || sameAsSettings(options.tape) || sameAsSettings(options.state) ||
         std::ranges::any_of(options.floppies, sameAsSettings) ||
@@ -265,7 +266,7 @@ std::expected<preview_media_restore::StartupMedia, std::string> preview_media_re
         requests.push_back({Kind::tape, *startupTape,
             options.tape ? "Could not open requested tape; check its format and whether it is already in use." : "Tape",
             0, false, options.tape.has_value(),
-            isSettings(*startupTape) || (options.state && preview_settings::SameFile(*startupTape, *options.state))});
+            isSettings(*startupTape) || (options.state && path_identity::SameFile(*startupTape, *options.state))});
     if (options.state) requests.push_back({Kind::state, *options.state, StateError, 0, false, true});
     return Load(requests, roms, media, &tape, stop);
 }

@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PreviewRoms.h"
+#include "util/PathIdentity.h"
 #include "EmbeddedRom.h"
 #include "RomFile.h"
 #include "emubase/Board.h"
@@ -20,13 +21,6 @@ preview_roms::Error Convert(rom_file::Error error)
     return preview_roms::Error::read_failed;
 }
 
-bool SameFile(const std::filesystem::path& first, const std::filesystem::path& second)
-{
-    if (first.empty() || second.empty()) return false;
-    if (first == second) return true;
-    std::error_code error;
-    return std::filesystem::equivalent(first, second, error) && !error;
-}
 }
 
 preview_roms::Roms::Roms(CMotherboard& board) : board_(board) { UseEmbedded(); }
@@ -121,8 +115,8 @@ std::expected<void, preview_roms::Error> preview_roms::Roms::Eject(int slot)
 
 bool preview_roms::Roms::Conflicts(const std::filesystem::path& path) const
 {
-    if (const auto* system = SystemPath(); system && SameFile(*system, path)) return true;
+    if (const auto* system = SystemPath(); system && path_identity::SameFile(*system, path)) return true;
     for (int slot = 0; slot < 2; ++slot)
-        if (const auto* cartridge = CartridgePath(slot); cartridge && SameFile(*cartridge, path)) return true;
+        if (const auto* cartridge = CartridgePath(slot); cartridge && path_identity::SameFile(*cartridge, path)) return true;
     return false;
 }

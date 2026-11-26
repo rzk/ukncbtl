@@ -1,5 +1,4 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include "VideoDecoder.h"
 #include "emubase/Emubase.h"
 #include <gtest/gtest.h>
@@ -9,12 +8,6 @@
 #include <memory>
 #include <vector>
 
-#ifdef _DEBUG
-int AssertFailedLine(const char*, int) { std::abort(); }
-#endif
-void DebugLog(LPCTSTR) {}
-const TCHAR* REGISTER_NAME[] = {_T("R0"), _T("R1"), _T("R2"), _T("R3"),
-                               _T("R4"), _T("R5"), _T("SP"), _T("PC")};
 
 namespace {
 constexpr uint32_t Guard = 0xdeadbeef;

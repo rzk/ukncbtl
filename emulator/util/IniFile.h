@@ -13,7 +13,6 @@ enum class IniFileError
     read_failed,
     write_failed,
     replace_failed,
-    destination_exists,
     too_large,
     invalid_text,
     unsupported_encoding,
@@ -31,15 +30,6 @@ public:
     // New documents use UTF-8 without a BOM.
     IniFile() = default;
     [[nodiscard]] static std::expected<IniFile, IniFileError> Open(const std::filesystem::path& path);
-    // Explicitly decode an old code-page file as a UTF-8 snapshot. OpenLegacy
-    // never modifies the source; callers choose where to save the result.
-    [[nodiscard]] static std::expected<IniFile, IniFileError> OpenLegacy(
-        const std::filesystem::path& path, ini_encoding::LegacyEncoding encoding);
-    // Import to a new UTF-8 file without replacing an existing path. Publishing
-    // requires hard-link support on the destination filesystem.
-    [[nodiscard]] static std::expected<void, IniFileError> ImportLegacy(
-        const std::filesystem::path& source, const std::filesystem::path& destination,
-        ini_encoding::LegacyEncoding encoding);
     [[nodiscard]] std::expected<void, IniFileError> Save(const std::filesystem::path& path) const;
 
     [[nodiscard]] IniDocument& Document() { return document_; }
@@ -47,7 +37,6 @@ public:
     [[nodiscard]] ini_encoding::Encoding Encoding() const { return encoding_; }
 
 private:
-    [[nodiscard]] std::expected<void, IniFileError> SaveImpl(const std::filesystem::path& path, bool replace) const;
     IniDocument document_;
     ini_encoding::Encoding encoding_ = ini_encoding::Encoding::utf8;
 };

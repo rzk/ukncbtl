@@ -16,13 +16,12 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 // envelope shapes are the ones of the datasheet table. The tests do not rely on the
 // sample rate mapping of the emulator, only on ratios and shapes.
 
-#include "stdafx.h"
-#include <CppUnitTest.h>
+#include <gtest/gtest.h>
+#include <cwchar>
+#include <iterator>
 #include <cmath>
 #include <vector>
 #include "TestHelpers.h"
-
-using namespace Microsoft::VisualStudio::CppUnitTestFramework;
 
 namespace
 {
@@ -143,340 +142,336 @@ int CountDowns(const std::vector<uint8_t>& s)
 
 }
 
-TEST_CLASS(SoundAYTests)
+TEST(SoundAYTests, SoundAY_SilentAfterReset)
 {
-public:
-    TEST_METHOD(SoundAY_SilentAfterReset)
-    {
-        CSoundAY ay;
-        std::vector<uint8_t> samples = Render(ay, 200);
-        Eq(0, MaxOf(samples), _T("silence"));
-    }
+    CSoundAY ay;
+    std::vector<uint8_t> samples = Render(ay, 200);
+    ASSERT_EQ(0, MaxOf(samples)) << L"silence";
+}
 
-    TEST_METHOD(SoundAY_ZeroVolumeIsSilent)
+TEST(SoundAYTests, SoundAY_ZeroVolumeIsSilent)
+{
+    CSoundAY ay;
+    ay.SetReg(AY_ENABLE, TONE_A_ONLY);
+    SetTonePeriodA(ay, 20);
+    ay.SetReg(AY_AVOL, 0);
+    ASSERT_EQ(0, MaxOf(Render(ay, 400))) << L"tone with the volume 0";
+}
+
+TEST(SoundAYTests, SoundAY_ToneIsASquareWave)
+{
+    CSoundAY ay;
+    ay.SetReg(AY_ENABLE, TONE_A_ONLY);
+    SetTonePeriodA(ay, 20);
+    ay.SetReg(AY_AVOL, 15);
+    std::vector<uint8_t> samples = Render(ay, 400);
+
+    int high = MaxOf(samples);
+    ASSERT_TRUE(high > 0) << L"the tone is audible";
+    int highCount = 0, lowCount = 0;
+    for (size_t i = 0; i < samples.size(); i++)
+    {
+        if (samples[i] == high) highCount++;
+        else if (samples[i] == 0) lowCount++;
+    }
+    ASSERT_TRUE(highCount > 100) << L"the wave is high for a half of the time";
+    ASSERT_TRUE(lowCount > 100) << L"the wave is low for a half of the time";
+}
+
+TEST(SoundAYTests, SoundAY_FrequencyIsInverselyProportionalToPeriod)
+{
+    int rises[3];
+    static const int periods[3] = { 20, 40, 80 };
+    for (int i = 0; i < 3; i++)
     {
         CSoundAY ay;
         ay.SetReg(AY_ENABLE, TONE_A_ONLY);
-        SetTonePeriodA(ay, 20);
-        ay.SetReg(AY_AVOL, 0);
-        Eq(0, MaxOf(Render(ay, 400)), _T("tone with the volume 0"));
-    }
-
-    TEST_METHOD(SoundAY_ToneIsASquareWave)
-    {
-        CSoundAY ay;
-        ay.SetReg(AY_ENABLE, TONE_A_ONLY);
-        SetTonePeriodA(ay, 20);
+        SetTonePeriodA(ay, periods[i]);
         ay.SetReg(AY_AVOL, 15);
-        std::vector<uint8_t> samples = Render(ay, 400);
-
-        int high = MaxOf(samples);
-        Assert::IsTrue(high > 0, _T("the tone is audible"));
-        int highCount = 0, lowCount = 0;
-        for (size_t i = 0; i < samples.size(); i++)
-        {
-            if (samples[i] == high) highCount++;
-            else if (samples[i] == 0) lowCount++;
-        }
-        Assert::IsTrue(highCount > 100, _T("the wave is high for a half of the time"));
-        Assert::IsTrue(lowCount > 100, _T("the wave is low for a half of the time"));
+        rises[i] = CountRises(Render(ay, 1600));
     }
+    ASSERT_TRUE(rises[0] >= 20) << L"enough periods to measure";
+    ASSERT_TRUE(abs(rises[0] - 2 * rises[1]) <= 2) << L"period 40 is half the frequency of period 20";
+    ASSERT_TRUE(abs(rises[1] - 2 * rises[2]) <= 2) << L"period 80 is half the frequency of period 40";
+}
 
-    TEST_METHOD(SoundAY_FrequencyIsInverselyProportionalToPeriod)
+TEST(SoundAYTests, SoundAY_CoarseTonePeriodRegisterCounts256TimesMore)
+{
+    // The tone period is fine + 256 * coarse
+    CSoundAY a;
+    a.SetReg(AY_ENABLE, TONE_A_ONLY);
+    a.SetReg(AY_AFINE, 0);
+    a.SetReg(AY_ACOARSE, 1);  // period 256
+    a.SetReg(AY_AVOL, 15);
+    CSoundAY b;
+    b.SetReg(AY_ENABLE, TONE_A_ONLY);
+    b.SetReg(AY_AFINE, 128);
+    b.SetReg(AY_ACOARSE, 0);  // period 128
+    b.SetReg(AY_AVOL, 15);
+
+    int ra = CountRises(Render(a, 8000));
+    int rb = CountRises(Render(b, 8000));
+    ASSERT_TRUE(ra >= 10) << L"enough periods to measure";
+    ASSERT_TRUE(abs(rb - 2 * ra) <= 2) << L"period 256 is half the frequency of period 128";
+}
+
+TEST(SoundAYTests, SoundAY_PeriodZeroIsPeriodOne)
+{
+    // Datasheet: the period 0 is the same as the period 1
+    CSoundAY a;
+    a.SetReg(AY_ENABLE, TONE_A_ONLY);
+    a.SetReg(AY_AVOL, 15);
+    SetTonePeriodA(a, 0);
+    CSoundAY b;
+    b.SetReg(AY_ENABLE, TONE_A_ONLY);
+    b.SetReg(AY_AVOL, 15);
+    SetTonePeriodA(b, 1);
+
+    std::vector<uint8_t> sa = Render(a, 300);
+    std::vector<uint8_t> sb = Render(b, 300);
+    ASSERT_TRUE(sa == sb) << L"the same waveform";
+}
+
+TEST(SoundAYTests, SoundAY_ChannelsAreIndependent)
+{
+    // The tone B has the double period of the tone A; each channel keeps its own period
+    CSoundAY ay;
+    ay.SetReg(AY_ENABLE, 0x3C);  // tones A and B on
+    SetTonePeriodA(ay, 20);
+    ay.SetReg(AY_BFINE, 40);
+    ay.SetReg(AY_BCOARSE, 0);
+    ay.SetReg(AY_AVOL, 15);
+    ay.SetReg(AY_BVOL, 0);  // only A is heard
+    int ra = CountRises(Render(ay, 1600));
+
+    CSoundAY ay2;
+    ay2.SetReg(AY_ENABLE, 0x3C);
+    SetTonePeriodA(ay2, 20);
+    ay2.SetReg(AY_BFINE, 40);
+    ay2.SetReg(AY_BCOARSE, 0);
+    ay2.SetReg(AY_AVOL, 0);
+    ay2.SetReg(AY_BVOL, 15);  // only B is heard
+    int rb = CountRises(Render(ay2, 1600));
+
+    ASSERT_TRUE(ra >= 20) << L"enough periods to measure";
+    ASSERT_TRUE(abs(ra - 2 * rb) <= 2) << L"B is twice slower than A";
+}
+
+TEST(SoundAYTests, SoundAY_VolumeSteps)
+{
+    // A step of 2 in the volume register is 3 dB, the amplitude ratio 1.41; 6 dB is 2; 12 dB is 4
+    int v15 = DcLevel(15), v13 = DcLevel(13), v11 = DcLevel(11), v9 = DcLevel(9);
+    ASSERT_TRUE(v15 > v13 && v13 > v11 && v11 > v9 && v9 > 0) << L"the volume grows with the register";
+    ASSERT_TRUE(fabs((double) v15 / v13 - 1.995) < 0.12) << L"15 vs 13: 6 dB";
+    ASSERT_TRUE(fabs((double) v15 / v11 - 3.98) < 0.3) << L"15 vs 11: 12 dB";
+    ASSERT_TRUE(fabs((double) v13 / v9 - 3.98) < 0.5) << L"13 vs 9: 12 dB";
+}
+
+TEST(SoundAYTests, SoundAY_DisabledToneAndNoiseGiveConstantLevel)
+{
+    // Datasheet: with the tone and noise disabled the channel outputs a constant level
+    CSoundAY ay;
+    SetLongPeriods(ay);
+    ay.SetReg(AY_ENABLE, ALL_OFF);
+    ay.SetReg(AY_AVOL, 15);
+    std::vector<uint8_t> samples = Render(ay, 300);
+    ASSERT_TRUE(samples[0] > 0) << L"not silent";
+    for (size_t i = 1; i < samples.size(); i++)
+        ASSERT_EQ((int) samples[0], (int) samples[i]) << L"constant";
+}
+
+// The board renders two samples at each tick and uses the second one.
+TEST(SoundAYTests, SoundAY_DisabledToneAndNoiseAtShortPeriods)
+{
+    CSoundAY ay;
+    ay.SetReg(AY_ENABLE, ALL_OFF);
+    ay.SetReg(AY_AVOL, 15);
+    int expected = DcLevel(15);  // the level with a long period
+    for (int i = 0; i < 100; i++)
     {
-        int rises[3];
-        static const int periods[3] = { 20, 40, 80 };
-        for (int i = 0; i < 3; i++)
-        {
-            CSoundAY ay;
-            ay.SetReg(AY_ENABLE, TONE_A_ONLY);
-            SetTonePeriodA(ay, periods[i]);
-            ay.SetReg(AY_AVOL, 15);
-            rises[i] = CountRises(Render(ay, 1600));
-        }
-        Assert::IsTrue(rises[0] >= 20, _T("enough periods to measure"));
-        Assert::IsTrue(abs(rises[0] - 2 * rises[1]) <= 2, _T("period 40 is half the frequency of period 20"));
-        Assert::IsTrue(abs(rises[1] - 2 * rises[2]) <= 2, _T("period 80 is half the frequency of period 40"));
+        uint8_t buffer[2];
+        ay.Callback(buffer);
+        ASSERT_EQ(expected, buffer[1]) << L"constant level";
     }
+}
 
-    TEST_METHOD(SoundAY_CoarseTonePeriodRegisterCounts256TimesMore)
-    {
-        // The tone period is fine + 256 * coarse
-        CSoundAY a;
-        a.SetReg(AY_ENABLE, TONE_A_ONLY);
-        a.SetReg(AY_AFINE, 0);
-        a.SetReg(AY_ACOARSE, 1);  // period 256
-        a.SetReg(AY_AVOL, 15);
-        CSoundAY b;
-        b.SetReg(AY_ENABLE, TONE_A_ONLY);
-        b.SetReg(AY_AFINE, 128);
-        b.SetReg(AY_ACOARSE, 0);  // period 128
-        b.SetReg(AY_AVOL, 15);
-
-        int ra = CountRises(Render(a, 8000));
-        int rb = CountRises(Render(b, 8000));
-        Assert::IsTrue(ra >= 10, _T("enough periods to measure"));
-        Assert::IsTrue(abs(rb - 2 * ra) <= 2, _T("period 256 is half the frequency of period 128"));
-    }
-
-    TEST_METHOD(SoundAY_PeriodZeroIsPeriodOne)
-    {
-        // Datasheet: the period 0 is the same as the period 1
-        CSoundAY a;
-        a.SetReg(AY_ENABLE, TONE_A_ONLY);
-        a.SetReg(AY_AVOL, 15);
-        SetTonePeriodA(a, 0);
-        CSoundAY b;
-        b.SetReg(AY_ENABLE, TONE_A_ONLY);
-        b.SetReg(AY_AVOL, 15);
-        SetTonePeriodA(b, 1);
-
-        std::vector<uint8_t> sa = Render(a, 300);
-        std::vector<uint8_t> sb = Render(b, 300);
-        Assert::IsTrue(sa == sb, _T("the same waveform"));
-    }
-
-    TEST_METHOD(SoundAY_ChannelsAreIndependent)
-    {
-        // The tone B has the double period of the tone A; each channel keeps its own period
-        CSoundAY ay;
-        ay.SetReg(AY_ENABLE, 0x3C);  // tones A and B on
-        SetTonePeriodA(ay, 20);
-        ay.SetReg(AY_BFINE, 40);
-        ay.SetReg(AY_BCOARSE, 0);
-        ay.SetReg(AY_AVOL, 15);
-        ay.SetReg(AY_BVOL, 0);  // only A is heard
-        int ra = CountRises(Render(ay, 1600));
-
-        CSoundAY ay2;
-        ay2.SetReg(AY_ENABLE, 0x3C);
-        SetTonePeriodA(ay2, 20);
-        ay2.SetReg(AY_BFINE, 40);
-        ay2.SetReg(AY_BCOARSE, 0);
-        ay2.SetReg(AY_AVOL, 0);
-        ay2.SetReg(AY_BVOL, 15);  // only B is heard
-        int rb = CountRises(Render(ay2, 1600));
-
-        Assert::IsTrue(ra >= 20, _T("enough periods to measure"));
-        Assert::IsTrue(abs(ra - 2 * rb) <= 2, _T("B is twice slower than A"));
-    }
-
-    TEST_METHOD(SoundAY_VolumeSteps)
-    {
-        // A step of 2 in the volume register is 3 dB, the amplitude ratio 1.41; 6 dB is 2; 12 dB is 4
-        int v15 = DcLevel(15), v13 = DcLevel(13), v11 = DcLevel(11), v9 = DcLevel(9);
-        Assert::IsTrue(v15 > v13 && v13 > v11 && v11 > v9 && v9 > 0, _T("the volume grows with the register"));
-        Assert::IsTrue(fabs((double) v15 / v13 - 1.995) < 0.12, _T("15 vs 13: 6 dB"));
-        Assert::IsTrue(fabs((double) v15 / v11 - 3.98) < 0.3, _T("15 vs 11: 12 dB"));
-        Assert::IsTrue(fabs((double) v13 / v9 - 3.98) < 0.5, _T("13 vs 9: 12 dB"));
-    }
-
-    TEST_METHOD(SoundAY_DisabledToneAndNoiseGiveConstantLevel)
-    {
-        // Datasheet: with the tone and noise disabled the channel outputs a constant level
-        CSoundAY ay;
-        SetLongPeriods(ay);
-        ay.SetReg(AY_ENABLE, ALL_OFF);
-        ay.SetReg(AY_AVOL, 15);
-        std::vector<uint8_t> samples = Render(ay, 300);
-        Assert::IsTrue(samples[0] > 0, _T("not silent"));
-        for (size_t i = 1; i < samples.size(); i++)
-            Assert::AreEqual((int) samples[0], (int) samples[i], _T("constant"));
-    }
-
-    // The board renders two samples at each tick and uses the second one.
-    TEST_METHOD(SoundAY_DisabledToneAndNoiseAtShortPeriods)
-    {
-        CSoundAY ay;
-        ay.SetReg(AY_ENABLE, ALL_OFF);
-        ay.SetReg(AY_AVOL, 15);
-        int expected = DcLevel(15);  // the level with a long period
-        for (int i = 0; i < 100; i++)
-        {
-            uint8_t buffer[2];
-            ay.Callback(buffer);
-            Eq(expected, buffer[1], _T("constant level"));
-        }
-    }
-
-    TEST_METHOD(SoundAY_ChannelsAreMixedByAddition)
-    {
-        int one, two, three;
-        {
-            CSoundAY ay;
-            SetLongPeriods(ay);
-            ay.SetReg(AY_ENABLE, ALL_OFF);
-            ay.SetReg(AY_AVOL, 15);
-            one = Render(ay, 64)[32];
-        }
-        {
-            CSoundAY ay;
-            SetLongPeriods(ay);
-            ay.SetReg(AY_ENABLE, ALL_OFF);
-            ay.SetReg(AY_AVOL, 15);
-            ay.SetReg(AY_BVOL, 15);
-            two = Render(ay, 64)[32];
-        }
-        {
-            CSoundAY ay;
-            SetLongPeriods(ay);
-            ay.SetReg(AY_ENABLE, ALL_OFF);
-            ay.SetReg(AY_AVOL, 15);
-            ay.SetReg(AY_BVOL, 15);
-            ay.SetReg(AY_CVOL, 15);
-            three = Render(ay, 64)[32];
-        }
-        Assert::IsTrue(one > 0, _T("one channel"));
-        Assert::IsTrue(abs(two - 2 * one) <= 1, _T("two channels are twice louder"));
-        Assert::IsTrue(abs(three - 3 * one) <= 2, _T("three channels are three times louder"));
-    }
-
-    TEST_METHOD(SoundAY_NoiseIsNotConstantAndDeterministic)
-    {
-        CSoundAY a;
-        a.SetReg(AY_ENABLE, NOISE_A_ONLY);
-        a.SetReg(AY_NOISEPER, 4);
-        a.SetReg(AY_AVOL, 15);
-        std::vector<uint8_t> sa = Render(a, 2000);
-
-        int high = MaxOf(sa);
-        int rises = CountRises(sa);
-        Assert::IsTrue(high > 0, _T("the noise is audible"));
-        Assert::IsTrue(rises > 20, _T("the noise changes"));
-
-        CSoundAY b;
-        b.SetReg(AY_ENABLE, NOISE_A_ONLY);
-        b.SetReg(AY_NOISEPER, 4);
-        b.SetReg(AY_AVOL, 15);
-        Assert::IsTrue(sa == Render(b, 2000), _T("the same register values give the same noise"));
-    }
-
-    TEST_METHOD(SoundAY_NoisePeriodSetsTheNoiseSpeed)
-    {
-        CSoundAY fast;
-        fast.SetReg(AY_ENABLE, NOISE_A_ONLY);
-        fast.SetReg(AY_NOISEPER, 2);
-        fast.SetReg(AY_AVOL, 15);
-        CSoundAY slow;
-        slow.SetReg(AY_ENABLE, NOISE_A_ONLY);
-        slow.SetReg(AY_NOISEPER, 16);
-        slow.SetReg(AY_AVOL, 15);
-
-        int rf = CountRises(Render(fast, 4000));
-        int rs = CountRises(Render(slow, 4000));
-        Assert::IsTrue(rf > 2 * rs, _T("the small period gives much more changes"));
-    }
-
-    // Envelope shapes of the datasheet table: C At Al H
-    // 0 0 x x  \___      0 1 x x  /___
-    // 1 0 0 0  \\\\      1 0 0 1  \___      1 0 1 0  \/\/      1 0 1 1  \---
-    // 1 1 0 0  ////      1 1 0 1  /---      1 1 1 0  /\/\      1 1 1 1  /___
-
-    TEST_METHOD(SoundAY_EnvelopeDecayAndSilence)
-    {
-        static const int shapes[] = { 0x00, 0x01, 0x02, 0x03, 0x09 };
-        for (size_t i = 0; i < sizeof(shapes) / sizeof(shapes[0]); i++)
-        {
-            std::vector<uint8_t> s = RenderEnvelope(shapes[i], 16, 1000);
-            TCHAR msg[40];
-            _stprintf_s(msg, _T("shape %02o"), (unsigned int) shapes[i]);
-            Assert::IsTrue(s[0] >= 0x50, msg);
-            Assert::IsTrue(IsNonIncreasing(s), msg);
-            Eq(0, s[999], msg);
-            Assert::IsTrue(CountDowns(s) >= 20, msg);
-        }
-    }
-
-    TEST_METHOD(SoundAY_EnvelopeAttackAndSilence)
-    {
-        static const int shapes[] = { 0x04, 0x05, 0x06, 0x07, 0x0F };
-        for (size_t i = 0; i < sizeof(shapes) / sizeof(shapes[0]); i++)
-        {
-            std::vector<uint8_t> s = RenderEnvelope(shapes[i], 16, 1000);
-            TCHAR msg[40];
-            _stprintf_s(msg, _T("shape %02o"), (unsigned int) shapes[i]);
-            Assert::IsTrue(s[0] <= 0x10, msg);
-            // rises to the maximum, then drops to silence in one step
-            Assert::IsTrue(MaxOf(s) >= 0x50, msg);
-            Eq(0, s[999], msg);
-            Assert::IsTrue(CountUps(s) >= 20, msg);
-            Assert::IsTrue(CountDowns(s) <= 2, msg);
-        }
-    }
-
-    TEST_METHOD(SoundAY_EnvelopeAttackAndHold)
-    {
-        std::vector<uint8_t> s = RenderEnvelope(0x0D, 16, 1000);  // /---
-        Assert::IsTrue(s[0] <= 0x10, _T("starts low"));
-        Assert::IsTrue(IsNonDecreasing(s), _T("rises"));
-        Assert::IsTrue(s[999] >= 0x50, _T("holds the maximum"));
-        Eq(s[900], s[999], _T("holds"));
-    }
-
-    TEST_METHOD(SoundAY_EnvelopeDecayAndHoldHigh)
-    {
-        std::vector<uint8_t> s = RenderEnvelope(0x0B, 16, 1000);  // \---
-        Assert::IsTrue(s[0] >= 0x50, _T("starts high"));
-        Assert::IsTrue(CountDowns(s) >= 20, _T("decays"));
-        Assert::IsTrue(s[999] >= 0x50, _T("jumps to the maximum and holds it"));
-        Eq(s[900], s[999], _T("holds"));
-    }
-
-    TEST_METHOD(SoundAY_EnvelopeRepeats)
-    {
-        // \\\\ decays again and again, //// rises again and again
-        std::vector<uint8_t> saw = RenderEnvelope(0x08, 16, 1000);
-        int jumpsUp = 0;
-        for (size_t i = 1; i < saw.size(); i++)
-            if (saw[i] > saw[i - 1] + 0x20) jumpsUp++;
-        Assert::IsTrue(jumpsUp >= 4, _T("\\\\\\\\: the level jumps up at every cycle"));
-        Assert::IsTrue(CountDowns(saw) >= 100, _T("\\\\\\\\: and decays"));
-
-        std::vector<uint8_t> ramp = RenderEnvelope(0x0C, 16, 1000);
-        int jumpsDown = 0;
-        for (size_t i = 1; i < ramp.size(); i++)
-            if (ramp[i] + 0x20 < ramp[i - 1]) jumpsDown++;
-        Assert::IsTrue(jumpsDown >= 4, _T("////: the level jumps down at every cycle"));
-        Assert::IsTrue(CountUps(ramp) >= 100, _T("////: and rises"));
-    }
-
-    TEST_METHOD(SoundAY_EnvelopeTriangle)
-    {
-        static const int shapes[] = { 0x0A, 0x0E };  // \/\/ and /\/\ ;
-        for (size_t i = 0; i < sizeof(shapes) / sizeof(shapes[0]); i++)
-        {
-            std::vector<uint8_t> s = RenderEnvelope(shapes[i], 16, 1000);
-            TCHAR msg[40];
-            _stprintf_s(msg, _T("shape %02o"), (unsigned int) shapes[i]);
-            Assert::IsTrue(CountUps(s) >= 50, msg);
-            Assert::IsTrue(CountDowns(s) >= 50, msg);
-            // no big jumps: the level changes smoothly
-            for (size_t k = 1; k < s.size(); k++)
-                Assert::IsTrue(abs((int) s[k] - (int) s[k - 1]) < 0x20, msg);
-        }
-    }
-
-    TEST_METHOD(SoundAY_EnvelopePeriodSetsTheSpeed)
-    {
-        // The envelope with the double period decays twice slower
-        std::vector<uint8_t> fast = RenderEnvelope(0x00, 16, 1000);
-        std::vector<uint8_t> slow = RenderEnvelope(0x00, 32, 1000);
-        size_t fastEnd = 0, slowEnd = 0;
-        while (fastEnd < fast.size() && fast[fastEnd] != 0) fastEnd++;
-        while (slowEnd < slow.size() && slow[slowEnd] != 0) slowEnd++;
-        Assert::IsTrue(fastEnd > 50 && fastEnd < 999, _T("the fast envelope ends"));
-        Assert::IsTrue(slowEnd < 999, _T("the slow envelope ends"));
-        Assert::IsTrue(abs((int) slowEnd - 2 * (int) fastEnd) <= 8, _T("twice longer"));
-    }
-
-    TEST_METHOD(SoundAY_ResetSilencesTheChip)
+TEST(SoundAYTests, SoundAY_ChannelsAreMixedByAddition)
+{
+    int one, two, three;
     {
         CSoundAY ay;
         SetLongPeriods(ay);
         ay.SetReg(AY_ENABLE, ALL_OFF);
         ay.SetReg(AY_AVOL, 15);
-        Assert::IsTrue(MaxOf(Render(ay, 100)) > 0, _T("sound before"));
-        ay.Reset();
-        Eq(0, MaxOf(Render(ay, 100)), _T("silence after the reset"));
+        one = Render(ay, 64)[32];
     }
-};
+    {
+        CSoundAY ay;
+        SetLongPeriods(ay);
+        ay.SetReg(AY_ENABLE, ALL_OFF);
+        ay.SetReg(AY_AVOL, 15);
+        ay.SetReg(AY_BVOL, 15);
+        two = Render(ay, 64)[32];
+    }
+    {
+        CSoundAY ay;
+        SetLongPeriods(ay);
+        ay.SetReg(AY_ENABLE, ALL_OFF);
+        ay.SetReg(AY_AVOL, 15);
+        ay.SetReg(AY_BVOL, 15);
+        ay.SetReg(AY_CVOL, 15);
+        three = Render(ay, 64)[32];
+    }
+    ASSERT_TRUE(one > 0) << L"one channel";
+    ASSERT_TRUE(abs(two - 2 * one) <= 1) << L"two channels are twice louder";
+    ASSERT_TRUE(abs(three - 3 * one) <= 2) << L"three channels are three times louder";
+}
+
+TEST(SoundAYTests, SoundAY_NoiseIsNotConstantAndDeterministic)
+{
+    CSoundAY a;
+    a.SetReg(AY_ENABLE, NOISE_A_ONLY);
+    a.SetReg(AY_NOISEPER, 4);
+    a.SetReg(AY_AVOL, 15);
+    std::vector<uint8_t> sa = Render(a, 2000);
+
+    int high = MaxOf(sa);
+    int rises = CountRises(sa);
+    ASSERT_TRUE(high > 0) << L"the noise is audible";
+    ASSERT_TRUE(rises > 20) << L"the noise changes";
+
+    CSoundAY b;
+    b.SetReg(AY_ENABLE, NOISE_A_ONLY);
+    b.SetReg(AY_NOISEPER, 4);
+    b.SetReg(AY_AVOL, 15);
+    ASSERT_TRUE(sa == Render(b, 2000)) << L"the same register values give the same noise";
+}
+
+TEST(SoundAYTests, SoundAY_NoisePeriodSetsTheNoiseSpeed)
+{
+    CSoundAY fast;
+    fast.SetReg(AY_ENABLE, NOISE_A_ONLY);
+    fast.SetReg(AY_NOISEPER, 2);
+    fast.SetReg(AY_AVOL, 15);
+    CSoundAY slow;
+    slow.SetReg(AY_ENABLE, NOISE_A_ONLY);
+    slow.SetReg(AY_NOISEPER, 16);
+    slow.SetReg(AY_AVOL, 15);
+
+    int rf = CountRises(Render(fast, 4000));
+    int rs = CountRises(Render(slow, 4000));
+    ASSERT_TRUE(rf > 2 * rs) << L"the small period gives much more changes";
+}
+
+// Envelope shapes of the datasheet table: C At Al H
+// 0 0 x x  \___      0 1 x x  /___
+// 1 0 0 0  \\\\      1 0 0 1  \___      1 0 1 0  \/\/      1 0 1 1  \---
+// 1 1 0 0  ////      1 1 0 1  /---      1 1 1 0  /\/\      1 1 1 1  /___
+
+TEST(SoundAYTests, SoundAY_EnvelopeDecayAndSilence)
+{
+    static const int shapes[] = { 0x00, 0x01, 0x02, 0x03, 0x09 };
+    for (size_t i = 0; i < sizeof(shapes) / sizeof(shapes[0]); i++)
+    {
+        std::vector<uint8_t> s = RenderEnvelope(shapes[i], 16, 1000);
+        wchar_t msg[40];
+        std::swprintf(msg, std::size(msg), L"shape %02o", (unsigned int) shapes[i]);
+        ASSERT_TRUE(s[0] >= 0x50) << msg;
+        ASSERT_TRUE(IsNonIncreasing(s)) << msg;
+        ASSERT_EQ(0, s[999]) << msg;
+        ASSERT_TRUE(CountDowns(s) >= 20) << msg;
+    }
+}
+
+TEST(SoundAYTests, SoundAY_EnvelopeAttackAndSilence)
+{
+    static const int shapes[] = { 0x04, 0x05, 0x06, 0x07, 0x0F };
+    for (size_t i = 0; i < sizeof(shapes) / sizeof(shapes[0]); i++)
+    {
+        std::vector<uint8_t> s = RenderEnvelope(shapes[i], 16, 1000);
+        wchar_t msg[40];
+        std::swprintf(msg, std::size(msg), L"shape %02o", (unsigned int) shapes[i]);
+        ASSERT_TRUE(s[0] <= 0x10) << msg;
+        // rises to the maximum, then drops to silence in one step
+        ASSERT_TRUE(MaxOf(s) >= 0x50) << msg;
+        ASSERT_EQ(0, s[999]) << msg;
+        ASSERT_TRUE(CountUps(s) >= 20) << msg;
+        ASSERT_TRUE(CountDowns(s) <= 2) << msg;
+    }
+}
+
+TEST(SoundAYTests, SoundAY_EnvelopeAttackAndHold)
+{
+    std::vector<uint8_t> s = RenderEnvelope(0x0D, 16, 1000);  // /---
+    ASSERT_TRUE(s[0] <= 0x10) << L"starts low";
+    ASSERT_TRUE(IsNonDecreasing(s)) << L"rises";
+    ASSERT_TRUE(s[999] >= 0x50) << L"holds the maximum";
+    ASSERT_EQ(s[900], s[999]) << L"holds";
+}
+
+TEST(SoundAYTests, SoundAY_EnvelopeDecayAndHoldHigh)
+{
+    std::vector<uint8_t> s = RenderEnvelope(0x0B, 16, 1000);  // \---
+    ASSERT_TRUE(s[0] >= 0x50) << L"starts high";
+    ASSERT_TRUE(CountDowns(s) >= 20) << L"decays";
+    ASSERT_TRUE(s[999] >= 0x50) << L"jumps to the maximum and holds it";
+    ASSERT_EQ(s[900], s[999]) << L"holds";
+}
+
+TEST(SoundAYTests, SoundAY_EnvelopeRepeats)
+{
+    // \\\\ decays again and again, //// rises again and again
+    std::vector<uint8_t> saw = RenderEnvelope(0x08, 16, 1000);
+    int jumpsUp = 0;
+    for (size_t i = 1; i < saw.size(); i++)
+        if (saw[i] > saw[i - 1] + 0x20) jumpsUp++;
+    ASSERT_TRUE(jumpsUp >= 4) << L"\\\\\\\\: the level jumps up at every cycle";
+    ASSERT_TRUE(CountDowns(saw) >= 100) << L"\\\\\\\\: and decays";
+
+    std::vector<uint8_t> ramp = RenderEnvelope(0x0C, 16, 1000);
+    int jumpsDown = 0;
+    for (size_t i = 1; i < ramp.size(); i++)
+        if (ramp[i] + 0x20 < ramp[i - 1]) jumpsDown++;
+    ASSERT_TRUE(jumpsDown >= 4) << L"////: the level jumps down at every cycle";
+    ASSERT_TRUE(CountUps(ramp) >= 100) << L"////: and rises";
+}
+
+TEST(SoundAYTests, SoundAY_EnvelopeTriangle)
+{
+    static const int shapes[] = { 0x0A, 0x0E };  // \/\/ and /\/\ ;
+    for (size_t i = 0; i < sizeof(shapes) / sizeof(shapes[0]); i++)
+    {
+        std::vector<uint8_t> s = RenderEnvelope(shapes[i], 16, 1000);
+        wchar_t msg[40];
+        std::swprintf(msg, std::size(msg), L"shape %02o", (unsigned int) shapes[i]);
+        ASSERT_TRUE(CountUps(s) >= 50) << msg;
+        ASSERT_TRUE(CountDowns(s) >= 50) << msg;
+        // no big jumps: the level changes smoothly
+        for (size_t k = 1; k < s.size(); k++)
+            ASSERT_TRUE(abs((int) s[k] - (int) s[k - 1]) < 0x20) << msg;
+    }
+}
+
+TEST(SoundAYTests, SoundAY_EnvelopePeriodSetsTheSpeed)
+{
+    // The envelope with the double period decays twice slower
+    std::vector<uint8_t> fast = RenderEnvelope(0x00, 16, 1000);
+    std::vector<uint8_t> slow = RenderEnvelope(0x00, 32, 1000);
+    size_t fastEnd = 0, slowEnd = 0;
+    while (fastEnd < fast.size() && fast[fastEnd] != 0) fastEnd++;
+    while (slowEnd < slow.size() && slow[slowEnd] != 0) slowEnd++;
+    ASSERT_TRUE(fastEnd > 50 && fastEnd < 999) << L"the fast envelope ends";
+    ASSERT_TRUE(slowEnd < 999) << L"the slow envelope ends";
+    ASSERT_TRUE(abs((int) slowEnd - 2 * (int) fastEnd) <= 8) << L"twice longer";
+}
+
+TEST(SoundAYTests, SoundAY_ResetSilencesTheChip)
+{
+    CSoundAY ay;
+    SetLongPeriods(ay);
+    ay.SetReg(AY_ENABLE, ALL_OFF);
+    ay.SetReg(AY_AVOL, 15);
+    ASSERT_TRUE(MaxOf(Render(ay, 100)) > 0) << L"sound before";
+    ay.Reset();
+    ASSERT_EQ(0, MaxOf(Render(ay, 100))) << L"silence after the reset";
+}

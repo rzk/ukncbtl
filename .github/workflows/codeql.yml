@@ -23,10 +23,10 @@ jobs:
         with:
           languages: c-cpp
           build-mode: manual
-      - name: Configure SDL frontend
+      - name: Configure with Ninja and Clang
         run: cmake --preset windows-clang -DBUILD_TESTING=OFF
-      - name: Build SDL frontend
-        run: cmake --build --preset windows-clang
+      - name: Build UKNCBTL
+        run: cmake --build --preset windows-clang --target ukncbtl
       - name: Analyze and upload results
         uses: github/codeql-action/analyze@v4
         with:

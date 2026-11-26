@@ -12,8 +12,10 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 #pragma once
 
+#include <memory>
 #include <vector>
-#include "emubase\Emubase.h"
+#include "util/StagedFile.h"
+#include "emubase/Emubase.h"
 
 // Condition code bits of the PSW, defined here on purpose: the tests must not depend on Defines.h
 const uint16_t TF_C = 01;
@@ -22,11 +24,8 @@ const uint16_t TF_Z = 04;
 const uint16_t TF_N = 010;
 const uint16_t TF_ALL = 017;
 
-/// AreEqual for 16-bit values: CppUnitTest has no ToString for uint16_t in older Visual Studio
-void Eq(unsigned int expected, unsigned int actual, const TCHAR* msg);
-
 /// Text of the flags for messages, for example "NZvc": uppercase = set; buf has at least 5 characters
-void FlagsText(uint16_t flags, TCHAR* buf);
+void FlagsText(uint16_t flags, wchar_t* buf);
 
 /// \brief A motherboard with the CPU in USER mode, ready to execute programs placed in RAM.
 /// \details All memory access goes through the CPU memory controller, so addresses are the
@@ -37,7 +36,7 @@ public:
     TestBoard();
     ~TestBoard();
 
-    CMotherboard* Board() { return m_pBoard; }
+    CMotherboard* Board() { return m_pBoard.get(); }
     CProcessor* CPU() { return m_pBoard->GetCPU(); }
     CProcessor* PPU() { return m_pBoard->GetPPU(); }
     CFirstMemoryController* CpuMem() { return static_cast<CFirstMemoryController*>(m_pBoard->GetCPUMemoryController()); }
@@ -70,7 +69,7 @@ public:
     bool TakeInterrupt();
 
 private:
-    CMotherboard* m_pBoard;
+    std::unique_ptr<CMotherboard> m_pBoard;
 };
 
 /// \brief A temporary file in the temp directory, removed in the destructor.
@@ -78,11 +77,11 @@ private:
 class TempFile
 {
 public:
-    /// \param extension  file name extension with the dot, for example _T(".dsk")
-    explicit TempFile(const TCHAR* extension);
+    /// \param extension  file name extension with the dot, for example L".dsk"
+    explicit TempFile(const wchar_t* extension);
     ~TempFile();
 
-    const TCHAR* Path() const { return m_path; }
+    const std::filesystem::path& Path() const { return m_path; }
     /// Create the file with the given content
     void Write(const std::vector<uint8_t>& content);
     /// Read the whole file
@@ -91,5 +90,6 @@ public:
     void SetReadOnly(bool readOnly);
 
 private:
-    TCHAR m_path[MAX_PATH];
+    staged_file::File m_directory;
+    std::filesystem::path m_path;
 };

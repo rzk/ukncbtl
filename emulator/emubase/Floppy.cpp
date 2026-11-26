@@ -201,11 +201,6 @@ void CFloppyController::Reset()
     PrepareTrack();
 }
 
-bool CFloppyController::AttachImage(int drive, const wchar_t* sFileName)
-{
-    return sFileName && AttachImage(drive, std::filesystem::path(sFileName));
-}
-
 bool CFloppyController::AttachImage(int drive, const std::filesystem::path& path, bool readOnly)
 {
     if (path.empty() || !PrepareAttachment(drive)) return false;
@@ -307,12 +302,6 @@ uint16_t CFloppyController::GetState()
     if (m_drivedata[m_drive].fpFile == nullptr)
         res |= FLOPPY_STATUS_MOREDATA;
 
-//    if (res & FLOPPY_STATUS_MOREDATA)
-//    {
-//        TCHAR oct2[7];  PrintOctalValue(oct2, res);
-//        DebugLogFormat(_T("Floppy GET STATE {}\r\n"), oct2);
-//    }
-
     return res;
 }
 
@@ -379,12 +368,10 @@ void CFloppyController::SetCommand(uint16_t cmd)
     {
         PrepareTrack(trackChanges ? ((cmd & FLOPPY_CMD_DIR) ? 1 : -1) : 0);
 
-//    	DebugLogFormat(_T("Floppy DRIVE {} TR {} SD {}\r\n"), m_drive, m_track, m_side);
     }
 
     if (cmd & FLOPPY_CMD_SEARCHSYNC) // Search for marker
     {
-//        DebugLog(_T("Floppy SEARCHSYNC\r\n"));
 
         m_flags &= ~FLOPPY_CMD_SEARCHSYNC;
         m_searchsync = true;
@@ -394,7 +381,6 @@ void CFloppyController::SetCommand(uint16_t cmd)
 
     if (m_writing && (cmd & FLOPPY_CMD_SKIPSYNC))  // Writing marker
     {
-//        DebugLog(_T("Floppy MARKER\r\n"));
 
         m_writemarker = true;
         m_status &= ~FLOPPY_STATUS_CHECKSUMOK;
@@ -414,7 +400,6 @@ uint16_t CFloppyController::GetData()
 
 void CFloppyController::WriteData(uint16_t data)
 {
-//        DebugLogFormat(_T("Floppy WRITE\t\t{:04x}\r\n"), data);
 
     m_writing = true;  // Switch to write mode if not yet
     m_searchsync = false;
@@ -634,10 +619,6 @@ WriteError:
     DebugLog(L"Floppy image write failed; track changes retained.\r\n");
     return false;
 
-    ////DEBUG: Save raw m_data/m_marker into rawdata.bin
-    //HANDLE hRawFile = CreateFile(_T("rawdata.bin"),
-    //            GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-    //            CREATE_ALWAYS, 0, nullptr);
 }
 
 

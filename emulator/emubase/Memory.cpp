@@ -689,7 +689,6 @@ void CFirstMemoryController::SetPortWord(uint16_t address, uint16_t word)
     default:
         if (!(((m_Port176644 & 0x103) == 0x100) && m_Port176646 == address))
         {
-            //DebugLogFormat(_T("MemoryError SetPortWord CPU {:06o}\r\n"), address);
             m_pProcessor->MemoryError();
         }
         break;
@@ -935,13 +934,6 @@ int CSecondMemoryController::TranslateAddress(uint16_t address, bool /*okHaltMod
 uint16_t CSecondMemoryController::GetPortWord(uint16_t address)
 {
     uint16_t value;
-// #if !defined(PRODUCT)
-//    TCHAR oct1[7];
-//    TCHAR oct2[7];
-//    PrintOctalValue(oct1, address);
-//    PrintOctalValue(oct2, m_pBoard->GetPPU()->GetPC());
-//#endif
-
     switch (address)
     {
     case 0177010:
@@ -1097,12 +1089,10 @@ uint16_t CSecondMemoryController::GetPortWord(uint16_t address)
     case 0177130:  // FDD status
     case 0177131:
         value = m_pBoard->GetFloppyState();
-        //DebugLogFormat(_T("FDD STATE R {:06o}, {:06o}\r\n"), address, value);
         return value;
     case 0177132: //fdd data
     case 0177133:
         value = m_pBoard->GetFloppyData();
-        //DebugLogFormat(_T("FDD DATA  R {:06o}, {:04x}\r\n"), address, value);
         return value;
 
         // HDD ports
@@ -1114,15 +1104,12 @@ uint16_t CSecondMemoryController::GetPortWord(uint16_t address)
     case 0110004:
     case 0110002:
     case 0110000:
-        //DebugLogFormat(_T("GetPortWord HDD {:06o}\r\n"), address);
         return m_pBoard->GetHardPortWord(((m_Port177054 & 8) == 0) ? 1 : 2, address);
 
     case 0114002:
-        //DebugLogFormat(_T("GetPortWord PPU {:06o}\r\n"), address);
         return 0;
 
     default:
-        //DebugLogFormat(_T("MemoryError GetPortWord PPU {:06o}\r\n"), address);
         m_pProcessor->MemoryError();
         break;
     }
@@ -1287,16 +1274,13 @@ void CSecondMemoryController::SetPortByte(uint16_t address, uint8_t byte)
     case 0110004:
     case 0110002:
     case 0110000:
-        //DebugLogFormat(_T("SetPortByte HDD {:06o}\r\n"), address);
         m_pBoard->SetHardPortWord(((m_Port177054 & 8) == 0) ? 1 : 2, address, word);
         break;
 
     case 0114002://STUB
-        //DebugLogFormat(_T("SetPortByte PPU {:06o}\r\n"), address);
         break;
 
     default:
-        //DebugLogFormat(_T("MemoryError SetPortByte PPU {:06o}\r\n"), address);
         m_pProcessor->MemoryError();
         //ASSERT(0);
         break;
@@ -1305,16 +1289,6 @@ void CSecondMemoryController::SetPortByte(uint16_t address, uint8_t byte)
 
 void CSecondMemoryController::SetPortWord(uint16_t address, uint16_t word)
 {
-//#if !defined(PRODUCT)
-//    TCHAR oct[7];
-//    TCHAR oct1[7];
-//    TCHAR oct2[7];
-//    PrintOctalValue(oct, word);
-//    PrintOctalValue(oct1, address);
-//    PrintOctalValue(oct2, m_pBoard->GetPPU()->GetPC());
-////    TCHAR str[1024];
-//#endif
-
     if ((address >= 0110000) && (address < 0120000))
         address &= 0110016;
     switch (address)
@@ -1407,7 +1381,6 @@ void CSecondMemoryController::SetPortWord(uint16_t address, uint16_t word)
         break;
     case 0177054:  // Address space control
     case 0177055:
-        //DebugPrintFormat(_T("W {}, {}\r\n"), oct1, oct);
         {
             uint16_t oldvalue = m_Port177054;
             m_Port177054 = word & 01777;
@@ -1458,14 +1431,11 @@ void CSecondMemoryController::SetPortWord(uint16_t address, uint16_t word)
     case 0177130:  // FDD status
     case 0177131:
         //ASSERT(word==0);
-        //DebugLogFormat(_T("FDD CMD   W {}, {}\r\n"), oct1, oct);
         m_pBoard->SetFloppyState(word);
         break;
     case 0177132:  // FDD data
     case 0177133:
         //ASSERT(word==0);
-        //DebugLogFormat(_T("{}: FDD DATA W {}, {}\r\n"), oct2, oct1, oct);
-        //DebugLogFormat(_T("FDD DATA  W {:04x}\r\n"), word);
         m_pBoard->SetFloppyData(word);
         break;
 
@@ -1493,7 +1463,6 @@ void CSecondMemoryController::SetPortWord(uint16_t address, uint16_t word)
 
     case 0177704: // fdd params:
     case 0177705:
-        //DebugLogFormat(_T("FDD 177704 W {}, {}, {}\r\n"), oct2, oct1, oct);
         break;
 
     case 0177710: //timer status
@@ -1531,16 +1500,13 @@ void CSecondMemoryController::SetPortWord(uint16_t address, uint16_t word)
     case 0110004:
     case 0110002:
     case 0110000:
-        //DebugLogFormat(_T("SetPortWord HDD {:06o}\r\n"), address);
         m_pBoard->SetHardPortWord(((m_Port177054 & 8) == 0) ? 1 : 2, address, word);
         break;
 
     case 0114002://STUB
-        //DebugLogFormat(_T("SetPortWord PPU {:06o}\r\n"), address);
         break;
 
     default:
-        //DebugLogFormat(_T("MemoryError SetPortWord PPU {:06o}\r\n"), address);
         m_pProcessor->MemoryError();
         break;
     }

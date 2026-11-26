@@ -1,34 +1,11 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include <gtest/gtest.h>
-#include "emubase/Emubase.h"
+#include "TestHelpers.h"
 #include <algorithm>
 #include <array>
 #include <vector>
 
-void DebugLog(LPCTSTR) {}
-const TCHAR* REGISTER_NAME[] = {L"R0",L"R1",L"R2",L"R3",L"R4",L"R5",L"SP",L"PC"};
-#ifdef _DEBUG
-int AssertFailedLine(const char*,int) { std::abort(); }
-#endif
 namespace {
-class Image
-{
-    std::array<wchar_t,MAX_PATH> path{};
-public:
-    Image() { std::array<wchar_t,MAX_PATH> dir{}; EXPECT_NE(0,GetTempPathW(MAX_PATH,dir.data())); EXPECT_NE(0,GetTempFileNameW(dir.data(),L"ust",0,path.data())); }
-    ~Image() { DeleteFileW(path.data()); }
-    const wchar_t* Path() const { return path.data(); }
-    void Write(const std::vector<uint8_t>& bytes) {
-        UniqueFile file(_wfopen(Path(),L"wb")); ASSERT_NE(nullptr,file); ASSERT_EQ(bytes.size(),fwrite(bytes.data(),1,bytes.size(),file.get()));
-    }
-    std::vector<uint8_t> Read() const {
-        UniqueFile file(_wfopen(Path(),L"rb")); if (!file) return {};
-        fseek(file.get(),0,SEEK_END); const auto size=ftell(file.get()); rewind(file.get());
-        if(size<0) return {};
-        std::vector<uint8_t> bytes(size); EXPECT_EQ(bytes.size(),fread(bytes.data(),1,bytes.size(),file.get())); return bytes;
-    }
-};
 constexpr uint16_t Data=0x1f0, Error=0x1f1, Count=0x1f2, Sector=0x1f3, Cylinder=0x1f4, Head=0x1f6, Status=0x1f7;
 class HardProbe : public CHardDrive {
 public:
@@ -42,10 +19,10 @@ public:
     void Dirty() { m_trackchanged=true; }
     bool Changed() const { return m_trackchanged; }
     auto Position() const { return std::array<uint16_t,3>{m_drive,m_track,m_side}; }
-    void Reopen(const wchar_t* path,const wchar_t* mode) {
+    void Reopen(const std::filesystem::path& path,const wchar_t* mode) {
         const auto flags = std::ios::binary | std::ios::in |
             (std::wstring_view(mode) == L"r+b" ? std::ios::out : std::ios::openmode{});
-        m_pDrive->fpFile = std::make_unique<std::fstream>(std::filesystem::path(path), flags);
+        m_pDrive->fpFile = std::make_unique<std::fstream>(path, flags);
         ASSERT_TRUE(*m_pDrive->fpFile);
     }
     bool Queued() const { return m_writeflag || m_shiftflag; }
@@ -70,7 +47,7 @@ TEST(HardDriveHeaders, DetectsGeometryForBothImagePolarities)
         auto disk = image;
         if (inverted)
             for (auto& byte : disk) byte = static_cast<uint8_t>(~byte);
-        Image file;
+        TempFile file{L".img"};
         file.Write(disk);
         CHardDrive drive;
         ASSERT_TRUE(drive.AttachImage(file.Path()));
@@ -89,7 +66,7 @@ TEST(HardDriveHeaders, DetectsGeometryForBothImagePolarities)
 
 class HardSequences : public testing::Test {
 protected:
-    Image file;
+    TempFile file{L".img"};
     HardProbe hd;
     std::vector<uint8_t> original;
     void SetUp() override {
@@ -211,7 +188,7 @@ TEST_P(InvalidChs, ReadAndWriteRejectInvalidLocationWithoutChangingImage) {
 INSTANTIATE_TEST_SUITE_P(Boundaries,InvalidChs,testing::Values(std::array{0,0,0},std::array{0,0,9},std::array{0,2,1},std::array{20,0,1},std::array{65535,15,255}));
 class FloppySequences : public testing::Test {
 protected:
-    Image file;
+    TempFile file{L".img"};
     FloppyProbe f;
     std::vector<uint8_t> original=std::vector<uint8_t>(10240,0x35);
     void SetUp() override { file.Write(original); ASSERT_TRUE(f.AttachImage(0,file.Path())); f.SetCommand(Select0); }

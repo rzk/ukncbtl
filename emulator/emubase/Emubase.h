@@ -13,7 +13,6 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #pragma once
 
 #include <array>
-#include "util/File.h"
 
 #include "Disasm.h"
 #include "SoundAY.h"
@@ -121,7 +120,6 @@ public:
     void Reset();       ///< Reset the device
 
     /// \brief Attach the image to the drive -- insert disk
-    bool AttachImage(int drive, const wchar_t* sFileName);
     bool AttachImage(int drive, const std::filesystem::path& path, bool readOnly = false);
     [[nodiscard]] static std::optional<PreparedFloppyImage> OpenImage(const std::filesystem::path& path, bool readOnly);
     [[nodiscard]] bool AttachPreparedImage(int drive, PreparedFloppyImage image);
@@ -197,7 +195,6 @@ public:
     /// \brief Reset the device.
     void Reset();
     /// \brief Attach HDD image file to the device
-    bool AttachImage(const wchar_t* sFileName);
     bool AttachImage(const std::filesystem::path& path, bool readOnly = false);
     /// \brief Detach HDD image file from the device
     void DetachImage();

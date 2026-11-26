@@ -1,16 +1,10 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include <gtest/gtest.h>
 #include "emubase/Emubase.h"
 #include <array>
 #include <format>
 #include <memory>
 #include <vector>
-void DebugLog(LPCTSTR) {}
-const TCHAR* REGISTER_NAME[] = {L"R0",L"R1",L"R2",L"R3",L"R4",L"R5",L"SP",L"PC"};
-#ifdef _DEBUG
-int AssertFailedLine(const char*,int) { std::abort(); }
-#endif
 namespace {
 void Same(const DisassembledInstruction& a,const DisassembledInstruction& b) {
     EXPECT_EQ(a.mnemonic,b.mnemonic); EXPECT_EQ(a.argument,b.argument); EXPECT_EQ(a.length,b.length);
@@ -93,10 +87,11 @@ TEST(DisasmSpanEdges, MissingJumpExtensionHasNoArrowAndOddTargetsAreRejected) {
     }
 }
 TEST(DisasmSpanEdges, SobEveryRegisterAndOffsetWraps) {
+    constexpr std::array names{L"R0", L"R1", L"R2", L"R3", L"R4", L"R5", L"SP", L"PC"};
     for(int reg=0;reg<8;++reg) for(int offset=0;offset<64;++offset) {
         const std::array<uint16_t,1> words{static_cast<uint16_t>(0077000|(reg<<6)|offset)};
         const auto result=DisassembleInstruction(words,0); ASSERT_TRUE(result); EXPECT_EQ(L"SOB",result->mnemonic);
-        EXPECT_EQ(std::format(L"{}, {:06o}",REGISTER_NAME[reg],static_cast<uint16_t>(2-offset*2)),result->argument);
+        EXPECT_EQ(std::format(L"{}, {:06o}",names[reg],static_cast<uint16_t>(2-offset*2)),result->argument);
         EXPECT_EQ(1-offset,Disasm_CheckForJump(words,0));
     }
 }

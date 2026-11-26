@@ -161,10 +161,6 @@ Existing asynchronous boundaries are narrower:
   queue waits for the writer. The frame worker hands off pending bytes at
   frame completion, and handles opening the printer stream and draining it
   on pause or stop. Shutdown drains it before releasing the board.
-* SDL settings import captures current settings and flushes floppy changes
-  before handing the read, decode and replacement to a worker. Shutdown
-  collects an outstanding import before deciding whether to save the current
-  session settings.
 * SDL debugger trace records produced during a frame are collected into batches
   and written by a persistent worker. A batch is submitted at 256 KiB or at
   frame completion. One write can be outstanding, so a slow disk applies
@@ -172,16 +168,6 @@ Existing asynchronous boundaries are narrower:
   between frames. Clear, stop and trace writes outside a frame wait for earlier
   batches with SDL pumping native events. The UI polls for write failures and
   hands failed trace shutdown back to the frame worker.
-* The legacy WinMM completion callback updates the atomic free-block count.
-  Sample production runs during the worker-owned frame; control operations run
-  on the main thread between frames. Slow audio playback can delay the handoff
-  and therefore message processing.
-
-The legacy frontend prepares input and completes status and error updates on the
-UI thread. Tape callbacks detach immediately on end-of-file or I/O failure, but
-defer control updates and errors until the frame returns. Debugger history,
-trace output, printer and audio callbacks are used only during the frame; the UI
-does not access their state until after the handoff.
 
 Allowing the SDL UI to access the emulator while a frame is running requires a single owner for the entire live board,
 an ordered command queue for input, debugger and media operations, and immutable

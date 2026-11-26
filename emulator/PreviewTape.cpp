@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PreviewTape.h"
+#include "util/PathIdentity.h"
 #include "FrameWorker.h"
 #include "emubase/Board.h"
 #include <chrono>
@@ -423,9 +424,7 @@ void preview_tape::Session::Write(void* context, int value, unsigned samples)
 bool preview_tape::Session::Conflicts(const std::filesystem::path& path) const
 {
     if (!Inserted() || path.empty()) return false;
-    if (path_ == path) return true;
-    std::error_code error;
-    return std::filesystem::equivalent(path_, path, error) && !error;
+    return path_identity::SameFile(path_, path);
 }
 
 bool preview_tape::Session::TakeError()
