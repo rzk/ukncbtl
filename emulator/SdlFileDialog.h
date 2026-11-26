@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #pragma once
 
+#include "BackgroundJob.h"
 #include "MediaSlots.h"
 #include "PreviewDebugger.h"
 #include <SDL3/SDL_video.h>
@@ -30,6 +31,7 @@ struct Result
 class State
 {
 public:
+    explicit State(background::Notify notify = {}) : notify_(std::move(notify)) {}
     [[nodiscard]] bool Begin();
     void Complete(Result result);
     [[nodiscard]] std::optional<Result> Take();
@@ -38,6 +40,7 @@ private:
     mutable std::mutex mutex_;
     bool pending_ = false;
     std::optional<Result> result_;
+    const background::Notify notify_;
 };
 
 // A desktop drop may contain several files. Accept exactly one, without

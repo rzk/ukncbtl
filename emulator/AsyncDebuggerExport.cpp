@@ -2,7 +2,6 @@
 #include "AsyncDebuggerExport.h"
 #include "DisplayListDump.h"
 #include "MemoryDump.h"
-#include <chrono>
 #include <fstream>
 #include <type_traits>
 #include <utility>
@@ -13,7 +12,7 @@ bool debugger_export::AsyncSave::Start(std::filesystem::path path, Data data)
     try
     {
         path_ = std::move(path);
-        result_ = std::async(std::launch::async, [path = path_, data = std::move(data)] {
+        result_.Start([path = path_, data = std::move(data)] {
             try
             {
                 return std::visit([&](const auto& value) -> bool {
@@ -43,7 +42,7 @@ bool debugger_export::AsyncSave::Start(std::filesystem::path path, Data data)
 
 std::optional<bool> debugger_export::AsyncSave::Poll()
 {
-    if (!Pending() || result_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    if (!result_.Ready())
         return std::nullopt;
     return Finish();
 }
@@ -51,7 +50,7 @@ std::optional<bool> debugger_export::AsyncSave::Poll()
 std::optional<bool> debugger_export::AsyncSave::Finish()
 {
     if (!Pending()) return std::nullopt;
-    const bool success = result_.get();
+    const bool success = result_.Take();
     path_.clear();
     return success;
 }

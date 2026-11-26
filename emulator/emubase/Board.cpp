@@ -238,6 +238,7 @@ void CMotherboard::SetFloppyTraceCallback(FLOPPYTRACECALLBACK callback, void* co
 }
 
 bool CMotherboard::FlushFloppyImage() { return m_pFloppyCtl->Flush(); }
+void CMotherboard::DrainFloppyReadAhead() { m_pFloppyCtl->DrainReadAhead(); }
 std::optional<FloppyFailure> CMotherboard::TakeFloppyFailure() { return m_pFloppyCtl->TakeFailure(); }
 
 void CMotherboard::SetInstructionCallback(INSTRUCTIONCALLBACK callback)

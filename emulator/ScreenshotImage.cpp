@@ -16,7 +16,7 @@ std::optional<screenshot_image::Image> screenshot_image::Prepare(std::span<const
     return image;
 }
 
-bool screenshot_image::CopyTopDown(const Image& image, std::span<std::byte> output)
+bool screenshot_image::CopyTopDown(const Image& image, std::span<std::byte> output, std::size_t pitch)
 {
     if (image.width <= 0 || image.height <= 0) return false;
     const auto count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height);
@@ -25,10 +25,13 @@ bool screenshot_image::CopyTopDown(const Image& image, std::span<std::byte> outp
 
     const auto width = static_cast<std::size_t>(image.width);
     const auto stride = width * sizeof(std::uint32_t);
+    if (pitch == 0) pitch = stride;
+    if (pitch < stride || static_cast<std::size_t>(image.height - 1) > (output.size() - stride) / pitch)
+        return false;
     for (int row = 0; row < image.height; ++row)
     {
         const auto source = static_cast<std::size_t>(image.height - row - 1) * width;
-        std::memcpy(output.data() + static_cast<std::size_t>(row) * stride,
+        std::memcpy(output.data() + static_cast<std::size_t>(row) * pitch,
             image.pixels.data() + source, stride);
     }
     return true;

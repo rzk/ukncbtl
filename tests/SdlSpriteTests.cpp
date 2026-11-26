@@ -29,4 +29,11 @@ TEST(SdlSprite, UploadsOpaquePixelsAndReusesTexture)
     EXPECT_EQ(r, 0x12); EXPECT_EQ(g, 0x34); EXPECT_EQ(b, 0x56);
     ASSERT_TRUE(texture.Update(pixels));
     EXPECT_EQ(texture.Get(), initial);
+    texture.Invalidate();
+    EXPECT_EQ(texture.Get(), nullptr);
+    ASSERT_TRUE(texture.Update(pixels));
+    ASSERT_TRUE(SDL_RenderTexture(renderer.get(), texture.Get(), nullptr, nullptr));
+    ASSERT_TRUE(SDL_RenderPresent(renderer.get()));
+    ASSERT_TRUE(SDL_ReadSurfacePixel(surface.get(), 0, 0, &r, &g, &b, &a));
+    EXPECT_EQ(r, 0xab); EXPECT_EQ(g, 0xcd); EXPECT_EQ(b, 0xef); EXPECT_EQ(a, 255);
 }

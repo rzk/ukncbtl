@@ -38,11 +38,11 @@ std::expected<screenshot_clipboard::Prepared, screenshot_clipboard::Error> Encod
 
 bool screenshot_clipboard::AsyncCopy::Start(const screenshot_image::Image& image)
 {
-    if (Pending()) return false;
+    if (ImagePending()) return false;
     try
     {
-        result_ = std::async(std::launch::async, [image] { return EncodeImage(image); });
-        superseded_ = false;
+        image_.result.Start([image] { return EncodeImage(image); });
+        image_.order = ++nextOrder_;
         return true;
     }
     catch (...) { return false; }
@@ -50,43 +50,79 @@ bool screenshot_clipboard::AsyncCopy::Start(const screenshot_image::Image& image
 
 bool screenshot_clipboard::AsyncCopy::StartScaled(const std::vector<std::uint32_t>& pixels, int mode)
 {
-    if (Pending()) return false;
+    if (ImagePending()) return false;
     try
     {
-        result_ = std::async(std::launch::async, [pixels, mode] {
+        image_.result.Start([pixels, mode] {
             const auto image = screenshot_image::Prepare(pixels, mode);
             if (!image) return std::expected<Prepared, Error>(std::unexpected(Error::invalid_image));
             return EncodeImage(*image);
         });
-        superseded_ = false;
+        image_.order = ++nextOrder_;
         return true;
     }
     catch (...) { return false; }
 }
 
-std::optional<screenshot_clipboard::AsyncCopy::Outcome> screenshot_clipboard::AsyncCopy::Poll()
+bool screenshot_clipboard::AsyncCopy::StartText(std::move_only_function<std::optional<std::string>()> prepare)
 {
-    if (!Pending() || result_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return std::nullopt;
-    return Finish();
+    if (TextPending() || !prepare) return false;
+    try
+    {
+        text_.result.Start(std::move(prepare));
+        text_.order = ++nextOrder_;
+        return true;
+    }
+    catch (...) { return false; }
+}
+
+std::optional<screenshot_clipboard::AsyncCopy::Kind> screenshot_clipboard::AsyncCopy::NewestPending() const
+{
+    if (TextPending() && (!ImagePending() || text_.order > image_.order)) return Kind::text;
+    if (ImagePending()) return Kind::image;
+    return std::nullopt;
+}
+
+std::optional<screenshot_clipboard::AsyncCopy::Completion> screenshot_clipboard::AsyncCopy::Poll()
+{
+    const auto kind = NewestPending();
+    if (!kind) return std::nullopt;
+    if (!(*kind == Kind::image ? image_.result.Ready() : text_.result.Ready())) return std::nullopt;
+    return Finish(*kind);
 }
 
 bool screenshot_clipboard::AsyncCopy::SetText(const char* text)
 {
     if (!SDL_SetClipboardText(text)) return false;
-    if (Pending()) superseded_ = true;
+    lastWritten_ = ++nextOrder_;
     return true;
 }
 
-std::optional<screenshot_clipboard::AsyncCopy::Outcome> screenshot_clipboard::AsyncCopy::Finish()
+std::optional<screenshot_clipboard::AsyncCopy::Completion> screenshot_clipboard::AsyncCopy::Finish()
 {
-    if (!Pending()) return std::nullopt;
-    const bool superseded = std::exchange(superseded_, false);
+    if (const auto kind = NewestPending()) return Finish(*kind);
+    return std::nullopt;
+}
+
+screenshot_clipboard::AsyncCopy::Completion screenshot_clipboard::AsyncCopy::Finish(Kind kind)
+{
+    const auto order = kind == Kind::image ? image_.order : text_.order;
+    const bool superseded = order < lastWritten_;
+    bool written = false;
     try
     {
-        auto encoded = result_.get();
-        if (superseded) return Outcome::superseded;
-        if (encoded && SetPrepared(std::move(*encoded))) return Outcome::copied;
+        if (kind == Kind::image)
+        {
+            auto encoded = image_.result.Take();
+            written = !superseded && encoded && SetPrepared(std::move(*encoded));
+        }
+        else
+        {
+            auto text = text_.result.Take();
+            written = !superseded && text && SDL_SetClipboardText(text->c_str());
+        }
     }
     catch (...) {}
-    return superseded ? Outcome::superseded : Outcome::failed;
+    if (written) lastWritten_ = order;
+    return {kind, written ? Outcome::copied : superseded ? Outcome::superseded : Outcome::failed};
 }

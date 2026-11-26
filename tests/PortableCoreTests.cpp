@@ -6,12 +6,16 @@
 #include "InstructionHistory.h"
 #include "Snapshot.h"
 #include "VideoDecoder.h"
+#include "util/ScreenScale.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <stdexcept>
+#include <thread>
 #include <vector>
 
 // A frontend supplies the logging sink; this test runs the core headlessly.
@@ -50,13 +54,14 @@ TEST_F(PortableCore, VideoSnapshotMatchesBoardAndSurvivesConcurrentFrame)
     for (unsigned i = 0; i < palette.size(); ++i) palette[i] = i * 0x10101;
     std::vector<uint32_t> expected(video::Width * video::Height), actual(expected.size());
     ASSERT_TRUE(video::RenderRgb(board, expected, palette));
+    video::ParallelDecoder videoWorker;
     FrameWorker worker([&] {
         for (unsigned address = 0; address < 65536; ++address)
             board.SetRAMByte(0, static_cast<uint16_t>(address), 0xff);
         return board.SystemFrame();
     });
     ASSERT_TRUE(worker.Start());
-    ASSERT_TRUE(video::RenderRgb(snapshot, actual, palette));
+    ASSERT_TRUE(videoWorker.Render(snapshot, actual, palette));
     ASSERT_TRUE(worker.Wait());
     EXPECT_EQ(actual, expected);
 }
@@ -75,7 +80,15 @@ TEST_F(PortableCore, VideoSnapshotPreservesTagsCursorAndAllScales)
     board.SetRAMWord(0, 0x1014, 0x4000);
     board.SetRAMWord(0, 0x1016, 0x1019); // Enable cursor and loop over short tags.
     board.SetRAMWord(0, 0x1018, 0x4000);
-    board.SetRAMWord(0, 0x101a, 0x1018);
+    board.SetRAMWord(0, 0x101a, 0x2000);
+    for (int i = 0; i < video::TotalLines; ++i)
+    {
+        const auto address = static_cast<uint16_t>(0x2000 + i * 4);
+        board.SetRAMWord(0, address, i % 2 ? 0x4000 : 0x4100);
+        // Toggle the cursor on the first row decoded by the worker.
+        const auto toggle = i == video::HiddenLines + video::Height / 2 - 4 ? 1 : 0;
+        board.SetRAMWord(0, address + 2, static_cast<uint16_t>((address + 4) | toggle));
+    }
     for (unsigned i = 0; i < 80; ++i)
     {
         board.SetRAMByte(0, static_cast<uint16_t>(0x4000 + i), 0xaa);
@@ -84,23 +97,139 @@ TEST_F(PortableCore, VideoSnapshotPreservesTagsCursorAndAllScales)
     }
     std::array<uint32_t, 128> palette{};
     for (unsigned i = 0; i < palette.size(); ++i) palette[i] = i + 1;
-    std::vector<uint32_t> expected(video::Width * video::Height), actual(expected.size());
+    std::vector<uint32_t> expected(video::Width * video::Height), actual(expected.size() + 1, 0xdeadbeef);
     video::MemorySnapshot snapshot;
+    video::ParallelDecoder videoWorker;
     for (int shift = 0; shift < 4; ++shift)
     {
         board.SetRAMWord(0, 0x1012, static_cast<uint16_t>((shift << 4) | 7));
         video::CaptureMemory(board, snapshot);
         ASSERT_TRUE(video::RenderRgb(board, expected, palette));
-        ASSERT_TRUE(video::RenderRgb(snapshot, actual, palette));
-        EXPECT_EQ(actual, expected) << "scale " << shift;
+        ASSERT_TRUE(videoWorker.Render(snapshot, actual, palette));
+        EXPECT_TRUE(std::ranges::equal(std::span{actual}.first(expected.size()), expected)) << "scale " << shift;
+        EXPECT_EQ(actual.back(), 0xdeadbeef);
         EXPECT_EQ(actual.front(), palette[15]);
+        EXPECT_EQ(actual[video::Width * (video::Height / 2 - 1)], palette[15]);
+        EXPECT_EQ(actual[video::Width * (video::Height / 2)], palette[0]);
     }
     board.SetRAMWord(0, 0xfffe, 0x1234);
     video::CaptureMemory(board, snapshot);
     EXPECT_EQ(snapshot.GetRAMWord(0, 0xffff), board.GetRAMWord(0, 0xffff));
     std::ranges::fill(actual, 0xdeadbeef);
-    EXPECT_FALSE(video::RenderRgb(snapshot, std::span{actual}.first(actual.size() - 1), palette));
+    EXPECT_FALSE(videoWorker.Render(snapshot, std::span{actual}.first(expected.size() - 1), palette));
+    EXPECT_FALSE(videoWorker.Render(snapshot, actual, std::span{palette}.first(palette.size() - 1)));
     EXPECT_TRUE(std::ranges::all_of(actual, [](uint32_t value) { return value == 0xdeadbeef; }));
+}
+
+TEST_F(PortableCore, VideoSnapshotRefreshDetectsChangesAcrossAllRamPlanes)
+{
+    CMotherboard board;
+    video::MemorySnapshot snapshot;
+    EXPECT_FALSE(video::UpdateMemorySnapshot(board, snapshot));
+    for (int plane = 0; plane < 3; ++plane)
+    {
+        board.SetRAMByte(plane, 0, 0xa1);
+        board.SetRAMByte(plane, 0xffff, 0xb2);
+        EXPECT_TRUE(video::UpdateMemorySnapshot(board, snapshot)) << "RAM plane " << plane;
+        EXPECT_EQ(snapshot.GetRAMByte(plane, 0), 0xa1);
+        EXPECT_EQ(snapshot.GetRAMByte(plane, 0xffff), 0xb2);
+        EXPECT_FALSE(video::UpdateMemorySnapshot(board, snapshot));
+    }
+    video::MemorySnapshot fresh;
+    video::CaptureMemory(board, fresh);
+    EXPECT_EQ(snapshot.planes, fresh.planes);
+}
+
+TEST_F(PortableCore, ParallelVideoPreparationMatchesSerialInEveryDisplayMode)
+{
+    CMotherboard board;
+    board.Reset();
+    board.SetRAMWord(0, 0000270, 0x8000);
+    board.SetRAMWord(0, 0000272, 0x7006);
+    board.SetRAMWord(0, 0x7000, 0x3210);
+    board.SetRAMWord(0, 0x7002, 0x7654);
+    board.SetRAMWord(0, 0x7004, 0x8050);
+    board.SetRAMWord(0, 0x7006, 0x7008);
+    board.SetRAMWord(0, 0x7008, 0x8000);
+    board.SetRAMWord(0, 0x700a, 0x7004);
+    for (int plane = 0; plane < 3; ++plane)
+        for (unsigned i = 0; i < 160; ++i)
+            board.SetRAMByte(plane, static_cast<uint16_t>(0x8000 + i), static_cast<uint8_t>(i * (plane + 3)));
+    std::array<uint32_t, 128> palette{};
+    for (unsigned i = 0; i < palette.size(); ++i) palette[i] = i * 0x010307;
+    video::MemorySnapshot snapshot;
+    video::CaptureMemory(board, snapshot);
+    video::ParallelDecoder parallel;
+    video::ParallelDecoder fallback(false);
+    const auto owner = std::this_thread::get_id();
+    std::vector<uint32_t> expectedRaw(video::Width * video::Height), raw(expectedRaw.size());
+    ASSERT_TRUE(video::RenderRgb(snapshot, expectedRaw, palette));
+    for (int mode = -1; mode < static_cast<int>(screen_scale::Modes().size()); ++mode)
+    {
+        const auto& size = screen_scale::GetMode(mode);
+        std::vector<uint32_t> expected(static_cast<std::size_t>(size.width) * size.height);
+        std::vector<uint32_t> actual(expected.size() + 1, 0xdeadbeef);
+        for (const auto order : {screen_scale::RowOrder::bottomUp, screen_scale::RowOrder::topDown})
+        {
+            ASSERT_TRUE(screen_scale::Apply(mode, expectedRaw, expected, order));
+            for (auto& decoder : {std::ref(parallel), std::ref(fallback)})
+            {
+                int uiCalls = 0;
+                const auto prepareUi = [&] {
+                    EXPECT_EQ(std::this_thread::get_id(), owner);
+                    ++uiCalls;
+                };
+                std::ranges::fill(raw, 0xdeadbeef);
+                std::ranges::fill(actual, 0xdeadbeef);
+                EXPECT_FALSE(decoder.get().RenderScaled(snapshot, raw, palette, mode,
+                    std::span{actual}.first(expected.size() - 1), prepareUi, order));
+                EXPECT_EQ(uiCalls, 0);
+                EXPECT_EQ(raw.front(), 0xdeadbeef);
+                EXPECT_EQ(actual.front(), 0xdeadbeef);
+                ASSERT_TRUE(decoder.get().RenderScaled(snapshot, raw, palette, mode, actual, prepareUi, order));
+                EXPECT_EQ(uiCalls, 1);
+                EXPECT_EQ(raw, expectedRaw);
+                EXPECT_TRUE(std::ranges::equal(std::span{actual}.first(expected.size()), expected)) << "mode " << mode;
+                EXPECT_EQ(actual.back(), 0xdeadbeef);
+            }
+        }
+    }
+}
+
+TEST_F(PortableCore, VideoDecoderCanRunAgainAfterGuiPreparationThrows)
+{
+    const video::MemorySnapshot snapshot;
+    const std::array<uint32_t, 128> palette{};
+    std::vector<uint32_t> raw(video::Width * video::Height), scaled(raw.size());
+    video::ParallelDecoder decoder;
+    EXPECT_THROW((void)decoder.RenderScaled(snapshot, raw, palette, 0, scaled,
+        [] { throw std::runtime_error("GUI preparation"); }), std::runtime_error);
+    EXPECT_TRUE(decoder.RenderScaled(snapshot, raw, palette, 0, scaled));
+}
+
+TEST_F(PortableCore, VideoDecoderCollectsItsBandWhenTheHostWaitReturnsOrThrows)
+{
+    const video::MemorySnapshot snapshot;
+    const std::array<uint32_t, 128> palette{};
+    std::vector<uint32_t> raw(video::Width * video::Height), scaled(raw.size());
+    std::vector<uint32_t> expected(raw.size());
+    ASSERT_TRUE(video::RenderRgb(snapshot, expected, palette));
+    const auto owner = std::this_thread::get_id();
+    int waits = 0;
+    video::ParallelDecoder decoder(true, {
+        .waitUntilReady = [&](FrameWorker&) {
+            EXPECT_EQ(std::this_thread::get_id(), owner);
+            if (++waits == 1) throw std::runtime_error("Host wait");
+        },
+    });
+    constexpr auto order = screen_scale::RowOrder::topDown;
+    EXPECT_THROW((void)decoder.RenderScaled(snapshot, raw, palette, 0, scaled, {}, order), std::runtime_error);
+    std::ranges::fill(raw, 0xdeadbeef);
+    std::ranges::fill(scaled, 0xdeadbeef);
+    ASSERT_TRUE(decoder.RenderScaled(snapshot, raw, palette, 0, scaled, {}, order));
+    EXPECT_EQ(waits, 2);
+    EXPECT_EQ(raw, expected);
+    EXPECT_EQ(scaled, expected);
 }
 
 TEST_F(PortableCore, BoardDecoderAndSnapshotRoundTrip)

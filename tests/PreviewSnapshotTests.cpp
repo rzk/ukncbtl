@@ -9,6 +9,8 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 void DebugLog(const wchar_t*) {}
 
@@ -105,12 +107,18 @@ TEST_F(PreviewSnapshotTest, AsyncSaveOwnsCapturedStateWhileWorkerAdvances)
     board->GetCPU()->SetReg(0, 012345);
     preview_snapshot::Session session(*board);
     preview_snapshot::AsyncSave save;
-    ASSERT_TRUE(save.Start(path, session.Capture()));
+    std::vector<std::uint8_t> image;
+    FrameWorker worker([&] { return board->SystemFrame(); });
+    ASSERT_TRUE(worker.Start([&] {
+        image = session.Capture();
+        return true;
+    }));
+    ASSERT_TRUE(worker.Wait());
+    ASSERT_TRUE(save.Start(path, std::move(image)));
     EXPECT_TRUE(save.Pending());
     EXPECT_EQ(save.Path(), path);
     EXPECT_FALSE(save.Start(path, session.Capture()));
     board->GetCPU()->SetReg(0, 0777);
-    FrameWorker worker([&] { return board->SystemFrame(); });
     ASSERT_TRUE(worker.Start());
     ASSERT_TRUE(worker.Wait());
     ASSERT_EQ(save.Finish(), std::optional<bool>(true));
@@ -169,10 +177,11 @@ TEST_F(PreviewSnapshotTest, AsyncLoadReadsOwnedImageWhileFrameWorkerRuns)
     EXPECT_FALSE(load.Pending());
     board->GetCPU()->SetReg(0, 0777);
     ASSERT_TRUE(session.Save(path)); // The collected bytes do not depend on the file anymore.
-    int stops = 0;
-    ASSERT_TRUE(session.Restore(*loaded->image, [&] { ++stops; }));
-    EXPECT_EQ(stops, 1);
+    ASSERT_TRUE(worker.Start([&, image = std::move(*loaded->image)] { return session.Restore(image, [] {}); }));
+    ASSERT_TRUE(worker.Wait());
     EXPECT_EQ(board->GetCPU()->GetReg(0), 012345);
+    ASSERT_TRUE(worker.Start());
+    ASSERT_TRUE(worker.Wait());
 }
 
 TEST_F(PreviewSnapshotTest, AsyncLoadRejectsInvalidImageAndCanRetry)

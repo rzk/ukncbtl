@@ -22,6 +22,15 @@ constexpr std::array<uint8_t, 4> wave{'W', 'A', 'V', 'E'};
 constexpr std::array<uint8_t, 4> formatId{'f', 'm', 't', ' '};
 constexpr std::array<uint8_t, 4> dataId{'d', 'a', 't', 'a'};
 constexpr uint16_t pcmFormat = 1;
+
+template<int Bits>
+uint32_t DecodeSample(std::span<const uint8_t> frame)
+{
+    if constexpr (Bits == 8) return static_cast<uint32_t>(frame[0]) << 24;
+    else if constexpr (Bits == 16)
+        return (static_cast<uint32_t>(little_endian::read<uint16_t>(frame.first<2>())) << 16) ^ 0x80000000u;
+    else return little_endian::read<uint32_t>(frame.first<4>()) ^ 0x80000000u;
+}
 }
 
 WavPcmFile::WavPcmFile(File file, int sampleFrequency, int bitsPerSample, int blockAlign,
@@ -183,11 +192,49 @@ std::expected<uint32_t, WavError> WavPcmFile::ReadOne()
     ++position_;
     switch (bitsPerSample_)
     {
-    case 8: return static_cast<uint32_t>(data[0]) << 24;
-    case 16: return (static_cast<uint32_t>(little_endian::read<uint16_t>(std::span{data}.first<2>())) << 16) ^ 0x80000000u;
-    case 32: return little_endian::read<uint32_t>(std::span{data}.first<4>()) ^ 0x80000000u;
+    case 8: return DecodeSample<8>(data);
+    case 16: return DecodeSample<16>(data);
+    case 32: return DecodeSample<32>(data);
     default: return std::unexpected(WavError::invalid_format);
     }
+}
+
+WavReadResult WavPcmFile::ReadSamples(std::span<uint32_t> output)
+{
+    if (!file_ || writing_) return {0, WavError::io_error};
+    if (output.empty()) return {};
+    if (position_ >= Length()) return {0, WavError::end_of_data};
+
+    std::array<uint8_t, 4096> bytes;
+    const auto stride = static_cast<std::size_t>(blockAlign_);
+    const auto target = (std::min)(output.size(), static_cast<std::size_t>(Length() - position_));
+    WavReadResult result;
+    while (result.samples < target)
+    {
+        const auto count = (std::min)(target - result.samples, bytes.size() / stride);
+        file_->read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(count * stride));
+        const auto complete = static_cast<std::size_t>(file_->gcount()) / stride;
+        auto samples = output.subspan(result.samples, complete);
+        // Convert the first channel and skip the rest of each PCM frame.
+        const auto convert = [&](auto decode) {
+            for (std::size_t i = 0; i < samples.size(); ++i)
+                samples[i] = decode(std::span<const uint8_t>{bytes}.subspan(i * stride));
+        };
+        switch (bitsPerSample_)
+        {
+        case 8: convert(DecodeSample<8>); break;
+        case 16: convert(DecodeSample<16>); break;
+        case 32: convert(DecodeSample<32>); break;
+        }
+        result.samples += complete;
+        position_ += static_cast<uint32_t>(complete);
+        if (!*file_)
+        {
+            result.error = WavError::io_error;
+            break;
+        }
+    }
+    return result;
 }
 
 std::expected<void, WavError> WavPcmFile::WriteOne(uint32_t value)

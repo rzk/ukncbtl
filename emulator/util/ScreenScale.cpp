@@ -24,83 +24,90 @@ constexpr uint32_t AverageRgb(uint32_t a, uint32_t b)
     return ((a & 0xfefefeffu) + (b & 0xfefefeffu)) >> 1;
 }
 
-static void PrepareScreenCopy(std::span<const uint32_t> source, std::span<uint32_t> destination)
+struct OutputRows
 {
-    for (int line = 0; line < video::Height; line++)
+    struct InputBand { int begin, end, step; };
+
+    uint32_t* bottom;
+    std::ptrdiff_t stride;
+
+    uint32_t* operator[](int bottomRow) const { return bottom + bottomRow * stride; }
+
+    // Keep writes moving forward through the destination in either layout.
+    InputBand Traversal(int first, int end, int group) const
+    {
+        return stride > 0 ? InputBand{first, end, group} : InputBand{end - group, first - group, -group};
+    }
+};
+
+static void PrepareScreenCopy(std::span<const uint32_t> source, OutputRows destination, int first, int end)
+{
+    if (destination.stride < 0)
+    {
+        const int upperRow = video::Height - end;
+        std::copy_n(source.data() + upperRow * video::Width, (end - first) * video::Width, destination[end - 1]);
+        return;
+    }
+    for (int line = first; line < end; ++line)
     {
         const uint32_t* pSrc = source.data() + video::Width * (video::Height - 1 - line);
-        uint32_t* pDest = destination.data() + video::Width * line;
-        std::copy_n(pSrc, video::Width, pDest);
+        std::copy_n(pSrc, video::Width, destination[line]);
     }
 }
 
 // Upscale screen from height 288 to 432
-static void PrepareScreenUpscale(std::span<const uint32_t> source, std::span<uint32_t> destination)
+static void PrepareScreenUpscale(std::span<const uint32_t> source, OutputRows destination, int first, int end)
 {
-    int ukncline = 0;
-    for (int line = 0; line < 432; line++)
+    const auto [start, limit, step] = destination.Traversal(first, end, 2);
+    for (int line = start; line != limit; line += step)
     {
-        uint32_t* pdest = destination.data() + line * video::Width;
-        if (line % 3 == 1)
-        {
-            const uint32_t* psrc1 = source.data() + ((video::Height - 1 - ukncline) + 1) * video::Width;
-            const uint32_t* psrc2 = source.data() + ((video::Height - 1 - ukncline) + 0) * video::Width;
-            uint32_t* pdst1 = pdest;
-            for (int i = 0; i < video::Width; i++)
-            {
-                *pdst1 = AverageRgb(*psrc1, *psrc2);
-                psrc1++;  psrc2++;  pdst1++;
-            }
-        }
-        else
-        {
-            const uint32_t* psrc = source.data() + (video::Height - 1 - ukncline) * video::Width;
-            std::copy_n(psrc, video::Width, pdest);
-            ukncline++;
-        }
+        const auto lower = source.subspan((video::Height - 1 - line) * video::Width, video::Width);
+        const auto upper = source.subspan((video::Height - 2 - line) * video::Width, video::Width);
+        const int row = line / 2 * 3;
+        std::ranges::copy(lower, destination[row]);
+        std::ranges::transform(lower, upper, destination[row + 1], AverageRgb);
+        std::ranges::copy(upper, destination[row + 2]);
     }
 }
 
 // Upscale screen to twice height with "interlaced" effect
-static void PrepareScreenUpscale2(std::span<const uint32_t> source, std::span<uint32_t> destination)
+static void PrepareScreenUpscale2(std::span<const uint32_t> source, OutputRows destination, int first, int end)
 {
-    for (int ukncline = 0; ukncline < video::Height; ukncline++)
+    const auto [start, limit, step] = destination.Traversal(first, end, 1);
+    for (int ukncline = start; ukncline != limit; ukncline += step)
     {
         const uint32_t* psrc = source.data() + (video::Height - 1 - ukncline) * video::Width;
-        uint32_t* pdest = destination.data() + (ukncline * 2) * video::Width;
-        std::copy_n(psrc, video::Width, pdest);
-
-        pdest += video::Width;
-        std::fill_n(pdest, video::Width, 0);
+        std::copy_n(psrc, video::Width, destination[ukncline * 2]);
+        std::fill_n(destination[ukncline * 2 + 1], video::Width, 0);
     }
 }
 
 // Upscale screen to twice height
-static void PrepareScreenUpscale2d(std::span<const uint32_t> source, std::span<uint32_t> destination)
+static void PrepareScreenUpscale2d(std::span<const uint32_t> source, OutputRows destination, int first, int end)
 {
-    for (int ukncline = 0; ukncline < video::Height; ukncline++)
+    const auto [start, limit, step] = destination.Traversal(first, end, 1);
+    for (int ukncline = start; ukncline != limit; ukncline += step)
     {
         const uint32_t* psrc = source.data() + (video::Height - 1 - ukncline) * video::Width;
-        uint32_t* pdest = destination.data() + (ukncline * 2) * video::Width;
-        std::copy_n(psrc, video::Width, pdest);
-
-        pdest += video::Width;
-        std::copy_n(psrc, video::Width, pdest);
+        std::copy_n(psrc, video::Width, destination[ukncline * 2]);
+        std::copy_n(psrc, video::Width, destination[ukncline * 2 + 1]);
     }
 }
 
 // Upscale screen width 640->960, height 288->720
-static void PrepareScreenUpscale4(std::span<const uint32_t> source, std::span<uint32_t> destination)
+static void PrepareScreenUpscale4(std::span<const uint32_t> source, OutputRows destination, int first, int end)
 {
-    for (int ukncline = 0; ukncline < video::Height; ukncline += 2)
+    const auto [start, limit, step] = destination.Traversal(first, end, 2);
+    for (int ukncline = start; ukncline != limit; ukncline += step)
     {
         const uint32_t* psrc1 = source.data() + (video::Height - 1 - ukncline) * video::Width;
         const uint32_t* psrc2 = psrc1 - video::Width;
-        uint32_t* pdest0 = destination.data() + ukncline / 2 * 5 * 960;
-        uint32_t* pdest1 = pdest0 + 960;
-        uint32_t* pdest2 = pdest1 + 960;
-        uint32_t* pdest3 = pdest2 + 960;
-        uint32_t* pdest4 = pdest3 + 960;
+        const int row = ukncline / 2 * 5;
+        uint32_t* pdest0 = destination[row];
+        uint32_t* pdest1 = destination[row + 1];
+        uint32_t* pdest2 = destination[row + 2];
+        uint32_t* pdest3 = destination[row + 3];
+        uint32_t* pdest4 = destination[row + 4];
         for (int i = 0; i < video::Width / 2; i++)
         {
             uint32_t c1a = *(psrc1++);  uint32_t c1b = *(psrc1++);
@@ -120,12 +127,13 @@ static void PrepareScreenUpscale4(std::span<const uint32_t> source, std::span<ui
 }
 
 // Upscale screen width 640->960, height 288->576 with "interlaced" effect
-static void PrepareScreenUpscale3(std::span<const uint32_t> source, std::span<uint32_t> destination)
+static void PrepareScreenUpscale3(std::span<const uint32_t> source, OutputRows destination, int first, int end)
 {
-    for (int ukncline = 0; ukncline < video::Height; ++ukncline)
+    const auto [start, limit, step] = destination.Traversal(first, end, 1);
+    for (int ukncline = start; ukncline != limit; ukncline += step)
     {
         const uint32_t* psrc = source.data() + (video::Height - 1 - ukncline) * video::Width;
-        uint32_t* pdest = destination.data() + (ukncline * 2) * 960;
+        uint32_t* pdest = destination[ukncline * 2];
         for (int i = 0; i < video::Width / 2; ++i)
         {
             const uint32_t c1 = *psrc++;
@@ -134,18 +142,19 @@ static void PrepareScreenUpscale3(std::span<const uint32_t> source, std::span<ui
             *pdest++ = AverageRgb(c1, c2);
             *pdest++ = c2;
         }
-        std::fill_n(pdest, 960, 0);
+        std::fill_n(destination[ukncline * 2 + 1], 960, 0);
     }
 }
 
 // Upscale screen width 640->1120 (x1.75), height 288->864 (x3) with "interlaced" effect
-static void PrepareScreenUpscale175(std::span<const uint32_t> source, std::span<uint32_t> destination)
+static void PrepareScreenUpscale175(std::span<const uint32_t> source, OutputRows destination, int first, int end)
 {
-    for (int ukncline = 0; ukncline < video::Height; ukncline++)
+    const auto [start, limit, step] = destination.Traversal(first, end, 1);
+    for (int ukncline = start; ukncline != limit; ukncline += step)
     {
         const uint32_t* psrc = source.data() + (video::Height - 1 - ukncline) * video::Width;
-        uint32_t* pdest1 = destination.data() + ukncline * 3 * 1120;
-        uint32_t* pdest2 = pdest1 + 1120;
+        uint32_t* pdest1 = destination[ukncline * 3];
+        uint32_t* pdest2 = destination[ukncline * 3 + 1];
         for (int i = 0; i < video::Width / 4; i++)
         {
             uint32_t c1 = *(psrc++);
@@ -161,18 +170,19 @@ static void PrepareScreenUpscale175(std::span<const uint32_t> source, std::span<
             *(pdest1++) = *(pdest2++) = AverageRgb(c3, c4);
             *(pdest1++) = *(pdest2++) = c4;
         }
-        std::fill_n(pdest2, 1120, 0);
+        std::fill_n(destination[ukncline * 3 + 2], 1120, 0);
     }
 }
 
 // Upscale screen width 640->1280, height 288->864 with "interlaced" effect
-static void PrepareScreenUpscale5(std::span<const uint32_t> source, std::span<uint32_t> destination)
+static void PrepareScreenUpscale5(std::span<const uint32_t> source, OutputRows destination, int first, int end)
 {
-    for (int ukncline = 0; ukncline < video::Height; ukncline++)
+    const auto [start, limit, step] = destination.Traversal(first, end, 1);
+    for (int ukncline = start; ukncline != limit; ukncline += step)
     {
         const uint32_t* psrc = source.data() + (video::Height - 1 - ukncline) * video::Width;
-        uint32_t* pdest = destination.data() + ukncline * 3 * 1280;
-        uint32_t* pdest2 = pdest + 1280;
+        uint32_t* pdest = destination[ukncline * 3];
+        uint32_t* pdest2 = destination[ukncline * 3 + 1];
         for (int i = 0; i < video::Width; ++i)
         {
             const uint32_t color = *psrc++;
@@ -181,7 +191,7 @@ static void PrepareScreenUpscale5(std::span<const uint32_t> source, std::span<ui
             *pdest2++ = color;
             *pdest2++ = color;
         }
-        std::fill_n(pdest2, 1280, 0);
+        std::fill_n(destination[ukncline * 3 + 2], 1280, 0);
     }
 }
 
@@ -195,26 +205,37 @@ std::size_t ModeIndex(int mode)
 std::span<const Mode> Modes() { return modes; }
 const Mode& GetMode(int mode) { return modes[ModeIndex(mode)]; }
 
-bool Apply(int mode, std::span<const uint32_t> source, std::span<uint32_t> destination)
+bool ApplyBand(int mode, std::span<const uint32_t> source, std::span<uint32_t> destination,
+    int first, int end, RowOrder order)
 {
     UKNC_PROFILE_SCOPE("Screen scale");
     const std::size_t index = ModeIndex(mode);
     const auto& selected = modes[index];
-    if (source.size() < static_cast<std::size_t>(video::Width) * video::Height ||
+    if (first < 0 || end < first || end > video::Height || first % 2 != 0 || end % 2 != 0 ||
+        source.size() < static_cast<std::size_t>(video::Width) * video::Height ||
         destination.size() < static_cast<std::size_t>(selected.width) * selected.height)
         return false;
+    if (first == end) return true;
 
+    const OutputRows rows = order == RowOrder::topDown
+        ? OutputRows{destination.data() + (selected.height - 1) * selected.width, -selected.width}
+        : OutputRows{destination.data(), selected.width};
     switch (index)
     {
-    case 0: PrepareScreenCopy(source, destination); break;
-    case 1: PrepareScreenUpscale(source, destination); break;
-    case 2: PrepareScreenUpscale2(source, destination); break;
-    case 3: PrepareScreenUpscale2d(source, destination); break;
-    case 4: PrepareScreenUpscale3(source, destination); break;
-    case 5: PrepareScreenUpscale4(source, destination); break;
-    case 6: PrepareScreenUpscale175(source, destination); break;
-    case 7: PrepareScreenUpscale5(source, destination); break;
+    case 0: PrepareScreenCopy(source, rows, first, end); break;
+    case 1: PrepareScreenUpscale(source, rows, first, end); break;
+    case 2: PrepareScreenUpscale2(source, rows, first, end); break;
+    case 3: PrepareScreenUpscale2d(source, rows, first, end); break;
+    case 4: PrepareScreenUpscale3(source, rows, first, end); break;
+    case 5: PrepareScreenUpscale4(source, rows, first, end); break;
+    case 6: PrepareScreenUpscale175(source, rows, first, end); break;
+    case 7: PrepareScreenUpscale5(source, rows, first, end); break;
     }
     return true;
+}
+
+bool Apply(int mode, std::span<const uint32_t> source, std::span<uint32_t> destination, RowOrder order)
+{
+    return ApplyBand(mode, source, destination, 0, video::Height, order);
 }
 }

@@ -4,7 +4,8 @@ foreach(kind IN ITEMS memory display console)
   file(REMOVE "${path}")
   execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
     "UKNCBTL_TEST_EXPORT_KIND=${kind}" "UKNCBTL_TEST_EXPORT_PATH=${path}"
-    "UKNCBTL_TEST_SCREENSHOT_PATH=${path}" UKNCBTL_TEST_SCREENSHOT_CONFLICT=1
+    "UKNCBTL_TEST_SCREENSHOT_PATH=${path}" UKNCBTL_TEST_SCREENSHOT_CONFLICT=1 UKNCBTL_TEST_BOARD_OPERATIONS=1
+    UKNCBTL_TEST_SAVE_DURING_FRAME=1
     "${APP}" --smoke-test --sound RESULT_VARIABLE result ERROR_VARIABLE error TIMEOUT 25)
   if(NOT result EQUAL 0 OR NOT EXISTS "${path}")
     message(FATAL_ERROR "SDL ${kind} export failed (${result}): ${error}")

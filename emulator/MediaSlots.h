@@ -36,7 +36,7 @@ public:
     // Detect existing aliases (including hard links) to mounted disk images.
     [[nodiscard]] bool Conflicts(const std::filesystem::path& path) const;
 private:
-    friend class AsyncDiskMount;
+    friend class PreparedDisk;
     [[nodiscard]] std::expected<void, Error> InstallFloppy(int slot, std::filesystem::path path, bool readOnly,
         PreparedFloppyImage image);
     [[nodiscard]] std::expected<void, Error> InstallHardDisk(int slot, std::filesystem::path path, bool readOnly,

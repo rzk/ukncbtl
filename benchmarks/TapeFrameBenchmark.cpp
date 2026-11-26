@@ -78,6 +78,70 @@ bool SameRecording(const std::filesystem::path& first, const std::filesystem::pa
     using It = std::istreambuf_iterator<char>;
     return std::equal(It(a), It(), It(b), It());
 }
+
+struct DirectPlayback
+{
+    CMotherboard& board;
+    WavPcmFile& file;
+    std::array<std::uint8_t, 256> waveform{};
+    bool failed = false;
+
+    static bool Read(void* context, unsigned samples)
+    {
+        auto& playback = *static_cast<DirectPlayback*>(context);
+        const auto result = tape::Read(playback.file, samples, playback.waveform);
+        playback.failed |= result.error.has_value();
+        if (result.stop) playback.board.SetTapeReadCallbackWithContext(nullptr, nullptr, 0);
+        return result.bit;
+    }
+};
+
+double MeasurePlayback(const std::filesystem::path& path, bool buffered)
+{
+    CMotherboard board;
+    workloads::Prepare(board);
+    auto* ports = board.GetPPUMemoryController();
+    ports->SetWord(0177716, false, 0100004);
+    preview_tape::Session tape(board);
+    auto file = WavPcmFile::Open(path);
+    if (!file) return -1;
+    DirectPlayback direct{board, *file};
+    if (buffered)
+    {
+        if (!tape.Open(path) || !tape.Play()) return -1;
+    }
+    else board.SetTapeReadCallbackWithContext(DirectPlayback::Read, &direct, file->Frequency());
+
+    FrameWorker worker([&] { return board.SystemFrame(); });
+    const auto start = Clock::now();
+    for (int frame = 0; frame < Frames; ++frame)
+    {
+        if (!worker.Start() || !worker.Wait()) return -1;
+        const auto waveform = buffered ? tape.Waveform() : std::span<const std::uint8_t>{direct.waveform};
+        const auto expected = frame % 2 == 0 ? 0 : 255;
+        if (waveform.back() != expected || (ports->GetWord(0177716, false, false) & 1) != (expected == 0)) return -1;
+    }
+    if (buffered)
+    {
+        if (tape.Playing() || tape.Position() != tape.Length() || tape.TakeError() || !tape.Close()) return -1;
+    }
+    else if (direct.failed || file->Position() != file->Length() || !file->Close()) return -1;
+    const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+    return elapsed / Frames;
+}
+
+bool MakePlaybackFixture(const std::filesystem::path& path)
+{
+    auto file = WavPcmFile::Create(path, 44100);
+    if (!file) return false;
+    std::array<std::uint8_t, 44100 / FRAMERATE> samples;
+    for (int frame = 0; frame < Frames; ++frame)
+    {
+        samples.fill(frame % 2 == 0 ? 0 : 255);
+        if (!file->WriteSamples(samples)) return false;
+    }
+    return file->Close().has_value();
+}
 }
 
 int main()
@@ -88,19 +152,23 @@ int main()
     if (!std::filesystem::create_directory(directory, error)) return 1;
     const auto directPath = directory / "direct.wav";
     const auto bufferedPath = directory / "buffered.wav";
+    const auto playbackPath = directory / "playback.wav";
     struct Cleanup
     {
-        std::filesystem::path directory, direct, buffered;
+        std::filesystem::path directory, direct, buffered, playback;
         ~Cleanup()
         {
             std::error_code ec;
             std::filesystem::remove(direct, ec);
             std::filesystem::remove(buffered, ec);
+            std::filesystem::remove(playback, ec);
             std::filesystem::remove(directory, ec);
         }
-    } cleanup{directory, directPath, bufferedPath};
+    } cleanup{directory, directPath, bufferedPath, playbackPath};
+    if (!MakePlaybackFixture(playbackPath)) return 1;
     CProcessor::Init();
     std::array<double, Repetitions> baseline{}, direct{}, buffered{};
+    std::array<double, Repetitions> directPlayback{}, bufferedPlayback{};
     bool success = true;
     for (int i = 0; i < Repetitions; ++i)
     {
@@ -109,13 +177,18 @@ int main()
         {
             direct[i] = Measure(directPath, Mode::direct);
             buffered[i] = Measure(bufferedPath, Mode::buffered);
+            directPlayback[i] = MeasurePlayback(playbackPath, false);
+            bufferedPlayback[i] = MeasurePlayback(playbackPath, true);
         }
         else
         {
             buffered[i] = Measure(bufferedPath, Mode::buffered);
             direct[i] = Measure(directPath, Mode::direct);
+            bufferedPlayback[i] = MeasurePlayback(playbackPath, true);
+            directPlayback[i] = MeasurePlayback(playbackPath, false);
         }
-        if (baseline[i] < 0 || direct[i] < 0 || buffered[i] < 0 || !SameRecording(directPath, bufferedPath))
+        if (baseline[i] < 0 || direct[i] < 0 || buffered[i] < 0 || directPlayback[i] < 0 ||
+            bufferedPlayback[i] < 0 || !SameRecording(directPath, bufferedPath))
         { success = false; break; }
     }
     CProcessor::Done();
@@ -123,6 +196,10 @@ int main()
     std::ranges::sort(baseline);
     std::ranges::sort(direct);
     std::ranges::sort(buffered);
+    std::ranges::sort(directPlayback);
+    std::ranges::sort(bufferedPlayback);
     std::printf("Median milliseconds per synthetic frame: no tape %.3f, direct recording %.3f, buffered recording %.3f\n",
         baseline[Repetitions / 2], direct[Repetitions / 2], buffered[Repetitions / 2]);
+    std::printf("Median milliseconds per synthetic frame: direct playback %.3f, read-ahead playback %.3f\n",
+        directPlayback[Repetitions / 2], bufferedPlayback[Repetitions / 2]);
 }

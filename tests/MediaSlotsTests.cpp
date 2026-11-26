@@ -1,16 +1,24 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "MediaSlots.h"
 #include "AsyncDiskMount.h"
+#include "FloppyReadTestHooks.h"
 #include "FrameWorker.h"
 #include "PreviewMediaRestore.h"
 #include "PreviewRoms.h"
+#include "PreviewTape.h"
+#include "Snapshot.h"
 #include "emubase/Emubase.h"
 #include <gtest/gtest.h>
 #include <chrono>
 #include <array>
+#include <atomic>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
+#include <mutex>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -44,6 +52,9 @@ protected:
         std::filesystem::remove(floppy, error);
         std::filesystem::remove(hard, error);
         std::filesystem::remove(directory / "alias.img", error);
+        std::filesystem::remove(directory / "startup.rom", error);
+        std::filesystem::remove(directory / "startup.uknc", error);
+        std::filesystem::remove(directory / "startup.wav", error);
         std::filesystem::remove(directory, error);
         CProcessor::Done();
     }
@@ -79,6 +90,28 @@ TEST_F(MediaSlotsTest, AttachesAndEjectsAllDriveSlots)
     }
 }
 
+TEST_F(MediaSlotsTest, PreparedFloppyMountEnablesReadAheadOnTheBoard)
+{
+    std::promise<long> firstRead;
+    auto offset = firstRead.get_future();
+    const floppy_testing::ReadObserver observer{&firstRead, [](void* context, long offset, bool speculative) {
+        if (speculative) static_cast<std::promise<long>*>(context)->set_value(offset);
+        return true;
+    }};
+    struct ResetObserver { ~ResetObserver() { floppy_testing::ObserveReadAhead(nullptr); } } resetObserver;
+    floppy_testing::ObserveReadAhead(&observer);
+    CMotherboard board;
+    media_slots::Slots media(board);
+    media_slots::AsyncDiskMount mount;
+    ASSERT_TRUE(mount.Start(media_slots::Kind::floppy, floppy, 0, true));
+    const auto mounted = mount.Finish(media);
+    ASSERT_TRUE(mounted && *mounted);
+    ASSERT_EQ(offset.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(offset.get(), 5120);
+    board.DrainFloppyReadAhead();
+    EXPECT_TRUE(media.Eject(media_slots::Kind::floppy, 0));
+}
+
 TEST_F(MediaSlotsTest, WorkerFramesKeepReadOnlyFloppyIntactThroughFlushAndEject)
 {
     const auto readImage = [&] {
@@ -98,8 +131,12 @@ TEST_F(MediaSlotsTest, WorkerFramesKeepReadOnlyFloppyIntactThroughFlushAndEject)
     ASSERT_TRUE(worker.Start());
     ASSERT_TRUE(worker.Wait());
     EXPECT_FALSE(media.Attached(media_slots::Kind::floppy, 0));
-    const auto mounted = mount.Finish(media);
-    ASSERT_TRUE(mounted && *mounted);
+    ASSERT_TRUE(worker.Start([&] {
+        const auto mounted = mount.Finish(media);
+        return mounted && mounted->has_value();
+    }));
+    ASSERT_TRUE(worker.Wait());
+    EXPECT_FALSE(mount.Ready());
     EXPECT_TRUE(media.RequestedReadOnly(media_slots::Kind::floppy, 0));
     board.SetFloppyState(02003 | FLOPPY_CMD_ENGINESTART);
     ASSERT_TRUE(board.IsFloppyEngineOn());
@@ -110,9 +147,12 @@ TEST_F(MediaSlotsTest, WorkerFramesKeepReadOnlyFloppyIntactThroughFlushAndEject)
         ASSERT_TRUE(worker.Wait());
     }
     EXPECT_TRUE(media.ReadOnly(media_slots::Kind::floppy, 0));
-    EXPECT_TRUE(media.FlushFloppy());
+    ASSERT_TRUE(worker.Start([&] { return media.FlushFloppy(); }));
+    EXPECT_TRUE(worker.Wait());
     EXPECT_FALSE(board.TakeFloppyFailure());
-    ASSERT_TRUE(media.Eject(media_slots::Kind::floppy, 0));
+    ASSERT_TRUE(worker.Start([&] { return media.Eject(media_slots::Kind::floppy, 0).has_value(); }));
+    ASSERT_TRUE(worker.Wait());
+    EXPECT_FALSE(media.Attached(media_slots::Kind::floppy, 0));
     EXPECT_EQ(readImage(), original);
 }
 
@@ -133,8 +173,11 @@ TEST_F(MediaSlotsTest, WorkerFrameCommitsHardDiskWriteBeforeEject)
     ASSERT_TRUE(worker.Start());
     ASSERT_TRUE(worker.Wait());
     EXPECT_FALSE(media.Attached(media_slots::Kind::hardDisk, 0));
-    const auto result = mount.Finish(media);
-    ASSERT_TRUE(result && *result);
+    ASSERT_TRUE(worker.Start([&] {
+        const auto mounted = mount.Finish(media);
+        return mounted && mounted->has_value();
+    }));
+    ASSERT_TRUE(worker.Wait());
     EXPECT_FALSE(media.ReadOnly(media_slots::Kind::hardDisk, 0));
     ASSERT_TRUE(worker.Start());
     ASSERT_TRUE(worker.Wait()); // Complete the drive's reset delay.
@@ -152,7 +195,9 @@ TEST_F(MediaSlotsTest, WorkerFrameCommitsHardDiskWriteBeforeEject)
     const auto status = static_cast<std::uint16_t>(~board.GetHardPortWord(1, 0));
     EXPECT_EQ(status & 0x89, 0);
     EXPECT_FALSE(board.TakeHardDiskFailure());
-    ASSERT_TRUE(media.Eject(media_slots::Kind::hardDisk, 0));
+    ASSERT_TRUE(worker.Start([&] { return media.Eject(media_slots::Kind::hardDisk, 0).has_value(); }));
+    ASSERT_TRUE(worker.Wait());
+    EXPECT_FALSE(media.Attached(media_slots::Kind::hardDisk, 0));
     std::ifstream input(hard, std::ios::binary);
     input.seekg(512);
     std::array<unsigned char, 512> sector{};
@@ -223,6 +268,225 @@ TEST_F(MediaSlotsTest, AsyncFloppyMountRechecksOccupancyAndCanRetry)
     result = mount.Finish(media);
     ASSERT_TRUE(result && *result);
     EXPECT_FALSE(media.ReadOnly(Kind::floppy, 3));
+}
+
+TEST_F(MediaSlotsTest, DiscardJoinsPreparedMountWithoutInstallingIt)
+{
+    using media_slots::Kind;
+    CMotherboard board;
+    board.Reset();
+    media_slots::Slots media(board);
+    media_slots::AsyncDiskMount mount;
+    ASSERT_TRUE(mount.Start(Kind::floppy, floppy, 0, false));
+    mount.Discard();
+    EXPECT_FALSE(mount.Pending());
+    EXPECT_TRUE(mount.Path().empty());
+    EXPECT_EQ(mount.Slot(), -1);
+    EXPECT_FALSE(media.Attached(Kind::floppy, 0));
+    ASSERT_TRUE(mount.Start(Kind::floppy, floppy, 0, true));
+    const auto result = mount.Finish(media);
+    ASSERT_TRUE(result && *result);
+    EXPECT_TRUE(media.ReadOnly(Kind::floppy, 0));
+}
+
+TEST_F(MediaSlotsTest, StartupPreparationInstallsMediaInOrderAndLeavesStateForCaller)
+{
+    CMotherboard board;
+    board.Reset();
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_tape::Session tape(board);
+    const auto state = directory / "startup.uknc";
+    board.GetCPU()->SetReg(0, 012345);
+    ASSERT_TRUE(snapshot::Save(state, board, 0));
+    board.GetCPU()->SetReg(0, 0777);
+
+    const auto cartridge = directory / "startup.rom";
+    {
+        const std::array<char, 24 * 1024> bytes{};
+        std::ofstream file(cartridge, std::ios::binary);
+        ASSERT_TRUE(file.write(bytes.data(), bytes.size()));
+    }
+    preview_settings::Settings settings;
+    settings.restoreMedia = true;
+    settings.cartridges[0] = cartridge;
+    settings.floppies[1] = directory / "missing.dsk";
+    preview_options::Options options;
+    options.state = state;
+    options.hardDisks[0] = hard;
+    options.hardDiskReadOnly[0] = true;
+    const auto result = preview_media_restore::PrepareStartup(settings, options, roms, media, tape, {});
+    ASSERT_TRUE(result) << result.error();
+    EXPECT_EQ(result->restoreErrors, (std::vector<std::string>{"Floppy 2"}));
+    EXPECT_FALSE(result->stateImage.empty());
+    EXPECT_EQ(board.GetCPU()->GetReg(0), 0777);
+    EXPECT_TRUE(roms.Inserted(0));
+    EXPECT_TRUE(media.ReadOnly(media_slots::Kind::hardDisk, 0));
+    EXPECT_EQ(settings.floppies[1], directory / "missing.dsk");
+}
+
+TEST_F(MediaSlotsTest, StartupReadsIndependentFilesTogetherAndBoundsWorkInFlight)
+{
+    const auto cartridge = directory / "startup.rom";
+    {
+        const std::array<char, 24 * 1024> bytes{};
+        std::ofstream output(cartridge, std::ios::binary);
+        ASSERT_TRUE(output.write(bytes.data(), bytes.size()));
+    }
+    CMotherboard board;
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_tape::Session tape(board);
+    const auto state = directory / "startup.uknc";
+    ASSERT_TRUE(snapshot::Save(state, board, 0));
+    const auto wavePath = directory / "startup.wav";
+    auto wave = WavPcmFile::Create(wavePath, 44100);
+    ASSERT_TRUE(wave);
+    ASSERT_TRUE(wave->WriteOne(0x80000000));
+    ASSERT_TRUE(wave->Close());
+    preview_options::Options options;
+    options.cartridges[0] = cartridge;
+    options.floppies[0] = floppy;
+    options.hardDisks[0] = hard;
+    options.hardDiskReadOnly[0] = true;
+    options.tape = wavePath;
+    options.state = state;
+
+    struct Gate
+    {
+        std::mutex mutex;
+        std::condition_variable changed;
+        std::vector<std::filesystem::path> reads;
+        bool release = false;
+    } gate;
+    using namespace preview_media_restore::testing;
+    const ReadObserver observer{&gate, [](void* context, const std::filesystem::path& path) {
+        auto& gate = *static_cast<Gate*>(context);
+        std::unique_lock lock(gate.mutex);
+        gate.reads.push_back(path);
+        gate.changed.notify_all();
+        (void)gate.changed.wait_for(lock, std::chrono::seconds(5), [&] { return gate.release; });
+    }};
+    struct RemoveObserver { ~RemoveObserver() { ObserveReads(nullptr); } } removeObserver;
+    ObserveReads(&observer);
+    auto work = std::async(std::launch::async, [&] {
+        return preview_media_restore::PrepareStartup({}, options, roms, media, tape, {});
+    });
+    {
+        std::unique_lock lock(gate.mutex);
+        EXPECT_TRUE(gate.changed.wait_for(lock, std::chrono::seconds(2), [&] { return gate.reads.size() >= 3; }));
+        EXPECT_FALSE(gate.changed.wait_for(lock, std::chrono::milliseconds(75), [&] { return gate.reads.size() > 3; }));
+        EXPECT_EQ(gate.reads.size(), 3u);
+        gate.release = true;
+    }
+    gate.changed.notify_all();
+    const auto loaded = work.get();
+    ASSERT_TRUE(loaded) << loaded.error();
+    EXPECT_TRUE(loaded->restoreErrors.empty());
+    EXPECT_FALSE(loaded->stateImage.empty());
+    EXPECT_TRUE(roms.Inserted(0));
+    EXPECT_TRUE(media.Attached(media_slots::Kind::floppy, 0));
+    EXPECT_TRUE(media.ReadOnly(media_slots::Kind::hardDisk, 0));
+    EXPECT_TRUE(tape.Inserted());
+    EXPECT_FALSE(tape.Playing());
+    EXPECT_EQ(tape.Length(), 1u);
+    ASSERT_EQ(gate.reads.size(), 5u);
+}
+
+TEST_F(MediaSlotsTest, StartupRechecksAliasedDisksAfterTheEarlierMount)
+{
+    using Kind = media_slots::Kind;
+    preview_options::Options options;
+    options.floppies[0] = floppy;
+    options.floppies[1] = directory / "." / floppy.filename();
+    options.floppyReadOnly[1] = true;
+    for (const bool firstReadOnly : {false, true})
+    {
+        CMotherboard board;
+        preview_roms::Roms roms(board);
+        media_slots::Slots media(board);
+        preview_tape::Session tape(board);
+        options.floppyReadOnly[0] = firstReadOnly;
+        const auto result = preview_media_restore::PrepareStartup({}, options, roms, media, tape, {});
+        EXPECT_EQ(result.has_value(), firstReadOnly);
+        if (!result) EXPECT_EQ(result.error(), "Could not attach requested floppy 1.");
+        EXPECT_TRUE(media.Attached(Kind::floppy, 0));
+        EXPECT_EQ(media.Attached(Kind::floppy, 1), firstReadOnly);
+    }
+}
+
+TEST_F(MediaSlotsTest, StartupFailureLeavesLaterPreparedMediaDetached)
+{
+    const auto invalidCartridge = directory / "startup.rom";
+    { std::ofstream output(invalidCartridge, std::ios::binary); output << "short ROM"; }
+    CMotherboard board;
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_tape::Session tape(board);
+    preview_options::Options options;
+    options.cartridges[0] = invalidCartridge;
+    options.floppies[0] = floppy;
+    const auto result = preview_media_restore::PrepareStartup({}, options, roms, media, tape, {});
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), "Could not load requested cartridge 1.");
+    EXPECT_FALSE(roms.Inserted(0));
+    EXPECT_FALSE(media.Attached(media_slots::Kind::floppy, 0));
+    EXPECT_TRUE(media.Attach(media_slots::Kind::floppy, 0, floppy));
+}
+
+TEST_F(MediaSlotsTest, CancelingStartupDuringAReadDiscardsThePreparedMedia)
+{
+    CMotherboard board;
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_tape::Session tape(board);
+    preview_options::Options options;
+    options.floppies[0] = floppy;
+    options.floppies[1] = hard;
+    std::stop_source stop;
+    using namespace preview_media_restore::testing;
+    const ReadObserver observer{&stop, [](void* context, const std::filesystem::path&) {
+        static_cast<std::stop_source*>(context)->request_stop();
+    }};
+    struct RemoveObserver { ~RemoveObserver() { ObserveReads(nullptr); } } removeObserver;
+    ObserveReads(&observer);
+    const auto result = preview_media_restore::PrepareStartup({}, options, roms, media, tape, {}, stop.get_token());
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), "Startup media loading was canceled.");
+    EXPECT_FALSE(media.Attached(media_slots::Kind::floppy, 0));
+    EXPECT_FALSE(media.Attached(media_slots::Kind::floppy, 1));
+    EXPECT_TRUE(media.Attach(media_slots::Kind::floppy, 0, floppy));
+}
+
+TEST_F(MediaSlotsTest, StartupRejectsMissingCartridgeBeforeUsingThePreparedDisk)
+{
+    CMotherboard board;
+    preview_roms::Roms roms(board);
+    media_slots::Slots media(board);
+    preview_tape::Session tape(board);
+    preview_options::Options options;
+    options.floppies[0] = floppy;
+    options.hardDisks[0] = hard;
+    struct FailingRead
+    {
+        std::filesystem::path path;
+        std::atomic<bool> attempted{false};
+    } failure{hard};
+    using namespace preview_media_restore::testing;
+    const ReadObserver observer{&failure, [](void* context, const std::filesystem::path& path) {
+        auto& failure = *static_cast<FailingRead*>(context);
+        if (path != failure.path) return;
+        failure.attempted = true;
+        throw std::runtime_error("Disk read failed");
+    }};
+    struct RemoveObserver { ~RemoveObserver() { ObserveReads(nullptr); } } removeObserver;
+    ObserveReads(&observer);
+    const auto result = preview_media_restore::PrepareStartup({}, options, roms, media, tape, {});
+    ASSERT_FALSE(result);
+    EXPECT_TRUE(failure.attempted.load());
+    EXPECT_EQ(result.error(), "Could not attach requested hard disk 1; check its ROM cartridge and image.");
+    EXPECT_TRUE(media.Attached(media_slots::Kind::floppy, 0));
+    EXPECT_FALSE(media.Attached(media_slots::Kind::hardDisk, 0));
 }
 
 TEST_F(MediaSlotsTest, RestoresMediaInDependencyOrderAndPreservesFailedPaths)

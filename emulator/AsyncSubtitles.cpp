@@ -1,6 +1,5 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "AsyncSubtitles.h"
-#include <chrono>
 #include <utility>
 
 bool subtitles::AsyncLoad::Start(std::filesystem::path path)
@@ -9,7 +8,7 @@ bool subtitles::AsyncLoad::Start(std::filesystem::path path)
     try
     {
         path_ = std::move(path);
-        result_ = std::async(std::launch::async, [path = path_] {
+        result_.Start([path = path_] {
             try { return subtitles::LoadFile(path); }
             catch (...) { return std::expected<Items, FileError>(std::unexpected(FileError::read_failed)); }
         });
@@ -21,7 +20,7 @@ bool subtitles::AsyncLoad::Start(std::filesystem::path path)
 
 std::optional<subtitles::AsyncLoad::Result> subtitles::AsyncLoad::Poll()
 {
-    if (!Pending() || result_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    if (!result_.Ready())
         return std::nullopt;
     return Finish();
 }
@@ -29,7 +28,7 @@ std::optional<subtitles::AsyncLoad::Result> subtitles::AsyncLoad::Poll()
 std::optional<subtitles::AsyncLoad::Result> subtitles::AsyncLoad::Finish()
 {
     if (!Pending()) return std::nullopt;
-    auto items = result_.get();
+    auto items = result_.Take();
     auto path = std::move(path_);
     path_.clear();
     const bool cancelled = std::exchange(cancelled_, false);

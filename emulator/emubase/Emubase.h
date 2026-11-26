@@ -65,6 +65,7 @@ struct CFloppyDrive
     std::unique_ptr<std::fstream> fpFile; ///< Stream for the disk image file
     bool okNetRT11Image;  ///< true - .rtd image, false - .dsk image
     bool okReadOnly;    ///< Write protection flag
+    bool readAhead = false;
     uint16_t track;         ///< Track number: from 0 to 79
     uint16_t side;          ///< Disk side: 0 or 1
     uint16_t dataptr;       ///< Data offset within m_data - "head" position
@@ -83,6 +84,7 @@ struct PreparedFloppyImage
     std::unique_ptr<std::fstream> stream;
     bool netRt11;
     bool readOnly;
+    bool readAhead = false;
 };
 
 /// \brief UKNC floppy controller (MZ standard)
@@ -126,6 +128,7 @@ public:
     /// \brief Detach image from the drive -- remove disk
     void DetachImage(int drive);
     [[nodiscard]] bool Flush() { return FlushChanges(); }
+    void DrainReadAhead();
     [[nodiscard]] std::optional<FloppyFailure> TakeFailure()
     { auto failure = m_failure; m_failure.reset(); return failure; }
     /// \brief Check if the drive has an image attached
@@ -144,13 +147,16 @@ public:
     { m_traceCallback = callback; m_traceContext = callback ? context : nullptr; }
 
 private:
+    struct TrackReader;
+    std::unique_ptr<TrackReader> m_reader;
+    bool m_readAheadUnavailable = false;
     [[nodiscard]] bool PrepareAttachment(int drive);
     void InstallImage(int drive, PreparedFloppyImage image);
     [[nodiscard]] bool Tracing() const { return m_okTrace || m_traceCallback; }
     void Trace(std::wstring text) const;
     void ReportFailure(FloppyError error)
     { if (!m_failure) m_failure = FloppyFailure{error, static_cast<int>(m_drive)}; }
-    void PrepareTrack();
+    void PrepareTrack(int step = 0);
     bool FlushChanges();  ///< If current track was changed - save it
 };
 
@@ -195,6 +201,8 @@ public:
     bool AttachImage(const std::filesystem::path& path, bool readOnly = false);
     /// \brief Detach HDD image file from the device
     void DetachImage();
+    /// \brief Allow host sector reads to run during the emulated seek.
+    void EnableReadAhead() { m_readAheadEnabled = true; }
     /// \brief Check if the attached hard drive image is read-only
     bool IsReadOnly() const { return m_okReadOnly; }
     [[nodiscard]] std::optional<HardDiskError> TakeHostFailure()
@@ -210,9 +218,13 @@ public:
 
 private:
     enum class AddressError { invalid_geometry, offset_overflow };
+    struct SectorReader;
+    std::unique_ptr<SectorReader> m_reader;
+    bool m_readAheadEnabled = false;
     [[nodiscard]] std::expected<long, AddressError> CalculateOffset() const;  ///< Validate CHS and calculate the image offset
     void HandleCommand(uint8_t command);  ///< Handle the IDE command
-    void ReadNextSector();
+    void ScheduleRead(int ticks);
+    void AbandonReadAhead();
     void ReadSectorDone();
     void WriteSectorDone();
     void NextSector();          ///< Advance to the next sector, CHS-based

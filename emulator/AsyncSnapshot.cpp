@@ -1,7 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "AsyncSnapshot.h"
 #include "Snapshot.h"
-#include <chrono>
 #include <utility>
 
 bool preview_snapshot::AsyncSave::Start(std::filesystem::path path, std::vector<std::uint8_t> image)
@@ -10,7 +9,7 @@ bool preview_snapshot::AsyncSave::Start(std::filesystem::path path, std::vector<
     try
     {
         path_ = std::move(path);
-        result_ = std::async(std::launch::async, [path = path_, image = std::move(image)] {
+        result_.Start([path = path_, image = std::move(image)] {
             try { return snapshot::Write(path, image); }
             catch (...) { return false; }
         });
@@ -21,7 +20,7 @@ bool preview_snapshot::AsyncSave::Start(std::filesystem::path path, std::vector<
 
 std::optional<bool> preview_snapshot::AsyncSave::Poll()
 {
-    if (!Pending() || result_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    if (!result_.Ready())
         return std::nullopt;
     return Finish();
 }
@@ -29,7 +28,7 @@ std::optional<bool> preview_snapshot::AsyncSave::Poll()
 std::optional<bool> preview_snapshot::AsyncSave::Finish()
 {
     if (!Pending()) return std::nullopt;
-    const bool success = result_.get();
+    const bool success = result_.Take();
     path_.clear();
     return success;
 }
@@ -40,7 +39,7 @@ bool preview_snapshot::AsyncLoad::Start(std::filesystem::path path)
     try
     {
         path_ = std::move(path);
-        result_ = std::async(std::launch::async, [path = path_] {
+        result_.Start([path = path_] {
             try { return snapshot::Read(path); }
             catch (...) { return std::optional<Image>{}; }
         });
@@ -52,7 +51,7 @@ bool preview_snapshot::AsyncLoad::Start(std::filesystem::path path)
 
 std::optional<preview_snapshot::AsyncLoad::Result> preview_snapshot::AsyncLoad::Poll()
 {
-    if (!Pending() || result_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    if (!result_.Ready())
         return std::nullopt;
     return Finish();
 }
@@ -60,7 +59,7 @@ std::optional<preview_snapshot::AsyncLoad::Result> preview_snapshot::AsyncLoad::
 std::optional<preview_snapshot::AsyncLoad::Result> preview_snapshot::AsyncLoad::Finish()
 {
     if (!Pending()) return std::nullopt;
-    auto image = result_.get();
+    auto image = result_.Take();
     path_.clear();
     const bool cancelled = std::exchange(cancelled_, false);
     if (cancelled) image.reset();

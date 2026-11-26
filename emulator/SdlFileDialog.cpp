@@ -13,10 +13,13 @@ bool sdl_file_dialog::State::Begin()
 
 void sdl_file_dialog::State::Complete(Result result)
 {
-    const std::scoped_lock lock(mutex_);
-    if (!pending_) return;
-    result_ = std::move(result);
-    pending_ = false;
+    {
+        const std::scoped_lock lock(mutex_);
+        if (!pending_) return;
+        result_ = std::move(result);
+        pending_ = false;
+    }
+    background::Signal(notify_);
 }
 
 std::optional<sdl_file_dialog::Result> sdl_file_dialog::State::Take()

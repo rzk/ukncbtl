@@ -63,11 +63,12 @@ TEST_F(PreviewPrinterTest, WritesPortBytesAndStopsAtSessionEnd)
     EXPECT_EQ(0, memory->GetWord(0177101, false, false) & 2);
 }
 
-TEST_F(PreviewPrinterTest, WorkerFrameWritesPrinterBeforeMainThreadFlushAndStop)
+TEST_F(PreviewPrinterTest, WorkerFlushAndStopCommitFramePrinterBytes)
 {
     preview_printer::Session session(*board);
-    ASSERT_TRUE(session.Start(path));
     FrameWorker worker([&] { return board->SystemFrame(); });
+    ASSERT_TRUE(worker.Start([&] { return session.Start(path); }));
+    ASSERT_TRUE(worker.Wait());
     ASSERT_TRUE(worker.Start());
     ASSERT_TRUE(worker.Wait());
     auto* memory = board->GetPPUMemoryController();
@@ -75,8 +76,13 @@ TEST_F(PreviewPrinterTest, WorkerFrameWritesPrinterBeforeMainThreadFlushAndStop)
     memory->SetWord(0177102, false, 0);
     ASSERT_TRUE(worker.Start());
     ASSERT_TRUE(worker.Wait());
-    ASSERT_TRUE(session.Flush());
-    ASSERT_TRUE(session.Stop());
+    ASSERT_TRUE(worker.Start([&] { return session.Flush(); }));
+    ASSERT_TRUE(worker.Wait());
+    EXPECT_EQ(std::filesystem::file_size(path), 1u);
+    EXPECT_TRUE(session.Active());
+    ASSERT_TRUE(worker.Start([&] { return session.Stop(); }));
+    ASSERT_TRUE(worker.Wait());
+    EXPECT_FALSE(session.Conflicts(path));
     std::ifstream file(path, std::ios::binary);
     EXPECT_EQ(std::string(std::istreambuf_iterator<char>(file), {}), "B");
 }

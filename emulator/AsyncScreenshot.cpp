@@ -1,7 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "AsyncScreenshot.h"
 #include "ScreenshotFile.h"
-#include <chrono>
 #include <utility>
 
 bool screenshot_file::AsyncSave::Start(std::filesystem::path path, screenshot_image::Image image)
@@ -10,7 +9,7 @@ bool screenshot_file::AsyncSave::Start(std::filesystem::path path, screenshot_im
     try
     {
         path_ = std::move(path);
-        result_ = std::async(std::launch::async, [path = path_, image = std::move(image)] {
+        result_.Start([path = path_, image = std::move(image)] {
             try { return screenshot_file::Save(path, image).has_value(); }
             catch (...) { return false; }
         });
@@ -25,7 +24,7 @@ bool screenshot_file::AsyncSave::StartScaled(std::filesystem::path path, std::ve
     try
     {
         path_ = std::move(path);
-        result_ = std::async(std::launch::async, [path = path_, pixels = std::move(pixels), mode] {
+        result_.Start([path = path_, pixels = std::move(pixels), mode] {
             try
             {
                 const auto image = screenshot_image::Prepare(pixels, mode);
@@ -40,7 +39,7 @@ bool screenshot_file::AsyncSave::StartScaled(std::filesystem::path path, std::ve
 
 std::optional<bool> screenshot_file::AsyncSave::Poll()
 {
-    if (!Pending() || result_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    if (!result_.Ready())
         return std::nullopt;
     return Finish();
 }
@@ -48,7 +47,7 @@ std::optional<bool> screenshot_file::AsyncSave::Poll()
 std::optional<bool> screenshot_file::AsyncSave::Finish()
 {
     if (!Pending()) return std::nullopt;
-    const bool success = result_.get();
+    const bool success = result_.Take();
     path_.clear();
     return success;
 }

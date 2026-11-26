@@ -1,7 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #pragma once
+#include "BackgroundJob.h"
 #include "SubtitleFile.h"
-#include <future>
 #include <optional>
 
 namespace subtitles
@@ -15,8 +15,9 @@ public:
         bool cancelled;
         std::expected<Items, FileError> items;
     };
+    explicit AsyncLoad(background::Notify notify = {}) : result_(std::move(notify)) {}
     [[nodiscard]] bool Start(std::filesystem::path path);
-    [[nodiscard]] bool Pending() const { return result_.valid(); }
+    [[nodiscard]] bool Pending() const { return result_.Pending(); }
     [[nodiscard]] bool Cancelled() const { return Pending() && cancelled_; }
     void Cancel() { if (Pending()) cancelled_ = true; }
     [[nodiscard]] const std::filesystem::path& Path() const { return path_; }
@@ -24,7 +25,7 @@ public:
     [[nodiscard]] std::optional<Result> Finish();
 private:
     std::filesystem::path path_;
-    std::future<std::expected<Items, FileError>> result_;
+    background::Job<std::expected<Items, FileError>> result_;
     bool cancelled_ = false;
 };
 }

@@ -13,6 +13,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 /// \details See defines in header file Emubase.h
 
 #include "util/Trace.h"
+#include "util/Profiler.h"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -20,6 +21,19 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <fstream>
 #include <memory>
 #include "Emubase.h"
+#include "FrameWorker.h"
+#ifdef UKNCBTL_FLOPPY_PREFETCH_TEST_HOOKS
+#include "FloppyReadTestHooks.h"
+#include <atomic>
+namespace
+{
+std::atomic<const floppy_testing::ReadObserver*> readObserver{nullptr};
+}
+void floppy_testing::ObserveReadAhead(const ReadObserver* observer)
+{
+    readObserver.store(observer);
+}
+#endif
 
 
 //////////////////////////////////////////////////////////////////////
@@ -34,6 +48,88 @@ static void EncodeTrackData(std::span<const uint8_t, 5120> source,
     std::span<uint8_t, FLOPPY_RAWMARKERSIZE> marker, uint16_t track, uint16_t side);
 static bool DecodeTrackData(std::span<const uint8_t, FLOPPY_RAWTRACKSIZE> raw,
     std::span<uint8_t, 5120> destination);
+
+namespace
+{
+long TrackOffset(uint16_t track, uint16_t side, bool netRt11)
+{
+    return (track * 2 + side) * 5120L + (netRt11 ? 256 : 0);
+}
+
+bool ReadTrackData(std::fstream& file, long offset, std::span<uint8_t, 5120> data,
+    [[maybe_unused]] bool speculative = false)
+{
+    UKNC_PROFILE_SCOPE("Floppy host track read");
+#ifdef UKNCBTL_FLOPPY_PREFETCH_TEST_HOOKS
+    if (const auto* observer = readObserver.load(); observer && !observer->read(observer->context, offset, speculative))
+        return false;
+#endif
+    file.clear();
+    file.seekg(offset, std::ios::beg);
+    bool success = static_cast<bool>(file);
+    if (success)
+    {
+        file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        // Short reads at EOF retain the zero-filled bytes.
+        success = !file.bad() && (!file.fail() || file.eof());
+    }
+    file.clear();
+    return success;
+}
+}
+
+struct CFloppyController::TrackReader
+{
+    void Start(CFloppyDrive& drive, uint16_t nextTrack, uint16_t nextSide)
+    {
+        if (stream && !worker.WaitFor(std::chrono::milliseconds(0))) return;
+        (void)Finish();
+        stream = drive.fpFile.get();
+        offset = TrackOffset(nextTrack, nextSide, drive.okNetRT11Image);
+        track = nextTrack;
+        side = nextSide;
+        usable = worker.Start();
+        if (!usable) stream = nullptr;
+    }
+
+    bool Load(CFloppyDrive& drive, uint16_t requestedTrack, uint16_t requestedSide)
+    {
+        if (stream != drive.fpFile.get()) return false;
+        const bool match = usable && track == requestedTrack && side == requestedSide;
+        if (!Finish() || !match) return false;
+        drive.data = data;
+        drive.marker = markers;
+        return true;
+    }
+
+    void Discard(const std::fstream& file)
+    {
+        if (stream == &file) (void)Finish();
+    }
+
+    bool Finish()
+    {
+        if (!stream) return false;
+        UKNC_PROFILE_SCOPE("Floppy track read handoff");
+        const auto outcome = worker.WaitOutcome();
+        stream = nullptr;
+        usable = false;
+        return outcome == FrameWorker::Outcome::completed;
+    }
+
+    std::fstream* stream = nullptr;
+    long offset = 0;
+    uint16_t track = 0, side = 0;
+    bool usable = false;
+    std::array<uint8_t, FLOPPY_RAWTRACKSIZE> data{};
+    std::array<uint8_t, FLOPPY_RAWMARKERSIZE> markers{};
+    FrameWorker worker{[this] {
+        std::array<uint8_t, 5120> image{};
+        if (!ReadTrackData(*stream, offset, image, true)) return false;
+        EncodeTrackData(image, data, markers, track, side);
+        return true;
+    }};
+};
 
 //////////////////////////////////////////////////////////////////////
 
@@ -92,6 +188,7 @@ void CFloppyController::Reset()
 
     if (!FlushChanges()) return;
 
+    if (m_reader) m_reader->usable = false;
     m_drive = m_side = m_track = 0;
     m_pDrive = m_drivedata.data();
     m_datareg = m_writereg = m_shiftreg = 0;
@@ -161,6 +258,7 @@ void CFloppyController::InstallImage(int drive, PreparedFloppyImage image)
     target.fpFile = std::move(image.stream);
     target.okNetRT11Image = image.netRt11;
     target.okReadOnly = image.readOnly;
+    target.readAhead = image.readAhead;
     m_side = m_track = m_drivedata[drive].datatrack = m_drivedata[drive].dataside = 0;
     m_drivedata[drive].dataptr = 0;
     m_datareg = m_writereg = m_shiftreg = 0;
@@ -179,9 +277,15 @@ void CFloppyController::DetachImage(int drive)
 
     if (drive == m_drive && !FlushChanges()) return;
 
+    if (m_reader) m_reader->Discard(*m_drivedata[drive].fpFile);
     m_drivedata[drive].fpFile.reset();
-    m_drivedata[drive].okNetRT11Image = m_drivedata[drive].okReadOnly = false;
+    m_drivedata[drive].okNetRT11Image = m_drivedata[drive].okReadOnly = m_drivedata[drive].readAhead = false;
     m_drivedata[drive].Reset();
+}
+
+void CFloppyController::DrainReadAhead()
+{
+    m_reader.reset(); // Join before releasing any stream borrowed by the reader.
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -273,7 +377,7 @@ void CFloppyController::SetCommand(uint16_t cmd)
     }
     if (okPrepareTrack)
     {
-        PrepareTrack();
+        PrepareTrack(trackChanges ? ((cmd & FLOPPY_CMD_DIR) ? 1 : -1) : 0);
 
 //    	DebugLogFormat(_T("Floppy DRIVE {} TR {} SD {}\r\n"), m_drive, m_track, m_side);
     }
@@ -422,13 +526,11 @@ void CFloppyController::Periodic()
 }
 
 // Read track data from file and fill m_data
-void CFloppyController::PrepareTrack()
+void CFloppyController::PrepareTrack(int step)
 {
     if (!FlushChanges()) return;
 
     if (Tracing()) Trace(std::format(L"Floppy PREP  {} TR {} SD {}\r\n", m_drive, m_track, m_side));
-
-    //TCHAR buffer[512];
 
     m_trackchanged = false;
     m_status |= FLOPPY_STATUS_MOREDATA;
@@ -436,39 +538,34 @@ void CFloppyController::PrepareTrack()
     m_pDrive->datatrack = m_track;
     m_pDrive->dataside = m_side;
 
-    // Track has 10 sectors, 512 bytes each; offset of the file is === ((Track<<1)+SIDE)*5120
-    long foffset = ((m_track * 2) + (m_side)) * 5120;
-    if (m_pDrive->okNetRT11Image) foffset += 256;  // Skip .RTD image header
-    //DebugPrintFormat(_T("floppy file offset {}  for trk {} side {}\r\n"), foffset, m_track, m_side);
-
-    std::array<uint8_t, 5120> data{};
-
-    if (m_pDrive->fpFile != nullptr)
+    const bool prefetched = m_pDrive->fpFile && m_reader && m_reader->Load(*m_pDrive, m_track, m_side);
+    if (!prefetched)
     {
-        auto& file = *m_pDrive->fpFile;
-        file.clear();
-        file.seekg(foffset, std::ios::beg);
-        bool readFailed = !file;
-        if (!readFailed)
-        {
-            file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
-            readFailed = file.bad() || (file.fail() && !file.eof());
-        }
-        // Short reads at EOF are zero-filled and are not device errors.
-        file.clear();
-        if (readFailed)
+        std::array<uint8_t, 5120> data{};
+        if (m_pDrive->fpFile && !ReadTrackData(*m_pDrive->fpFile,
+            TrackOffset(m_track, m_side, m_pDrive->okNetRT11Image), data))
         {
             ReportFailure(FloppyError::readFailed);
             m_pDrive->okReadOnly = true;
+            m_pDrive->readAhead = false;
             m_status |= FLOPPY_STATUS_WRITEPROTECT;
             m_status &= ~FLOPPY_STATUS_CHECKSUMOK;
             DebugLog(L"Floppy image read failed; the drive is write-protected.\r\n");
         }
+        EncodeTrackData(data, m_pDrive->data, m_pDrive->marker, m_track, m_side);
     }
 
-    // Fill m_data array and m_marker array with marked data
-    EncodeTrackData(data, m_pDrive->data, m_pDrive->marker, m_track, m_side);
-
+    if (!m_pDrive->fpFile || !m_pDrive->readAhead || m_readAheadUnavailable) return;
+    if (!m_reader)
+    {
+        try { m_reader = std::make_unique<TrackReader>(); }
+        catch (const std::exception&) { m_readAheadUnavailable = true; return; }
+    }
+    const int nextTrack = m_track + step;
+    if (step && nextTrack >= 0 && nextTrack < 80)
+        m_reader->Start(*m_pDrive, static_cast<uint16_t>(nextTrack), m_side);
+    else
+        m_reader->Start(*m_pDrive, m_track, m_side ^ 1);
 }
 
 bool CFloppyController::FlushChanges()
@@ -483,12 +580,11 @@ bool CFloppyController::FlushChanges()
 
     if (decoded)  // Write to the file only if the track was correctly decoded from raw data
     {
-        // Track has 10 sectors, 512 bytes each; offset of the file is === ((Track<<1)+SIDE)*5120
-        long foffset = ((m_pDrive->datatrack * 2) + (m_pDrive->dataside)) * 5120;
-        if (m_pDrive->okNetRT11Image) foffset += 256;  // Skip .RTD image header
+        const long foffset = TrackOffset(m_pDrive->datatrack, m_pDrive->dataside, m_pDrive->okNetRT11Image);
 
         // Check file length
         auto& file = *m_pDrive->fpFile;
+        if (m_reader) m_reader->Discard(file);
         file.clear();
         file.seekp(0, std::ios::end);
         if (!file)
