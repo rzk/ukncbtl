@@ -4,11 +4,11 @@ UKNCBTL (UKNC Back to Life!) is a UKNC emulator with an SDL3 and Dear ImGui inte
 
 ## Build and install
 
-The build uses CMake 3.20 or newer, Ninja, and Clang with a C++23 standard library. CMake fetches pinned SDL3, Dear ImGui, and test dependency sources at configure time. See the [performance and testing guide](docs/performance.md) for offline builds and optional developer tools.
+The build uses CMake 3.20 or newer, Ninja, and Clang with a C++23 standard library. CMake fetches pinned Dear ImGui and test dependency sources at configure time. See the [performance and testing guide](docs/performance.md) for offline builds and optional developer tools.
 
 ### Linux
 
-The Linux presets pick up `clang` and `clang++` from `PATH`. With libstdc++, use Clang 19 or newer and libstdc++ 13 or newer for `std::expected` and `std::format`. Install CMake, Ninja, Git, `pkg-config`, and the SDL development dependencies for your desktop backends. If SDL reports a missing optional X11 extension, its configure error names the option you can disable. [SDL Linux build guide](https://wiki.libsdl.org/SDL3/README-linux)
+The Linux presets pick up `clang` and `clang++` from `PATH`. With libstdc++, use Clang 19 or newer and libstdc++ 13 or newer for `std::expected` and `std::format`. Install CMake, Ninja, Git, and the system SDL3 development package (3.4 or newer). On Fedora, `SDL3-devel` provides the CMake package and pulls in the `SDL3` runtime.
 
 Build and install from the repository root.
 
@@ -20,29 +20,11 @@ cmake --install build/linux-clang --prefix build/install-linux
 ./build/install-linux/bin/ukncbtl
 ```
 
-Use `linux-clang-debug` for a Debug build or configure with `-DBUILD_TESTING=OFF` for an application-only build. The install includes the emulator and license notices.
-
-#### Ubuntu 24.04 example
-
-Install the build tools and SDL desktop development libraries.
-
-```sh
-sudo apt-get update
-sudo apt-get install clang-19 libstdc++-13-dev cmake ninja-build git pkg-config \
-  libx11-dev libxext-dev libxcursor-dev libxfixes-dev libxi-dev libxrandr-dev \
-  libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libdecor-0-dev \
-  libgl-dev libegl-dev libasound2-dev libpulse-dev libdbus-1-dev
-```
-
-If you installed the versioned `clang-19` package, point CMake at `clang-19` and `clang++-19` on the first configure, then continue with the build and install commands above.
-
-```sh
-cmake --preset linux-clang -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19
-```
+Use `linux-clang-debug` for a Debug build or configure with `-DBUILD_TESTING=OFF` for an application-only build. The installed emulator uses the system SDL3 runtime.
 
 ### Windows
 
-Open an x64 developer command prompt with the Windows SDK, C++ standard library, and linker configured. Put CMake, Ninja, and Clang on PATH. The presets use `clang-cl` for C and C++.
+Open an x64 developer command prompt with the Windows SDK, C++ standard library, and linker configured. Put CMake, Ninja, and Clang on PATH. The presets use `clang-cl` for C and C++, and CMake fetches pinned SDL3 sources.
 
 ```powershell
 cmake --preset windows-clang

@@ -419,7 +419,9 @@ target_link_libraries(ukncbtl PRIVATE FrameWorker DearImGui UiFont UiAppearance 
 install(TARGETS ukncbtl RUNTIME DESTINATION bin)
 install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME UKNCBTL-LICENSE)
 install(FILES "${PROJECT_SOURCE_DIR}/third_party/NOTICE-RenderVfw" DESTINATION licenses)
-install(FILES "${sdl3_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME SDL3-LICENSE)
+if(bundled_sdl3_license)
+  install(FILES "${bundled_sdl3_license}" DESTINATION licenses RENAME SDL3-LICENSE)
+endif()
 install(FILES "${imgui_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME IMGUI-LICENSE)
 if(UKNCBTL_ENABLE_TRACY)
   install(FILES "${tracy_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME TRACY-LICENSE)
@@ -644,6 +646,7 @@ if(BUILD_TESTING)
   add_test(NAME SdlInstallSmoke COMMAND ${CMAKE_COMMAND}
     "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-install-test"
     "-DEXE_NAME=$<TARGET_FILE_NAME:ukncbtl>" "-DCONFIG=$<CONFIG>"
+    "-DEXPECT_SDL3_LICENSE=$<BOOL:${bundled_sdl3_license}>"
     "-DLLVM_READOBJ=${install_readobj}"
     "-DASAN_RUNTIME_DIR=${asan_runtime_dir}"
     -P "${PROJECT_SOURCE_DIR}/tests/SdlInstallSmoke.cmake")

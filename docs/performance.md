@@ -18,7 +18,7 @@ cmake --build --preset windows-clang --parallel
 ctest --preset windows-clang
 ```
 
-Run **ctest --test-dir build/windows-clang -N** to list cases. Use **ctest --preset windows-clang -R ProcessorTests** to filter by name. To use offline source checkouts, set FETCHCONTENT_SOURCE_DIR_SDL3 and FETCHCONTENT_SOURCE_DIR_IMGUI to the pinned dependency sources. Set FETCHCONTENT_SOURCE_DIR_GOOGLETEST, FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK and FETCHCONTENT_SOURCE_DIR_TRACY when enabling the corresponding tools.
+Run **ctest --test-dir build/windows-clang -N** to list cases. Use **ctest --preset windows-clang -R ProcessorTests** to filter by name. To use offline source checkouts, set `FETCHCONTENT_SOURCE_DIR_IMGUI` to the pinned Dear ImGui sources. On Windows, also set `FETCHCONTENT_SOURCE_DIR_SDL3` to the pinned SDL3 sources. Linux uses the installed SDL3 development package. Set `FETCHCONTENT_SOURCE_DIR_GOOGLETEST`, `FETCHCONTENT_SOURCE_DIR_GOOGLEBENCHMARK`, and `FETCHCONTENT_SOURCE_DIR_TRACY` when enabling the corresponding tools.
 
 ## AddressSanitizer
 
