@@ -16,7 +16,7 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 #include <gtest/gtest.h>
 #include <cwchar>
 #include <iterator>
-#include "emubase\Emubase.h"
+#include "emubase/Emubase.h"
 
 namespace
 {

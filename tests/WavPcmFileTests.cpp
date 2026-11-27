@@ -5,6 +5,7 @@
 #include <tuple>
 #include <cstdio>
 #include <chrono>
+#include <climits>
 #include <filesystem>
 #include <fstream>
 #include <vector>

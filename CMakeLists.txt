@@ -13,6 +13,23 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  include(CheckCXXSourceCompiles)
+  check_cxx_source_compiles([=[
+    #include <expected>
+    #include <format>
+    int main()
+    {
+      const std::expected<int, int> value = 1;
+      return std::format("{}", *value) == "1" ? 0 : 1;
+    }
+  ]=] UKNCBTL_HAS_CXX23_LIBRARY)
+  if(NOT UKNCBTL_HAS_CXX23_LIBRARY)
+    message(FATAL_ERROR "UKNCBTL requires a C++23 standard library with std::expected and std::format. "
+      "For libstdc++, use Clang 19 or newer with libstdc++ 13 or newer.")
+  endif()
+endif()
+
 if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
@@ -563,7 +580,8 @@ if(BUILD_TESTING)
     -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncSubtitles.cmake")
   set_tests_properties(SdlAsyncSubtitlesSmoke PROPERTIES TIMEOUT 90)
   add_test(NAME SdlAsyncRomsSmoke COMMAND ${CMAKE_COMMAND}
-    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-roms-test"
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DROM_FILE=${embedded_rom_input}"
+    "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-roms-test"
     -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncRoms.cmake")
   set_tests_properties(SdlAsyncRomsSmoke PROPERTIES TIMEOUT 120)
   add_test(NAME SdlAsyncTapeSmoke COMMAND ${CMAKE_COMMAND}

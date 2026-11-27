@@ -19,14 +19,37 @@
       "inherits": "windows-clang",
       "binaryDir": "${sourceDir}/build/windows-clang-debug",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "linux-clang",
+      "displayName": "Linux SDL frontend (Clang and Ninja)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-clang",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "linux-clang-debug",
+      "displayName": "Linux SDL frontend (Clang and Ninja, Debug)",
+      "inherits": "linux-clang",
+      "binaryDir": "${sourceDir}/build/linux-clang-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
     }
   ],
   "buildPresets": [
     { "name": "windows-clang", "configurePreset": "windows-clang" },
-    { "name": "windows-clang-debug", "configurePreset": "windows-clang-debug" }
+    { "name": "windows-clang-debug", "configurePreset": "windows-clang-debug" },
+    { "name": "linux-clang", "configurePreset": "linux-clang" },
+    { "name": "linux-clang-debug", "configurePreset": "linux-clang-debug" }
   ],
   "testPresets": [
     { "name": "windows-clang", "configurePreset": "windows-clang", "output": { "outputOnFailure": true } },
-    { "name": "windows-clang-debug", "configurePreset": "windows-clang-debug", "output": { "outputOnFailure": true } }
+    { "name": "windows-clang-debug", "configurePreset": "windows-clang-debug", "output": { "outputOnFailure": true } },
+    { "name": "linux-clang", "configurePreset": "linux-clang", "output": { "outputOnFailure": true } },
+    { "name": "linux-clang-debug", "configurePreset": "linux-clang-debug", "output": { "outputOnFailure": true } }
   ]
 }
