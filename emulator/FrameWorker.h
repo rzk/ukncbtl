@@ -5,6 +5,7 @@
 #include <exception>
 #include <functional>
 #include <mutex>
+#include <stop_token>
 #include <thread>
 
 // One task at a time, with externally serialized calls to the control methods.
@@ -30,19 +31,19 @@ public:
     [[nodiscard]] Outcome WaitOutcome() noexcept;
 private:
     bool Request(std::function<bool()> operation);
-    void Run();
+    void Run(std::stop_token stop);
     std::function<bool()> task_;
     std::function<bool()> operation_;
     std::function<void()> notify_;
     std::mutex mutex_;
-    std::condition_variable changed_;
-    bool stopping_ = false;
+    std::condition_variable_any changed_;
     bool outstanding_ = false;
     bool requested_ = false;
     bool completed_ = false;
     bool result_ = false;
     std::exception_ptr error_;
-    std::thread worker_;
+    // Destroy first so the worker stops and joins while its state is still alive.
+    std::jthread worker_;
 };
 
 // A failed frame may leave partially advanced state. A breakpoint is a normal

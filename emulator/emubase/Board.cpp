@@ -22,10 +22,10 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 //////////////////////////////////////////////////////////////////////
 // Bus devices
 
-static constexpr BusAddressRange ProcessorTimerAddressRanges[] =
+static constexpr auto ProcessorTimerAddressRanges = std::to_array<BusAddressRange>(
 {
     {0177710, 6},  // 177710-177715
-};
+});
 class CBusDeviceProcessorTimer : public CBusDevice
 {
 public:
@@ -33,11 +33,11 @@ public:
     std::span<const BusAddressRange> GetAddressRanges() const override { return ProcessorTimerAddressRanges; }
 };
 
-static constexpr BusAddressRange CpuChannelsAddressRanges[] =
+static constexpr auto CpuChannelsAddressRanges = std::to_array<BusAddressRange>(
 {
     {0176660, 16},
     {0177560, 8},
-};
+});
 class CBusDeviceCpuChannels : public CBusDevice
 {
 public:
@@ -45,10 +45,10 @@ public:
     std::span<const BusAddressRange> GetAddressRanges() const override { return CpuChannelsAddressRanges; }
 };
 
-static constexpr BusAddressRange PpuChannelsAddressRanges[] =
+static constexpr auto PpuChannelsAddressRanges = std::to_array<BusAddressRange>(
 {
     {0177060, 16},
-};
+});
 class CBusDevicePpuChannels : public CBusDevice
 {
 public:
@@ -56,10 +56,10 @@ public:
     std::span<const BusAddressRange> GetAddressRanges() const override { return PpuChannelsAddressRanges; }
 };
 
-static constexpr BusAddressRange NetworkAdapterAddressRanges[] =
+static constexpr auto NetworkAdapterAddressRanges = std::to_array<BusAddressRange>(
 {
     {0176560, 8},
-};
+});
 class CBusDeviceNetworkAdapter : public CBusDevice
 {
 public:
@@ -67,10 +67,10 @@ public:
     std::span<const BusAddressRange> GetAddressRanges() const override { return NetworkAdapterAddressRanges; }
 };
 
-static constexpr BusAddressRange SerialPortAddressRanges[] =
+static constexpr auto SerialPortAddressRanges = std::to_array<BusAddressRange>(
 {
     {0176570, 8},
-};
+});
 class CBusDeviceSerialPort : public CBusDevice
 {
 public:
@@ -78,10 +78,10 @@ public:
     std::span<const BusAddressRange> GetAddressRanges() const override { return SerialPortAddressRanges; }
 };
 
-static constexpr BusAddressRange CpuMemoryAccessAddressRanges[] =
+static constexpr auto CpuMemoryAccessAddressRanges = std::to_array<BusAddressRange>(
 {
     {0176640, 8},
-};
+});
 class CBusDeviceCpuMemoryAccess : public CBusDevice
 {
 public:
@@ -89,11 +89,11 @@ public:
     std::span<const BusAddressRange> GetAddressRanges() const override { return CpuMemoryAccessAddressRanges; }
 };
 
-static constexpr BusAddressRange PpuMemoryAccessAddressRanges[] =
+static constexpr auto PpuMemoryAccessAddressRanges = std::to_array<BusAddressRange>(
 {
     {0177010, 16},
     {0177054, 2},
-};
+});
 class CBusDevicePpuMemoryAccess : public CBusDevice
 {
 public:
@@ -101,10 +101,10 @@ public:
     std::span<const BusAddressRange> GetAddressRanges() const override { return PpuMemoryAccessAddressRanges; }
 };
 
-static constexpr BusAddressRange ProgrammablePortAddressRanges[] =
+static constexpr auto ProgrammablePortAddressRanges = std::to_array<BusAddressRange>(
 {
     {0177100, 4},  // i8255 ports
-};
+});
 class CBusDeviceProgrammablePort : public CBusDevice
 {
 public:
@@ -112,10 +112,10 @@ public:
     std::span<const BusAddressRange> GetAddressRanges() const override { return ProgrammablePortAddressRanges; }
 };
 
-static constexpr BusAddressRange KeyboardAddressRanges[] =
+static constexpr auto KeyboardAddressRanges = std::to_array<BusAddressRange>(
 {
     {0177700, 6},
-};
+});
 class CBusDeviceKeyboard : public CBusDevice
 {
 public:
@@ -123,10 +123,10 @@ public:
     std::span<const BusAddressRange> GetAddressRanges() const override { return KeyboardAddressRanges; }
 };
 
-static constexpr BusAddressRange FloppyControllerAddressRanges[] =
+static constexpr auto FloppyControllerAddressRanges = std::to_array<BusAddressRange>(
 {
     {0177130, 4},
-};
+});
 class CBusDeviceFloppyController : public CBusDevice
 {
 public:
@@ -134,10 +134,10 @@ public:
     std::span<const BusAddressRange> GetAddressRanges() const override { return FloppyControllerAddressRanges; }
 };
 
-static constexpr BusAddressRange HardDriveAddressRanges[] =
+static constexpr auto HardDriveAddressRanges = std::to_array<BusAddressRange>(
 {
     {0110000, 010000},
-};
+});
 class CBusDeviceHardDrive : public CBusDevice
 {
 public:
@@ -193,12 +193,9 @@ CMotherboard::CMotherboard ()
     m_pSecondMemCtl->Attach(this, m_pPPU.get());
 
     // Allocate memory for RAM and ROM
-    m_pRAM[0] = std::make_unique<uint8_t[]>(65536);
-    m_pRAM[1] = std::make_unique<uint8_t[]>(65536);
-    m_pRAM[2] = std::make_unique<uint8_t[]>(65536);
-    m_pROM = std::make_unique<uint8_t[]>(32768);
-    m_pROMCart[0] = nullptr;
-    m_pROMCart[1] = nullptr;
+    for (auto& plane : m_pRAM)
+        plane = std::make_unique<RamPlane>();
+    m_pROM = std::make_unique<SystemRom>();
 
     // Prepare bus devices
     m_cpuDeviceOwners[0] = std::make_unique<CBusDeviceProcessorTimer>();
@@ -224,6 +221,9 @@ CMotherboard::CMotherboard ()
 }
 
 CMotherboard::~CMotherboard () = default;
+
+CMemoryController* CMotherboard::GetCPUMemoryController() { return m_pFirstMemCtl.get(); }
+CMemoryController* CMotherboard::GetPPUMemoryController() { return m_pSecondMemCtl.get(); }
 
 void CMotherboard::SetTrace(uint32_t dwTrace)
 {
@@ -306,7 +306,7 @@ void CMotherboard::Reset ()
 
 void CMotherboard::LoadROM(std::span<const uint8_t, 32768> buffer)  // Load 32 KB ROM image from the buffer
 {
-    std::ranges::copy(buffer, m_pROM.get());
+    std::ranges::copy(buffer, m_pROM->begin());
 }
 
 void CMotherboard::LoadROMCartridge(int cartno, std::span<const uint8_t, 24 * 1024> buffer)  // Load 24 KB ROM cartridge image
@@ -315,20 +315,20 @@ void CMotherboard::LoadROMCartridge(int cartno, std::span<const uint8_t, 24 * 10
 
     int cartindex = cartno - 1;
     if (m_pROMCart[cartindex] == nullptr)
-        m_pROMCart[cartindex] = std::make_unique<uint8_t[]>(24 * 1024);
+        m_pROMCart[cartindex] = std::make_unique<CartridgeRom>();
 
-    std::ranges::copy(buffer, m_pROMCart[cartindex].get());
+    std::ranges::copy(buffer, m_pROMCart[cartindex]->begin());
 }
 
 void CMotherboard::LoadRAM(int plan, std::span<const uint8_t, 32768> buffer)  // Load 32 KB RAM image from the buffer
 {
     assert(plan >= 0 && plan <= 2);
-    std::ranges::copy(buffer, m_pRAM[plan].get());
+    std::ranges::copy(buffer, m_pRAM[plan]->begin());
 }
 
 void CMotherboard::SetNetStation(uint16_t station)
 {
-    CFirstMemoryController* pMemCtl = static_cast<CFirstMemoryController*>(m_pFirstMemCtl.get());
+    CFirstMemoryController* pMemCtl = m_pFirstMemCtl.get();
     pMemCtl->m_NetStation = station;
 }
 
@@ -455,7 +455,7 @@ uint16_t CMotherboard::GetHardPortWord(int slot, uint16_t port)
     assert(slot >= 1 && slot <= 2);
 
     if (m_pHardDrives[slot - 1] == nullptr) return 0;
-    port = (uint16_t) (~(port >> 1) & 7) | 0x1f0;
+    port = static_cast<uint16_t>(~(port >> 1) & 7) | 0x1f0;
     uint16_t data = m_pHardDrives[slot - 1]->ReadPort(port);
     return ~data;  // QBUS inverts the bits
 }
@@ -464,7 +464,7 @@ void CMotherboard::SetHardPortWord(int slot, uint16_t port, uint16_t data)
     assert(slot >= 1 && slot <= 2);
 
     if (m_pHardDrives[slot - 1] == nullptr) return;
-    port = (uint16_t) (~(port >> 1) & 7) | 0x1f0;
+    port = static_cast<uint16_t>(~(port >> 1) & 7) | 0x1f0;
     data = ~data;  // QBUS inverts the bits
     m_pHardDrives[slot - 1]->WritePort(port, data);
 }
@@ -474,36 +474,36 @@ void CMotherboard::SetHardPortWord(int slot, uint16_t port, uint16_t data)
 
 uint16_t CMotherboard::GetROMWord(uint16_t offset) const
 {
-    assert(offset < 32768);
+    assert(offset < m_pROM->size());
     offset &= 0xFFFE;
-    return static_cast<uint16_t>(m_pROM[offset] | (m_pROM[offset + 1] << 8));
+    const auto& rom = *m_pROM;
+    return static_cast<uint16_t>(rom[offset] | (rom[offset + 1] << 8));
 }
 uint8_t CMotherboard::GetROMByte(uint16_t offset) const
 {
-    assert(offset < 32768);
-    return m_pROM[offset];
+    assert(offset < m_pROM->size());
+    return (*m_pROM)[offset];
 }
 
 uint16_t CMotherboard::GetROMCartWord(int cartno, uint16_t offset) const
 {
     assert(cartno == 1 || cartno == 2);
-    assert(offset < 24 * 1024 - 1);
+    assert(offset < std::tuple_size_v<CartridgeRom>);
     int cartindex = cartno - 1;
     if (m_pROMCart[cartindex] == nullptr)
         return 0177777;
     offset &= 0xFFFE;
-    return static_cast<uint16_t>(m_pROMCart[cartindex][offset] |
-        (m_pROMCart[cartindex][offset + 1] << 8));
+    const auto& rom = *m_pROMCart[cartindex];
+    return static_cast<uint16_t>(rom[offset] | (rom[offset + 1] << 8));
 }
 uint8_t CMotherboard::GetROMCartByte(int cartno, uint16_t offset) const
 {
     assert(cartno == 1 || cartno == 2);
-    assert(offset < 24 * 1024);
+    assert(offset < std::tuple_size_v<CartridgeRom>);
     int cartindex = cartno - 1;
     if (m_pROMCart[cartindex] == nullptr)
         return 0377;
-    uint8_t* p = m_pROMCart[cartindex].get() + offset;
-    return *p;
+    return (*m_pROMCart[cartindex])[offset];
 }
 
 
@@ -670,12 +670,12 @@ void CMotherboard::SetSoundAYVal(int chip, uint8_t val)
 
 void CMotherboard::SetMouse(bool onoff)
 {
-    static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get())->SetMouse(onoff);
+    m_pSecondMemCtl->SetMouse(onoff);
 }
 
 void CMotherboard::MouseMove(int16_t dx, int16_t dy, bool btnLeft, bool btnRight)
 {
-    static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get())->MouseMove(dx, dy, btnLeft, btnRight);
+    m_pSecondMemCtl->MouseMove(dx, dy, btnLeft, btnRight);
 }
 
 
@@ -783,7 +783,7 @@ bool CMotherboard::SystemFrame()
             m_pFloppyCtl->Periodic();  // Each 32nd tick -- FDD tick
 
             // Keyboard processing
-            CSecondMemoryController* pMemCtl = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
+            CSecondMemoryController* pMemCtl = m_pSecondMemCtl.get();
             if ((pMemCtl->m_Port177700 & 0200) == 0)
             {
                 uint8_t row_Y = m_scanned_key & 0xF;
@@ -838,7 +838,7 @@ bool CMotherboard::SystemFrame()
                 {
                     bool tapeBit = m_TapeReadContextCallback ? m_TapeReadContextCallback(m_TapeContext, samples) :
                         m_TapeReadCallback(samples);
-                    CSecondMemoryController* pMemCtl = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
+                    CSecondMemoryController* pMemCtl = m_pSecondMemCtl.get();
                     if (pMemCtl->TapeInput(tapeBit))
                     {
                         m_timerflags |= 040;  // Set bit 5 of timer state: external event ready to read
@@ -846,7 +846,7 @@ bool CMotherboard::SystemFrame()
                 }
                 else if (m_TapeWriteCallback || m_TapeWriteContextCallback)  // Tape writing
                 {
-                    CSecondMemoryController* pMemCtl = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
+                    CSecondMemoryController* pMemCtl = m_pSecondMemCtl.get();
                     unsigned int value = pMemCtl->TapeOutput() ? 0xffffffff : 0;
                     if (m_TapeWriteContextCallback) m_TapeWriteContextCallback(m_TapeContext, value, samples);
                     else m_TapeWriteCallback(value, samples);
@@ -856,7 +856,7 @@ bool CMotherboard::SystemFrame()
 
         if (m_SerialInCallback != nullptr && frameticks % 416 == 0)
         {
-            CFirstMemoryController* pMemCtl = static_cast<CFirstMemoryController*>(m_pFirstMemCtl.get());
+            CFirstMemoryController* pMemCtl = m_pFirstMemCtl.get();
             if ((pMemCtl->m_Port176574 & 004) == 0)  // Not loopback?
             {
                 uint8_t b;
@@ -869,17 +869,17 @@ bool CMotherboard::SystemFrame()
         }
         if (m_SerialOutCallback != nullptr && frameticks % serialOutTicks == 0)
         {
-            CFirstMemoryController* pMemCtl = static_cast<CFirstMemoryController*>(m_pFirstMemCtl.get());
+            CFirstMemoryController* pMemCtl = m_pFirstMemCtl.get();
             if (serialTxCount > 0)
             {
                 serialTxCount--;
                 if (serialTxCount == 0)  // Translation countdown finished - the byte translated
                 {
                     if ((pMemCtl->m_Port176574 & 004) == 0)  // Not loopback?
-                        (*m_SerialOutCallback)((uint8_t)(pMemCtl->m_Port176576 & 0xff));
+                        (*m_SerialOutCallback)(static_cast<uint8_t>(pMemCtl->m_Port176576 & 0xff));
                     else  // Loopback
                     {
-                        if (pMemCtl->SerialInput((uint8_t)(pMemCtl->m_Port176576 & 0xff)) && (pMemCtl->m_Port176570 & 0100))
+                        if (pMemCtl->SerialInput(static_cast<uint8_t>(pMemCtl->m_Port176576 & 0xff)) && (pMemCtl->m_Port176570 & 0100))
                             m_pCPU->InterruptVIRQ(7, 0370);
                     }
                     pMemCtl->m_Port176574 |= 0200;  // Set Ready flag
@@ -895,7 +895,7 @@ bool CMotherboard::SystemFrame()
 
         if (m_NetworkInCallback != nullptr && frameticks % 64 == 0)
         {
-            CFirstMemoryController* pMemCtl = static_cast<CFirstMemoryController*>(m_pFirstMemCtl.get());
+            CFirstMemoryController* pMemCtl = m_pFirstMemCtl.get();
             if ((pMemCtl->m_Port176564 & 004) == 0)  // Not loopback?
             {
                 uint8_t b;
@@ -910,17 +910,17 @@ bool CMotherboard::SystemFrame()
         }
         if (m_NetworkOutCallback != nullptr && frameticks % networkOutTicks == 0)
         {
-            CFirstMemoryController* pMemCtl = static_cast<CFirstMemoryController*>(m_pFirstMemCtl.get());
+            CFirstMemoryController* pMemCtl = m_pFirstMemCtl.get();
             if (networkTxCount > 0)
             {
                 networkTxCount--;
                 if (networkTxCount == 0)  // Translation countdown finished - the byte translated
                 {
                     if ((pMemCtl->m_Port176564 & 004) == 0)  // Not loopback?
-                        (*m_NetworkOutCallback)((uint8_t)(pMemCtl->m_Port176566 & 0xff));
+                        (*m_NetworkOutCallback)(static_cast<uint8_t>(pMemCtl->m_Port176566 & 0xff));
                     else  // Loopback
                     {
-                        if (pMemCtl->NetworkInput((uint8_t)(pMemCtl->m_Port176566 & 0xff)) && (pMemCtl->m_Port176560 & 0100))
+                        if (pMemCtl->NetworkInput(static_cast<uint8_t>(pMemCtl->m_Port176566 & 0xff)) && (pMemCtl->m_Port176560 & 0100))
                             m_pCPU->InterruptVIRQ(9, 0360);
                     }
                     pMemCtl->m_Port176564 |= 0200;  // Set Ready flag
@@ -938,7 +938,7 @@ bool CMotherboard::SystemFrame()
 
         if ((m_ParallelOutCallback != nullptr || m_ParallelOutContextCallback != nullptr) && !m_okSoundCovox)
         {
-            CSecondMemoryController* pMemCtl = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
+            CSecondMemoryController* pMemCtl = m_pSecondMemCtl.get();
             if ((pMemCtl->m_Port177102 & 0x80) == 0x80 && (pMemCtl->m_Port177101 & 0x80) == 0x80)
             {
                 // Strobe set, Printer Ack set => reset Printer Ack
@@ -1039,14 +1039,13 @@ void CMotherboard::SaveToImage(std::span<uint8_t, UKNCIMAGE_SIZE> image)
     // PPU memory/IO controller status
     m_pSecondMemCtl->SaveToImage(image.subspan<352, 64>());
 
-    constexpr std::size_t romSize = 32 * 1024;
-    constexpr std::size_t ramSize = 64 * 1024;
-    std::ranges::copy(std::span{m_pROM.get(), romSize}, image.subspan<UKNCIMAGE_HEADER_SIZE, romSize>().begin());
+    constexpr auto romSize = std::tuple_size_v<SystemRom>;
+    std::ranges::copy(*m_pROM, image.subspan<UKNCIMAGE_HEADER_SIZE, romSize>().begin());
     std::span<uint8_t> ramImage = image.subspan<UKNCIMAGE_HEADER_SIZE + romSize>();
     for (const auto& plane : m_pRAM)
     {
-        std::ranges::copy(std::span{plane.get(), ramSize}, ramImage.begin());
-        ramImage = ramImage.subspan(ramSize);
+        std::ranges::copy(*plane, ramImage.begin());
+        ramImage = ramImage.subspan(plane->size());
     }
 }
 void CMotherboard::LoadFromImage(std::span<const uint8_t, UKNCIMAGE_SIZE> image)
@@ -1091,14 +1090,13 @@ void CMotherboard::LoadFromImage(std::span<const uint8_t, UKNCIMAGE_SIZE> image)
     // PPU memory/IO controller status
     m_pSecondMemCtl->LoadFromImage(image.subspan<352, 64>());
 
-    constexpr std::size_t romSize = 32 * 1024;
-    constexpr std::size_t ramSize = 64 * 1024;
-    std::ranges::copy(image.subspan<UKNCIMAGE_HEADER_SIZE, romSize>(), m_pROM.get());
+    constexpr auto romSize = std::tuple_size_v<SystemRom>;
+    std::ranges::copy(image.subspan<UKNCIMAGE_HEADER_SIZE, romSize>(), m_pROM->begin());
     std::span<const uint8_t> ramImage = image.subspan<UKNCIMAGE_HEADER_SIZE + romSize>();
-    for (const auto& plane : m_pRAM)
+    for (auto& plane : m_pRAM)
     {
-        std::ranges::copy(ramImage.first(ramSize), plane.get());
-        ramImage = ramImage.subspan(ramSize);
+        std::ranges::copy(ramImage.first(plane->size()), plane->begin());
+        ramImage = ramImage.subspan(plane->size());
     }
 }
 
@@ -1515,14 +1513,9 @@ void CMotherboard::DoSound()
     freq_out[3] = (m_timer >> 8) & 1; //250
     freq_out[4] = (m_timer >> 10) & 1; //60
 
-    int global = !(freq_out[0] & freq_enable[0]) & ! (freq_out[1] & freq_enable[1]) & !(freq_out[2] & freq_enable[2]) & !(freq_out[3] & freq_enable[3]) & !(freq_out[4] & freq_enable[4]);
-    if (freq_enable[5] == 0)
-        global = 0;
-    else
-    {
-        if ( (!freq_enable[0]) && (!freq_enable[1]) && (!freq_enable[2]) && (!freq_enable[3]) && (!freq_enable[4]))
-            global = 1;
-    }
+    const bool global = freq_enable[5] != 0 &&
+        !(freq_out[0] & freq_enable[0]) && !(freq_out[1] & freq_enable[1]) &&
+        !(freq_out[2] & freq_enable[2]) && !(freq_out[3] & freq_enable[3]) && !(freq_out[4] & freq_enable[4]);
 
     if (m_SoundPrevValue == 0 && global != 0)
         m_SoundChanges++;
@@ -1545,7 +1538,7 @@ void CMotherboard::DoSound()
     if (m_okSoundCovox)
     {
         // Get byte from printer port output register, inverted, and merge it with the channel data
-        CSecondMemoryController* pSecondMemCtl = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
+        CSecondMemoryController* pSecondMemCtl = m_pSecondMemCtl.get();
         uint8_t valuecovox = pSecondMemCtl->m_Port177100 ^ 0xff;
         value ^= valuecovox << 7;
     }
@@ -1686,7 +1679,7 @@ void CMotherboard::SetParallelOutCallback(PARALLELOUTCALLBACK outcallback)
 {
     m_ParallelOutContextCallback = nullptr;
     m_ParallelOutContext = nullptr;
-    CSecondMemoryController* pMemCtl = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
+    CSecondMemoryController* pMemCtl = m_pSecondMemCtl.get();
     if (outcallback == nullptr)  // Reset callback
     {
         pMemCtl->m_Port177101 &= ~2;  // Reset OnLine flag
@@ -1704,7 +1697,7 @@ void CMotherboard::SetParallelOutCallbackWithContext(PARALLELOUTCONTEXTCALLBACK 
     SetParallelOutCallback(nullptr);
     if (outcallback)
     {
-        auto* controller = static_cast<CSecondMemoryController*>(m_pSecondMemCtl.get());
+        auto* controller = m_pSecondMemCtl.get();
         controller->m_Port177101 |= 2;
         m_ParallelOutContextCallback = outcallback;
         m_ParallelOutContext = context;

@@ -1,13 +1,13 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "VirtualKeyboard.h"
-#include <iterator>
+#include <array>
 #include <string_view>
 #include <utility>
 
 namespace
 {
 using virtual_keyboard::Key;
-constexpr Key keys[]{
+constexpr auto keys = std::to_array<Key>({
     {"K1",0010,1,0},{"K2",0011,1,0},{"K3",0012,1,0},{"K4",0014,1,0},{"K5",0015,1,0},
     {"POM",0172,1.3f,0},{"UST",0152,1.3f,0},{"ISP",0151,1.3f,0},{"RESET",0171,1.5f,0},{"STOP",0004,1.3f,0},
     {"AR2",0006,1.2f,1},{";",0007,1,1},{"1",0030,1,1},{"2",0031,1,1},{"3",0032,1,1},{"4",0013,1,1},
@@ -23,14 +23,14 @@ constexpr Key keys[]{
     {"I",0073,1,4},{"T",0114,1,4},{"X",0115,1,4},{"B",0076,1,4},{"@",0077,1,4},{",",0117,1,4},
     {"Left",0116,1.3f,4},{"Up",0154,1.2f,4},{"Right",0133,1.5f,4},{"1",0127,1,4},{"2",0147,1,4},{"3",0167,1,4},
     {"Shift",0105,1.8f,5,true},{"FIKS",0107,1.4f,5},{"Space",0113,6,5},{"Shift",0105,1.8f,5,true},
-    {"Down",0134,1.5f,5},{"0",0126,1,5},{".",0146,1,5},{"KP Enter",0166,2,5}};
+    {"Down",0134,1.5f,5},{"0",0126,1,5},{".",0146,1,5},{"KP Enter",0166,2,5}});
 }
 
 std::span<const virtual_keyboard::Key> virtual_keyboard::Keys() { return keys; }
 
 std::string virtual_keyboard::Label(const Key& key, Legend legend)
 {
-    constexpr std::pair<std::uint8_t, std::u8string_view> cyrillic[]{
+    constexpr auto cyrillic = std::to_array<std::pair<std::uint8_t, std::u8string_view>>({
         {0047, u8"\u0424"}, {0073, u8"\u0418"}, {0111, u8"\u0421"}, {0071, u8"\u0412"},
         {0051, u8"\u0423"}, {0072, u8"\u0410"}, {0053, u8"\u041f"}, {0074, u8"\u0420"},
         {0036, u8"\u0428"}, {0075, u8"\u041e"}, {0056, u8"\u041b"}, {0057, u8"\u0414"},
@@ -38,7 +38,7 @@ std::string virtual_keyboard::Label(const Key& key, Legend legend)
         {0027, u8"\u0419"}, {0052, u8"\u041a"}, {0070, u8"\u042b"}, {0033, u8"\u0415"},
         {0055, u8"\u0413"}, {0112, u8"\u041c"}, {0050, u8"\u0426"}, {0110, u8"\u0427"},
         {0054, u8"\u041d"}, {0067, u8"\u042f"}, {0156, u8"\u0425"}, {0155, u8"\u042a"},
-        {0137, u8"\u0416"}, {0136, u8"\u042d"}, {0076, u8"\u0411"}, {0077, u8"\u042e"}};
+        {0137, u8"\u0416"}, {0136, u8"\u042d"}, {0076, u8"\u0411"}, {0077, u8"\u042e"}});
     if (legend == Legend::latin) return key.label;
     for (const auto& [scan, text] : cyrillic)
         if (scan == key.scan)

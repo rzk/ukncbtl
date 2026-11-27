@@ -67,24 +67,24 @@ size_t Width(Operation operation)
 }
 void Write(image::Writer& writer, Operation operation)
 {
-    const uint8_t data[]{1, 2, 3};
+    constexpr std::array<uint8_t, 3> data{1, 2, 3};
     switch (operation)
     {
     case Operation::Byte: writer.byte(1); break;
     case Operation::Word: writer.word(0x0201); break;
     case Operation::Dword: writer.dword(0x04030201); break;
-    case Operation::Copy: writer.copy(data); break;
+    case Operation::Copy: writer.copy(std::as_bytes(std::span{data})); break;
     case Operation::Skip: writer.skip(3); break;
     }
 }
-void Read(image::Reader& reader, Operation operation, uint8_t (&output)[3])
+void Read(image::Reader& reader, Operation operation, std::span<uint8_t, 3> output)
 {
     switch (operation)
     {
     case Operation::Byte: EXPECT_EQ(reader.byte(), 1); break;
     case Operation::Word: EXPECT_EQ(reader.word(), 0x0201); break;
     case Operation::Dword: EXPECT_EQ(reader.dword(), 0x04030201u); break;
-    case Operation::Copy: reader.copy(output); break;
+    case Operation::Copy: reader.copy(std::as_writable_bytes(output)); break;
     case Operation::Skip: reader.skip(3); break;
     }
 }
@@ -109,7 +109,7 @@ TEST_P(SerializationOperations, ReaderAcceptsExactCapacity)
 {
     const std::array<uint8_t, 6> bytes{0xcc, 1, 2, 3, 4, 0xcc};
     image::Reader reader(std::span{bytes}.subspan(1, Width(GetParam())));
-    uint8_t output[]{0xcc, 0xcc, 0xcc};
+    std::array<uint8_t, 3> output{0xcc, 0xcc, 0xcc};
     EXPECT_NO_THROW(Read(reader, GetParam(), output));
     if (GetParam() == Operation::Copy)
         for (int i = 0; i < 3; ++i) EXPECT_EQ(output[i], i + 1);
@@ -140,7 +140,7 @@ TEST_P(SerializationOperations, ShortReaderDoesNotMutateOutputOrAdvanceCursor)
         SCOPED_TRACE(size);
         const std::array<uint8_t, 4> bytes{1, 2, 3, 4};
         image::Reader reader(std::span{bytes}.first(size));
-        uint8_t output[]{0xcc, 0xcc, 0xcc};
+        std::array<uint8_t, 3> output{0xcc, 0xcc, 0xcc};
         EXPECT_THROW(Read(reader, GetParam(), output), std::out_of_range);
         for (const auto value : output) EXPECT_EQ(value, 0xcc);
         for (size_t i = 0; i < size; ++i) EXPECT_EQ(reader.byte(), i + 1);
@@ -166,12 +166,12 @@ TEST(SerializationTests, MixedFieldsHaveExpectedLayoutAndRoundTrip)
     std::array<uint8_t, 13> bytes{};
     bytes.fill(0xcc);
     image::Writer writer(std::span{bytes}.subspan(1, 11));
-    const uint16_t source[]{0x1234};
+    const std::array<uint16_t, 1> source{0x1234};
     writer.byte(0xab);
     writer.word(0x1234);
     writer.skip(2);
     writer.dword(0x89abcdef);
-    writer.copy(source);
+    writer.copy(std::as_bytes(std::span{source}));
     EXPECT_EQ(bytes[0], 0xcc);
     EXPECT_EQ(bytes[1], 0xab);
     EXPECT_EQ(bytes[2], 0x34);
@@ -186,9 +186,9 @@ TEST(SerializationTests, MixedFieldsHaveExpectedLayoutAndRoundTrip)
     EXPECT_EQ(reader.word(), 0x1234);
     reader.skip(2);
     EXPECT_EQ(reader.dword(), 0x89abcdefu);
-    uint16_t target[]{0};
-    reader.copy(target);
-    EXPECT_EQ(target[0], source[0]);
+    std::array<uint16_t, 1> target{};
+    reader.copy(std::as_writable_bytes(std::span{target}));
+    EXPECT_EQ(target, source);
     EXPECT_THROW(reader.byte(), std::out_of_range);
 }
 

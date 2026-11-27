@@ -321,9 +321,10 @@ std::vector<preview_debugger::Line> preview_debugger::Session::Disassemble(Proce
         std::array<std::uint16_t, 3> words{};
         for (unsigned word = 0; word < words.size(); ++word)
             words[word] = ReadWord(which, static_cast<std::uint16_t>(address + word * 2), true);
-        const auto* block = useSubtitles ? subtitles::Find(subtitles_, address, SUBTYPE_BLOCKCOMMENT) : nullptr;
-        const auto* subtitle = useSubtitles ? subtitles::Find(subtitles_, address, SUBTYPE_COMMENT | SUBTYPE_DATA) : nullptr;
-        const bool data = subtitle && (subtitle->type & SUBTYPE_DATA);
+        const auto* block = useSubtitles ? subtitles::Find(subtitles_, address, DisasmSubtitleType::blockComment) : nullptr;
+        const auto* subtitle = useSubtitles ? subtitles::Find(subtitles_, address,
+            DisasmSubtitleType::comment | DisasmSubtitleType::data) : nullptr;
+        const bool data = subtitle && MatchesSubtitleType(subtitle->type, DisasmSubtitleType::data);
         auto decoded = data ? std::optional{DisassembledInstruction{L".WORD", std::format(L"{:06o}", words[0]), 1}} :
             DisassembleInstruction(words, address);
         if (!decoded) break;

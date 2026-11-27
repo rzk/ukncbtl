@@ -9,6 +9,8 @@ Run the commands from the repository root with CMake, Ninja, and Clang configure
 | UKNCBTL_BUILD_BENCHMARKS | Build the Google Benchmark CPU, frame and scaling workloads. |
 | UKNCBTL_ENABLE_TRACY | Collect timing zones from the application or benchmarks. |
 | UKNCBTL_ENABLE_ASAN | Instrument a developer build with AddressSanitizer. |
+| UKNCBTL_ENABLE_UBSAN | Instrument a Linux developer build with UndefinedBehaviorSanitizer. |
+| UKNCBTL_ENABLE_TSAN | Instrument a Linux developer build with ThreadSanitizer. |
 
 ## Tests and offline builds
 
@@ -29,6 +31,10 @@ ctest --test-dir build/asan --output-on-failure
 ```
 
 Use the sanitizer build for local diagnostics. It uses the Clang sanitizer runtime and shared C/C++ runtime on Windows. Use the standard release build for distribution and performance measurements.
+
+On Linux, add `-DUKNCBTL_ENABLE_UBSAN=ON` to the sanitizer configuration to match the combined checks run in CI.
+For the frame worker race checks, configure a separate Linux build with `-DUKNCBTL_ENABLE_TSAN=ON`, build the
+`PreviewDebuggerTests` target, and run CTest with `-R '^FrameWorker\.'`.
 
 ## Speed measurements
 

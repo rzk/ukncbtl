@@ -1,5 +1,5 @@
 #include "Input.h"
-#include <algorithm>
+#include <array>
 namespace input
 {
 bool KeyQueue::Push(uint16_t event)
@@ -17,7 +17,7 @@ uint16_t KeyQueue::Pop()
     --count;
     return event;
 }
-const uint8_t arrPcscan2UkncscanLat[256] =    // LAT
+constexpr std::array<uint8_t, 256> arrPcscan2UkncscanLat =    // LAT
 {
     /*       0     1     2     3     4     5     6     7     8     9     a     b     c     d     e     f  */
     /*0*/    0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0132, 0026, 0000, 0000, 0000, 0153, 0166, 0000,
@@ -37,7 +37,7 @@ const uint8_t arrPcscan2UkncscanLat[256] =    // LAT
     /*e*/    0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000,
     /*f*/    0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000,
 };
-const uint8_t arrPcscan2UkncscanRus[256] =    // RUS
+constexpr std::array<uint8_t, 256> arrPcscan2UkncscanRus =    // RUS
 {
     /*       0     1     2     3     4     5     6     7     8     9     a     b     c     d     e     f  */
     /*0*/    0000, 0000, 0000, 0000, 0000, 0000, 0000, 0000, 0132, 0026, 0000, 0000, 0000, 0153, 0166, 0000,
@@ -116,8 +116,11 @@ int16_t MouseAxis(int position, int previous, int low, int high, int displayedSi
     int64_t delta = int64_t{position} - previous;
     if (delta != 0 && position < low) delta -= (int64_t{low} - position) / 2;
     if (delta != 0 && position > high) delta += (int64_t{position} - high) / 2;
-    delta = delta * nativeSize / displayedSize;
-    return static_cast<int16_t>(std::clamp<int64_t>(delta, -127, 127));
+    // Saturate before multiplication so extreme coordinates cannot overflow.
+    const auto maxDelta = int64_t{127} * displayedSize / nativeSize;
+    if (delta > maxDelta) return 127;
+    if (delta < -maxDelta) return -127;
+    return static_cast<int16_t>(delta * nativeSize / displayedSize);
 }
 bool MouseButton(int16_t state, bool focused)
 {

@@ -23,6 +23,8 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 class CProcessor;
 class CMemoryController;
+class CFirstMemoryController;
+class CSecondMemoryController;
 class CSoundAY;
 using FLOPPYTRACECALLBACK = void(*)(void* context, std::wstring_view text);
 enum class FloppyError { readFailed, writeFailed, invalidTrack };
@@ -181,8 +183,8 @@ public:  // Construct / destruct
 protected:  // Devices
     std::unique_ptr<CProcessor> m_pCPU;  ///< CPU device
     std::unique_ptr<CProcessor> m_pPPU;  ///< PPU device
-    std::unique_ptr<CMemoryController> m_pFirstMemCtl;  ///< CPU memory control
-    std::unique_ptr<CMemoryController> m_pSecondMemCtl;  ///< PPU memory control
+    std::unique_ptr<CFirstMemoryController> m_pFirstMemCtl;  ///< CPU memory control
+    std::unique_ptr<CSecondMemoryController> m_pSecondMemCtl;  ///< PPU memory control
     std::unique_ptr<CFloppyController> m_pFloppyCtl;  ///< FDD control
     std::array<std::unique_ptr<CHardDrive>, 2> m_pHardDrives;  ///< HDD control
     std::array<std::optional<HardDiskError>, 2> m_hardFailures{};
@@ -191,8 +193,8 @@ protected:  // Devices
 public:  // Getting devices
     CProcessor*     GetCPU() { return m_pCPU.get(); }  ///< Getter for m_pCPU
     CProcessor*     GetPPU() { return m_pPPU.get(); }  ///< Getter for m_pPPU
-    CMemoryController*  GetCPUMemoryController() { return m_pFirstMemCtl.get(); }  ///< Get CPU memory controller
-    CMemoryController*  GetPPUMemoryController() { return m_pSecondMemCtl.get(); }  ///< Get PPU memory controller
+    CMemoryController*  GetCPUMemoryController();  ///< Get CPU memory controller
+    CMemoryController*  GetPPUMemoryController();  ///< Get PPU memory controller
 
 protected:
     std::array<std::unique_ptr<CBusDevice>, 5> m_cpuDeviceOwners;
@@ -204,15 +206,18 @@ public:
     std::span<const CBusDevice* const> GetPPUBusDevices() const { return m_pPpuDevices; }
 
 protected:  // Memory
-    std::array<std::unique_ptr<uint8_t[]>, 3> m_pRAM;  ///< RAM, three planes, 64 KB each
-    std::unique_ptr<uint8_t[]> m_pROM;     ///< System ROM, 32 KB
-    std::array<std::unique_ptr<uint8_t[]>, 2> m_pROMCart;  ///< ROM cartridges #1 and #2, 24 KB each
+    using RamPlane = std::array<uint8_t, 64 * 1024>;
+    using SystemRom = std::array<uint8_t, 32 * 1024>;
+    using CartridgeRom = std::array<uint8_t, 24 * 1024>;
+    std::array<std::unique_ptr<RamPlane>, 3> m_pRAM;
+    std::unique_ptr<SystemRom> m_pROM;
+    std::array<std::unique_ptr<CartridgeRom>, 2> m_pROMCart;
 public:  // Memory access
     // A live view for the current board owner. Copy before handing off the board.
     [[nodiscard]] std::span<const uint8_t, 65536> RAMPlane(int plane) const
     {
         assert(plane >= 0 && plane < static_cast<int>(m_pRAM.size()));
-        return std::span<const uint8_t, 65536>(m_pRAM[plane].get(), 65536);
+        return *m_pRAM[plane];
     }
     uint16_t    GetRAMWord(int plan, uint16_t offset) const;
     uint8_t     GetRAMByte(int plan, uint16_t offset) const;
@@ -431,24 +436,26 @@ inline uint16_t CMotherboard::GetRAMWord(int plan, uint16_t offset) const
 {
     assert(plan >= 0 && plan <= 2);
     offset &= 0xFFFE;
-    return static_cast<uint16_t>(m_pRAM[plan][offset] | (m_pRAM[plan][offset + 1] << 8));
+    const auto& ram = *m_pRAM[plan];
+    return static_cast<uint16_t>(ram[offset] | (ram[offset + 1] << 8));
 }
 inline uint8_t CMotherboard::GetRAMByte(int plan, uint16_t offset) const
 {
     assert(plan >= 0 && plan <= 2);
-    return m_pRAM[plan][offset];
+    return (*m_pRAM[plan])[offset];
 }
 inline void CMotherboard::SetRAMWord(int plan, uint16_t offset, uint16_t word)
 {
     assert(plan >= 0 && plan <= 2);
     offset &= 0xFFFE;
-    m_pRAM[plan][offset] = static_cast<uint8_t>(word);
-    m_pRAM[plan][offset + 1] = static_cast<uint8_t>(word >> 8);
+    auto& ram = *m_pRAM[plan];
+    ram[offset] = static_cast<uint8_t>(word);
+    ram[offset + 1] = static_cast<uint8_t>(word >> 8);
 }
 inline void CMotherboard::SetRAMByte(int plan, uint16_t offset, uint8_t byte)
 {
     assert(plan >= 0 && plan <= 2);
-    m_pRAM[plan][offset] = byte;
+    (*m_pRAM[plan])[offset] = byte;
 }
 
 

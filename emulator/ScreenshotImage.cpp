@@ -2,7 +2,7 @@
 #include "ScreenshotImage.h"
 #include "VideoDecoder.h"
 #include "util/ScreenScale.h"
-#include <cstring>
+#include <algorithm>
 #include <limits>
 
 std::optional<screenshot_image::Image> screenshot_image::Prepare(std::span<const std::uint32_t> source, int mode)
@@ -28,11 +28,12 @@ bool screenshot_image::CopyTopDown(const Image& image, std::span<std::byte> outp
     if (pitch == 0) pitch = stride;
     if (pitch < stride || static_cast<std::size_t>(image.height - 1) > (output.size() - stride) / pitch)
         return false;
+    const auto pixels = std::span(image.pixels);
     for (int row = 0; row < image.height; ++row)
     {
         const auto source = static_cast<std::size_t>(image.height - row - 1) * width;
-        std::memcpy(output.data() + static_cast<std::size_t>(row) * pitch,
-            image.pixels.data() + source, stride);
+        std::ranges::copy(std::as_bytes(pixels.subspan(source, width)),
+            output.subspan(static_cast<std::size_t>(row) * pitch, stride).begin());
     }
     return true;
 }

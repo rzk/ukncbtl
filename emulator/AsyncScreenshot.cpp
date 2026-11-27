@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "AsyncScreenshot.h"
 #include "ScreenshotFile.h"
+#include "util/SdlThreadCleanup.h"
 #include <utility>
 
 bool screenshot_file::AsyncSave::Start(std::filesystem::path path, screenshot_image::Image image)
@@ -10,6 +11,7 @@ bool screenshot_file::AsyncSave::Start(std::filesystem::path path, screenshot_im
     {
         path_ = std::move(path);
         result_.Start([path = path_, image = std::move(image)] {
+            thread_local const SdlThreadCleanup cleanup;
             try { return screenshot_file::Save(path, image).has_value(); }
             catch (...) { return false; }
         });
@@ -25,6 +27,7 @@ bool screenshot_file::AsyncSave::StartScaled(std::filesystem::path path, std::ve
     {
         path_ = std::move(path);
         result_.Start([path = path_, pixels = std::move(pixels), mode] {
+            thread_local const SdlThreadCleanup cleanup;
             try
             {
                 const auto image = screenshot_image::Prepare(pixels, mode);

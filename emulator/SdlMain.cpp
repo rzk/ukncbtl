@@ -51,6 +51,8 @@
 #include "emubase/Board.h"
 #include "emubase/Processor.h"
 #include "util/ScreenScale.h"
+#include "util/SdlThreadCleanup.h"
+#include "util/Utf8Path.h"
 #include "util/Profiler.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -68,6 +70,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -78,7 +81,7 @@
 #include <vector>
 
 // The portable core delegates diagnostics to its host.
-void DebugLog(const wchar_t* message) { std::fwprintf(stderr, L"%ls", message); }
+void DebugLog(const wchar_t* message) { std::fputws(message, stderr); }
 
 namespace
 {
@@ -121,6 +124,12 @@ struct ImGuiClipboard
         io.Platform_ClipboardUserData = previousUserData;
     }
 };
+
+void WriteOctalAddress(std::span<char, 16> text, std::uint16_t address)
+{
+    const auto result = std::format_to_n(text.data(), text.size() - 1, "{:06o}", address);
+    *result.out = '\0';
+}
 
 int ConsoleHistoryCallback(ImGuiInputTextCallbackData* data)
 {
@@ -172,11 +181,7 @@ int Run(const preview_options::Options& options)
         {
             // Keep the existing settings location so upgrades retain preferences and layout.
             const std::unique_ptr<char, decltype(&SDL_free)> directory(SDL_GetPrefPath("UKNCBTL", "SDL Preview"), SDL_free);
-            if (directory)
-            {
-                const std::u8string utf8(reinterpret_cast<const char8_t*>(directory.get()));
-                settingsPath = std::filesystem::path(utf8) / "settings.ini";
-            }
+            if (directory) settingsPath = PathFromUtf8(directory.get()) / "settings.ini";
         }
         if (!settingsPath) startupError = "Could not locate application settings. Changes will not be saved.";
     }
@@ -238,7 +243,7 @@ int Run(const preview_options::Options& options)
         (void)SDL_SetWindowTitle(window.get(), "UKNCBTL");
         return true;
     };
-    ProcessorRuntime processor;
+    ProcessorRuntime processorRuntime;
     CMotherboard board;
     media_slots::Slots media(board);
     preview_roms::Roms roms(board);
@@ -550,7 +555,7 @@ int Run(const preview_options::Options& options)
     bool followPc = true;
     std::string disasmError;
     std::array<char, 16> spriteAddress{};
-    std::snprintf(spriteAddress.data(), spriteAddress.size(), "%06o", static_cast<unsigned>(settings.spriteAddress));
+    WriteOctalAddress(spriteAddress, settings.spriteAddress);
     std::string spriteError;
     std::string debuggerError;
     std::string registerError, memoryError;
@@ -816,7 +821,10 @@ int Run(const preview_options::Options& options)
         }) == FrameWorker::Outcome::completed;
     };
     const auto runAudioOperation = [&](std::function<bool()> operation) {
-        return runBoardOperation(std::move(operation), testAudioOverlap);
+        return runBoardOperation([operation = std::move(operation)] {
+            thread_local const SdlThreadCleanup cleanup;
+            return operation();
+        }, testAudioOverlap);
     };
     const auto reportAudioError = [&] {
         reportActionError("Audio failed. Use Audio > Output to retry.");
@@ -902,7 +910,7 @@ int Run(const preview_options::Options& options)
             {
                 if (found)
                 {
-                    std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(*found));
+                    WriteOctalAddress(memoryAddress, *found);
                     memoryError.clear();
                 }
                 else memoryError = "Value not found in the captured memory.";
@@ -941,15 +949,13 @@ int Run(const preview_options::Options& options)
     constexpr auto testTraceMask = preview_debugger::TraceInstructionsCpu | preview_debugger::TraceInstructionsPpu;
     if (testTracePath)
     {
-        const std::u8string path(reinterpret_cast<const char8_t*>(testTracePath));
-        if (!startTrace(std::filesystem::path(path), testTraceMask)) return 1;
+        if (!startTrace(PathFromUtf8(testTracePath), testTraceMask)) return 1;
         if (testTraceFailure || testTraceFailureExit) preview_debugger::testing::FailWorkerTraceWrites(true);
         if (testTraceRecordFailure) preview_debugger::testing::ThrowOnTraceRecord(2);
     }
     if (testPrinterPath)
     {
-        const std::u8string path(reinterpret_cast<const char8_t*>(testPrinterPath));
-        if (!startPrinter(std::filesystem::path(path))) return 1;
+        if (!startPrinter(PathFromUtf8(testPrinterPath))) return 1;
         board.GetCPU()->SetDCLOPin(true);
         board.GetPPU()->SetDCLOPin(true);
         preview_printer::testing::FailWorkerWrites(testPrinterFailureExit);
@@ -1030,7 +1036,13 @@ int Run(const preview_options::Options& options)
     const auto refreshAudioDevices = [&] {
         if (!audioDevicesStale || audioDeviceScan.Pending() || !(SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO)) return;
         audioDevicesStale = false;
-        try { audioDeviceScan.Start(sdl_audio::PlaybackDevices); }
+        try
+        {
+            audioDeviceScan.Start([] {
+                thread_local const SdlThreadCleanup cleanup;
+                return sdl_audio::PlaybackDevices();
+            });
+        }
         catch (const std::system_error&) { SDL_Log("Could not start the audio device scan"); }
     };
     using ClipboardCopy = screenshot_clipboard::AsyncCopy;
@@ -1358,8 +1370,7 @@ int Run(const preview_options::Options& options)
 #ifdef UKNCBTL_TEST_HOOKS
         if (testScreenshotPath && !requestedTestScreenshot && (!testShutdownPump || frames >= 2))
         {
-            const std::u8string path(reinterpret_cast<const char8_t*>(testScreenshotPath));
-            screenshotPath = std::filesystem::path(path);
+            screenshotPath = PathFromUtf8(testScreenshotPath);
             screenshotMode = 3;
             if (SDL_getenv("UKNCBTL_TEST_SCREENSHOT_MATCH_DISPLAY")) displayMode = screenshotMode;
             requestedTestScreenshot = true;
@@ -1527,10 +1538,10 @@ int Run(const preview_options::Options& options)
             }
             else if (result->status == sdl_file_dialog::Status::selected)
             {
-                const std::u8string path(reinterpret_cast<const char8_t*>(result->path.data()), result->path.size());
+                const auto path = PathFromUtf8(result->path);
                 if (result->purpose == sdl_file_dialog::Purpose::trace)
                 {
-                    auto target = std::filesystem::path(path);
+                    auto target = path;
                     if (!target.has_extension()) target += ".log";
                     if (conflicts(target) || !startTrace(target, static_cast<std::uint16_t>(result->slot)))
                     { actionError = "Could not start the trace. The selected file may be in use or unavailable."; showActionError = true; }
@@ -1539,7 +1550,7 @@ int Run(const preview_options::Options& options)
                     result->purpose == sdl_file_dialog::Purpose::displayListDump ||
                     result->purpose == sdl_file_dialog::Purpose::consoleLog)
                 {
-                    auto target = std::filesystem::path(path);
+                    auto target = path;
                     const bool memory = result->purpose == sdl_file_dialog::Purpose::memoryDump;
                     const bool log = result->purpose == sdl_file_dialog::Purpose::consoleLog;
                     if (!target.has_extension()) target += memory ? ".bin" : ".txt";
@@ -1581,7 +1592,7 @@ int Run(const preview_options::Options& options)
                 else if (result->purpose == sdl_file_dialog::Purpose::tapeOpen ||
                     result->purpose == sdl_file_dialog::Purpose::tapeCreate)
                 {
-                    auto target = std::filesystem::path(path);
+                    auto target = path;
                     const bool creating = result->purpose == sdl_file_dialog::Purpose::tapeCreate;
                     if (creating && !target.has_extension()) target += ".wav";
                     if (conflicts(target))
@@ -1600,7 +1611,7 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::createDisk)
                 {
-                    auto target = std::filesystem::path(path);
+                    auto target = path;
                     if (!target.has_extension()) target += ".dsk";
                     if (conflicts(target))
                     { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
@@ -1617,7 +1628,7 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::printer)
                 {
-                    const auto target = std::filesystem::path(path);
+                    const auto& target = path;
                     if (conflicts(target))
                     { actionError = "The selected file is used by the emulator. Choose another file."; showActionError = true; }
                     else if (!startPrinter(target))
@@ -1625,16 +1636,16 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose != sdl_file_dialog::Purpose::screenshot &&
                     result->purpose != sdl_file_dialog::Purpose::snapshotSave &&
-                    conflictsWithOutputOrPendingFile(std::filesystem::path(path)))
+                    conflictsWithOutputOrPendingFile(path))
                 { actionError = "The selected file is used for emulator output. Choose another file."; showActionError = true; }
                 else if (result->purpose == sdl_file_dialog::Purpose::screenshot)
                 {
                     const auto format = result->filter == 1 ? screenshot_format::Format::bmp : screenshot_format::Format::png;
-                    screenshotPath = screenshot_file::WithDefaultExtension(std::filesystem::path(path), format);
+                    screenshotPath = screenshot_file::WithDefaultExtension(path, format);
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::subtitles)
                 {
-                    const auto source = std::filesystem::path(path);
+                    const auto& source = path;
                     if (subtitleLoad.Pending()) reportActionError("A disassembly listing is already being loaded.");
                     else if (conflicts(source)) reportActionError("The selected file is used by the emulator. Choose another file.");
                     else if (!subtitleLoad.Start(source)) reportActionError("Could not start loading the disassembly listing.");
@@ -1649,16 +1660,15 @@ int Run(const preview_options::Options& options)
                 else if (result->purpose == sdl_file_dialog::Purpose::snapshotLoad)
                 {
                     if (snapshotLoad.Pending()) reportActionError("A state image is already being loaded.");
-                    else if (conflicts(std::filesystem::path(path)))
+                    else if (conflicts(path))
                         reportActionError("The selected file is used by the emulator. Choose another file.");
-                    else if (!snapshotLoad.Start(std::filesystem::path(path)))
+                    else if (!snapshotLoad.Start(path))
                         reportActionError("Could not start loading the state image.");
                     else if (romLoad.Pending() && romLoad.Slot() == -1) romLoad.Cancel();
 #ifdef UKNCBTL_TEST_HOOKS
                     else if (testSnapshotLoadPath)
                     {
-                        const auto source = std::filesystem::path(path);
-                        if (!snapshotLoad.Pending() || !conflicts(source.parent_path() / "." / source.filename())) return 1;
+                        if (!snapshotLoad.Pending() || !conflicts(path.parent_path() / "." / path.filename())) return 1;
                         if (testSnapshotLoadCancel &&
                             (!resetMachine() || !snapshotLoad.Cancelled() || (testBoardOperations && pumpedBoardOperations != 2))) return 1;
                     }
@@ -1666,7 +1676,7 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::snapshotSave)
                 {
-                    const auto target = preview_snapshot::WithDefaultExtension(std::filesystem::path(path));
+                    const auto target = preview_snapshot::WithDefaultExtension(path);
                     if (conflicts(target))
                     {
                         actionError = "The selected file is used by the emulator. Choose another file.";
@@ -1705,7 +1715,7 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::systemRom)
                 {
-                    const auto source = std::filesystem::path(path);
+                    const auto& source = path;
                     if (romLoad.Pending()) reportActionError("A ROM image is already being loaded.");
                     else if (media.Conflicts(source)) reportActionError("The selected file is used by the emulator. Choose another file.");
                     else if (!romLoad.Start(source, -1)) reportActionError("Could not start loading the system ROM image.");
@@ -1723,7 +1733,7 @@ int Run(const preview_options::Options& options)
                 }
                 else if (result->purpose == sdl_file_dialog::Purpose::cartridge)
                 {
-                    const auto source = std::filesystem::path(path);
+                    const auto& source = path;
                     if (romLoad.Pending()) reportActionError("A ROM image is already being loaded.");
                     else if (result->slot < 0 || result->slot >= 2 || roms.Inserted(result->slot) || media.Conflicts(source))
                         reportActionError("Could not load the ROM cartridge image.");
@@ -1738,7 +1748,7 @@ int Run(const preview_options::Options& options)
                 }
                 else
                 {
-                    const auto source = std::filesystem::path(path);
+                    const auto& source = path;
                     if (diskMount.Pending()) reportActionError("A disk image is already being opened.");
                     else if (const auto allowed = media.CheckAttach(result->kind, result->slot, source, result->readOnly); !allowed)
                         reportMountError(allowed.error());
@@ -2434,7 +2444,7 @@ int Run(const preview_options::Options& options)
                     }
                 };
                 const auto goMemory = [&](std::uint16_t address) {
-                    std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(address));
+                    WriteOctalAddress(memoryAddress, address);
                     if (settings.memorySource != static_cast<int>(preview_debugger::MemorySource::selected))
                     { settings.memorySource = static_cast<int>(preview_debugger::MemorySource::selected); settingsDirty = true; }
                     if ((address & 1) && !settings.memoryBytes) { settings.memoryBytes = true; settingsDirty = true; }
@@ -2670,19 +2680,19 @@ int Run(const preview_options::Options& options)
                         memorySource == preview_debugger::MemorySource::ppu ? preview_debugger::Processor::ppu : debugProcessor;
                     const auto& addressProcessor = debugger.GetProcessor(memoryProcessor);
                     if (ImGui::Button("Use PC"))
-                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(addressProcessor.GetPC()));
+                        WriteOctalAddress(memoryAddress, addressProcessor.GetPC());
                     ImGui::SameLine();
                     if (ImGui::Button("Use SP"))
-                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(addressProcessor.GetSP()));
+                        WriteOctalAddress(memoryAddress, addressProcessor.GetSP());
                     const auto oldBase = settings.memoryBytes ? preview_debugger::ParseWord(memoryAddress.data()) :
                         preview_debugger::ParseAddress(memoryAddress.data());
                     ImGui::SameLine();
                     ImGui::BeginDisabled(!oldBase);
                     if (ImGui::Button("Previous page") && oldBase)
-                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(static_cast<std::uint16_t>(*oldBase - 64)));
+                        WriteOctalAddress(memoryAddress, static_cast<std::uint16_t>(*oldBase - 64));
                     ImGui::SameLine();
                     if (ImGui::Button("Next page") && oldBase)
-                        std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(static_cast<std::uint16_t>(*oldBase + 64)));
+                        WriteOctalAddress(memoryAddress, static_cast<std::uint16_t>(*oldBase + 64));
                     ImGui::EndDisabled();
                     const auto base = settings.memoryBytes ? preview_debugger::ParseWord(memoryAddress.data()) :
                         preview_debugger::ParseAddress(memoryAddress.data());
@@ -2890,7 +2900,7 @@ int Run(const preview_options::Options& options)
                 const auto page = sprite::PageBytes(settings.spriteWidth, settings.spriteMode);
                 const auto movePage = [&](int direction) {
                     settings.spriteAddress = static_cast<std::uint16_t>(settings.spriteAddress + direction * page);
-                    std::snprintf(spriteAddress.data(), spriteAddress.size(), "%06o", static_cast<unsigned>(settings.spriteAddress));
+                    WriteOctalAddress(spriteAddress, settings.spriteAddress);
                     spriteError.clear(); settingsDirty = true;
                 };
                 if (ImGui::Button("Previous page")) movePage(-1);
@@ -3035,8 +3045,7 @@ int Run(const preview_options::Options& options)
             {
                 if (verifiedTraceRecovery || debugger.TracePath() || debugger.TraceMask()) return 1;
                 preview_debugger::testing::FailWorkerTraceWrites(false);
-                const std::u8string path(reinterpret_cast<const char8_t*>(testTracePath));
-                if (!startTrace(std::filesystem::path(path), testTraceMask)) return 1;
+                if (!startTrace(PathFromUtf8(testTracePath), testTraceMask)) return 1;
                 verifiedTraceRecovery = true;
                 traceErrorUnacknowledged = false; // Simulate acknowledging the test dialog.
             }
@@ -3261,12 +3270,12 @@ int Run(const preview_options::Options& options)
             if (!debugger.MemoryChanged(ram1, debugProcessor, testMemoryAddress, true)) return 1;
             settings.memorySource = static_cast<int>(ram1);
             settings.memoryBytes = true;
-            std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(testMemoryAddress - 1));
+            WriteOctalAddress(memoryAddress, testMemoryAddress - 1);
             if (!startMemorySearch(testMemoryAddress - 1, 0xac, preview_debugger::SearchDirection::forward) ||
                 (testBoardOperations && pumpedBoardOperations - before != 2)) return 1;
             board.SetRAMByte(1, testMemoryAddress, 0x33);
             if (testDebuggerSearchDiscard)
-                std::snprintf(memoryAddress.data(), memoryAddress.size(), "%06o", static_cast<unsigned>(testMemoryAddress + 1));
+                WriteOctalAddress(memoryAddress, testMemoryAddress + 1);
             requestedDebuggerSearch = true;
         }
 #endif
@@ -3345,8 +3354,8 @@ int Run(const preview_options::Options& options)
             }
             else if (screenshotPath)
             {
-                const bool started = screenshotSave.StartScaled(*screenshotPath, pixels, screenshotMode);
-                if (!started)
+                const bool saveStarted = screenshotSave.StartScaled(*screenshotPath, pixels, screenshotMode);
+                if (!saveStarted)
                 {
                     if (showActionError) actionError += "\n";
                     else actionError.clear();
@@ -3405,8 +3414,7 @@ int Run(const preview_options::Options& options)
             if (testSaveDuringFrame && frames == 0 && !fileOutputPending()) return 1;
             if (testScreenshotPath && !testScreenshotConflict && requestedTestScreenshot && !verifiedScreenshotReservation)
             {
-                const auto path = std::filesystem::path(std::u8string(
-                    reinterpret_cast<const char8_t*>(testScreenshotPath)));
+                const auto path = PathFromUtf8(testScreenshotPath);
                 if (!reservesPath(screenshotSave, path.parent_path() / "." / path.filename())) return 1;
                 verifiedScreenshotReservation = true;
             }
@@ -3806,14 +3814,19 @@ int main(int argc, char** argv)
     std::vector<std::string_view> arguments;
     for (int index = 1; index < argc; ++index) arguments.emplace_back(argv[index]);
     const auto options = preview_options::Parse(arguments);
-    if (!options) { std::fprintf(stderr, "%s\nUse --help for usage.\n", options.error().c_str()); return 2; }
+    if (!options)
+    {
+        std::fputs(options.error().c_str(), stderr);
+        std::fputs("\nUse --help for usage.\n", stderr);
+        return 2;
+    }
     if (options->help)
     {
-        std::printf("Usage: ukncbtl [--run|--paused] [--sound|--no-sound] [--fullscreen|--windowed]\n"
+        std::fputs("Usage: ukncbtl [--run|--paused] [--sound|--no-sound] [--fullscreen|--windowed]\n"
                     "  [--rom PATH] [--floppy 0..3 PATH] [--cartridge 1..2 PATH]\n"
                     "  [--floppy-read-only 0..3 PATH] [--hard-disk 1..2 PATH]\n"
                     "  [--hard-disk-read-only 1..2 PATH] [--tape PATH] [--state PATH]\n"
-                    "  [--boot 1..7] [--settings PATH]\n");
+                    "  [--boot 1..7] [--settings PATH]\n", stdout);
         return 0;
     }
     return Run(*options);

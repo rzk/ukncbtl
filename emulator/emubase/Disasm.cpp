@@ -249,8 +249,8 @@ std::optional<int> Disasm_CheckForJump(std::span<const uint16_t> memory, uint16_
 
     // BR, BNE, BEQ, BGE, BLT, BGT, BLE
     // BPL, BMI, BHI, BLOS, BVC, BVS, BHIS, BLO
-    if ((instr & 0177400) >= 0000400 && (instr & 0177400) < 0004000 ||
-        (instr & 0177400) >= 0100000 && (instr & 0177400) < 0104000)
+    if (((instr & 0177400) >= 0000400 && (instr & 0177400) < 0004000) ||
+        ((instr & 0177400) >= 0100000 && (instr & 0177400) < 0104000))
     {
         return static_cast<int>(static_cast<int8_t>(instr & 0xff)) + 1;
     }
@@ -379,8 +379,8 @@ static std::wstring Disasm_PairHint(const CMemoryController& memoryController, b
 // Is the instruction a jump or a return, so that its hint has the color of the jump hints
 static bool Disasm_IsJumpInstruction(uint16_t instr)
 {
-    if ((instr & 0177400) >= 0000400 && (instr & 0177400) < 0004000 ||
-        (instr & 0177400) >= 0100000 && (instr & 0177400) < 0104000)  // BR, BNE...BLE, BPL...BLO
+    if (((instr & 0177400) >= 0000400 && (instr & 0177400) < 0004000) ||
+        ((instr & 0177400) >= 0100000 && (instr & 0177400) < 0104000))  // BR, BNE...BLE, BPL...BLO
         return true;
     if ((instr & ~static_cast<uint16_t>(0777)) == PI_SOB)
         return true;
@@ -757,7 +757,7 @@ static DisasmHint Disasm_InstructionHintLines(std::span<const uint16_t, 3> memor
     }
 
     // CLC..CCC, SEC..SCC -- show flags
-    if (instr >= 0000241 && instr <= 0000257 || instr >= 0000261 && instr <= 0000277)
+    if ((instr >= 0000241 && instr <= 0000257) || (instr >= 0000261 && instr <= 0000277))
     {
         uint16_t psw = processor.GetPSW();
         buffer = std::format(L"C={}, V={}, Z={}, N={}",

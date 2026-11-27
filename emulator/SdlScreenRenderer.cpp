@@ -1,7 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "SdlScreenRenderer.h"
 #include "util/Profiler.h"
-#include <cstring>
+#include <algorithm>
 #include <limits>
 #include <utility>
 
@@ -36,23 +36,26 @@ std::expected<void, sdl_screen::Error> sdl_screen::Renderer::UploadTopDown(
         Invalidate();
         return std::unexpected(Error::sdl_failure);
     }
+    std::unique_ptr<SDL_Texture, decltype(&SDL_UnlockTexture)> lock(texture_.get(), SDL_UnlockTexture);
     const auto rowBytes = static_cast<std::size_t>(width) * sizeof(std::uint32_t);
     const bool valid = destination && pitch > 0 && static_cast<std::size_t>(pitch) >= rowBytes &&
         static_cast<std::uint64_t>(pitch) * height <= (std::numeric_limits<std::size_t>::max)();
-    if (valid)
-    {
-        if (static_cast<std::size_t>(pitch) == rowBytes)
-            std::memcpy(destination, pixels.data(), rowBytes * height);
-        else
-            for (int row = 0; row < height; ++row)
-                std::memcpy(static_cast<std::byte*>(destination) + static_cast<std::size_t>(row) * pitch,
-                    pixels.data() + static_cast<std::size_t>(row) * width, rowBytes);
-    }
-    SDL_UnlockTexture(texture_.get());
     if (!valid)
     {
+        lock.reset();
         Invalidate();
         return std::unexpected(Error::sdl_failure);
+    }
+    const auto stride = static_cast<std::size_t>(pitch);
+    const auto outputSize = (static_cast<std::size_t>(height) - 1) * stride + rowBytes;
+    auto output = std::span(static_cast<std::byte*>(destination), outputSize);
+    const auto input = std::as_bytes(pixels.first(static_cast<std::size_t>(count)));
+    if (stride == rowBytes)
+        std::ranges::copy(input, output.begin());
+    else
+    {
+        for (std::size_t row = 0; row < static_cast<std::size_t>(height); ++row)
+            std::ranges::copy(input.subspan(row * rowBytes, rowBytes), output.subspan(row * stride, rowBytes).begin());
     }
     return {};
 }

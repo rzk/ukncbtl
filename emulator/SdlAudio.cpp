@@ -5,6 +5,7 @@
 #include "emubase/Board.h"
 #include "emubase/Emubase.h"
 #include "util/Profiler.h"
+#include "util/SdlThreadCleanup.h"
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_stdinc.h>
 #include <algorithm>
@@ -49,6 +50,7 @@ struct sdl_audio::FrameQueue::Worker
     bool pending = false;
     bool failed = false;
     FrameWorker thread{[this] {
+        thread_local const SdlThreadCleanup cleanup;
         return SubmitSamples(*stream, frame.Bytes()) && (!resume || SDL_ResumeAudioStreamDevice(stream));
     }};
 };
@@ -252,6 +254,7 @@ bool sdl_audio::AsyncDeviceOpen::Start(SDL_AudioDeviceID device, std::uint16_t s
     try
     {
         result_.Start([device, speed, volume] {
+            thread_local const SdlThreadCleanup cleanup;
             auto prepared = Playback::Prepare(device, speed, volume);
             std::string error;
             if (!prepared) error = SDL_GetError();

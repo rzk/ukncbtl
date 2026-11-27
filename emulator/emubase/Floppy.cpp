@@ -580,10 +580,10 @@ bool CFloppyController::FlushChanges()
         if (fileSize > UINT32_MAX)
             goto WriteError;
         uint32_t currentFileSize = static_cast<uint32_t>(fileSize);
-        while (currentFileSize < (uint32_t)(foffset + 5120))
+        while (currentFileSize < static_cast<uint32_t>(foffset + 5120))
         {
             std::array<uint8_t, 512> datafill{};
-            uint32_t bytesToWrite = ((uint32_t)(foffset + 5120) - currentFileSize) % 512;
+            uint32_t bytesToWrite = (static_cast<uint32_t>(foffset + 5120) - currentFileSize) % 512;
             if (bytesToWrite == 0) bytesToWrite = 512;
             if (!file.write(reinterpret_cast<const char*>(datafill.data()), bytesToWrite))
                 goto WriteError;
@@ -638,7 +638,7 @@ static void EncodeTrackData(std::span<const uint8_t, 5120> source,
     for (int sect = 0; sect < 10; sect++)
     {
         // GAP
-        for (count = 0; count < (uint32_t) gap; count++) data[ptr++] = 0x4e;
+        for (count = 0; count < static_cast<uint32_t>(gap); count++) data[ptr++] = 0x4e;
         // sector header
         for (count = 0; count < 12; count++) data[ptr++] = 0x00;
         // marker
@@ -646,8 +646,8 @@ static void EncodeTrackData(std::span<const uint8_t, 5120> source,
         data[ptr++] = 0xa1;  data[ptr++] = 0xa1;  data[ptr++] = 0xa1;
         data[ptr++] = 0xfe;
 
-        data[ptr++] = (uint8_t) track;  data[ptr++] = (side != 0);
-        data[ptr++] = (uint8_t)sect + 1;  data[ptr++] = 2; // Assume 512 bytes per sector;
+        data[ptr++] = static_cast<uint8_t>(track);  data[ptr++] = (side != 0);
+        data[ptr++] = static_cast<uint8_t>(sect) + 1;  data[ptr++] = 2; // Assume 512 bytes per sector;
         // crc
         //TODO: Calculate CRC
         data[ptr++] = 0x12;  data[ptr++] = 0x34;  // CRC stub

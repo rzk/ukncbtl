@@ -55,7 +55,6 @@ static constexpr auto IDE_PORT_HEAD_NUMBER = 0x1f6;
 static constexpr auto IDE_PORT_STATUS_COMMAND = 0x1f7;
 
 static constexpr auto IDE_STATUS_ERROR = 0x01;
-static constexpr auto IDE_STATUS_HIT_INDEX = 0x02;
 static constexpr auto IDE_STATUS_BUFFER_READY = 0x08;
 static constexpr auto IDE_STATUS_SEEK_COMPLETE = 0x10;
 static constexpr auto IDE_STATUS_DRIVE_READY = 0x40;
@@ -69,9 +68,6 @@ static constexpr auto IDE_COMMAND_WRITE_MULTIPLE1 = 0x31;
 static constexpr auto IDE_COMMAND_IDENTIFY = 0xec;
 
 static constexpr auto IDE_ERROR_NONE = 0x00;
-static constexpr auto IDE_ERROR_DEFAULT = 0x01;
-static constexpr auto IDE_ERROR_UNKNOWN_COMMAND = 0x04;
-static constexpr auto IDE_ERROR_BAD_LOCATION = 0x10;
 static constexpr auto IDE_ERROR_BAD_SECTOR = 0x80;
 
 
@@ -309,19 +305,19 @@ uint16_t CHardDrive::ReadPort(uint16_t port)
         data = 0xff00 | m_error;
         break;
     case IDE_PORT_SECTOR_COUNT:
-        data = 0xff00 | (uint16_t)m_sectorcount;
+        data = 0xff00 | static_cast<uint16_t>(m_sectorcount);
         break;
     case IDE_PORT_SECTOR_NUMBER:
-        data = 0xff00 | (uint16_t)m_cursector;
+        data = 0xff00 | static_cast<uint16_t>(m_cursector);
         break;
     case IDE_PORT_CYLINDER_LSB:
-        data = 0xff00 | (uint16_t)(m_curcylinder & 0xff);
+        data = 0xff00 | static_cast<uint16_t>(m_curcylinder & 0xff);
         break;
     case IDE_PORT_CYLINDER_MSB:
-        data = 0xff00 | (uint16_t)((m_curcylinder >> 8) & 0xff);
+        data = 0xff00 | static_cast<uint16_t>((m_curcylinder >> 8) & 0xff);
         break;
     case IDE_PORT_HEAD_NUMBER:
-        data = 0xff00 | (uint16_t)m_curheadreg;
+        data = 0xff00 | static_cast<uint16_t>(m_curheadreg);
         break;
     case IDE_PORT_STATUS_COMMAND:
         data = 0xff00 | m_status;
@@ -383,7 +379,7 @@ void CHardDrive::WritePort(uint16_t port, uint16_t data)
         break;
     case IDE_PORT_STATUS_COMMAND:
         data &= 0x0ff;
-        HandleCommand((uint8_t)data);
+        HandleCommand(static_cast<uint8_t>(data));
         break;
     }
 }

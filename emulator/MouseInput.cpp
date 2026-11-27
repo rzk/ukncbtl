@@ -15,8 +15,10 @@ void mouse_input::Tracker::Move(float x, float y, Rect rect)
     if (anchored && rect.x == lastViewport.x && rect.y == lastViewport.y &&
         rect.width == lastViewport.width && rect.height == lastViewport.height)
     {
-        dx = std::clamp(dx + (x - lastX) * 640.0f / rect.width, -256.0f, 256.0f);
-        dy = std::clamp(dy + (y - lastY) * 288.0f / rect.height, -256.0f, 256.0f);
+        const auto scaledX = (static_cast<double>(x) - lastX) * 640.0 / rect.width;
+        const auto scaledY = (static_cast<double>(y) - lastY) * 288.0 / rect.height;
+        dx = static_cast<float>(std::clamp(dx + scaledX, -256.0, 256.0));
+        dy = static_cast<float>(std::clamp(dy + scaledY, -256.0, 256.0));
     }
     anchored = true;
     lastX = x; lastY = y; lastViewport = rect;

@@ -24,18 +24,33 @@ jobs:
 
   linux:
     runs-on: ubuntu-26.04
+    strategy:
+      matrix:
+        include:
+          - name: linux
+            target: all
+            tests: .
+          - name: linux (ASan and UBSan)
+            options: -DUKNCBTL_ENABLE_ASAN=ON -DUKNCBTL_ENABLE_UBSAN=ON
+            target: all
+            tests: .
+          - name: linux (TSan)
+            options: -DUKNCBTL_ENABLE_TSAN=ON
+            target: PreviewDebuggerTests
+            tests: '^FrameWorker\.'
+    name: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Clang, Ninja, and SDL3
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang g++ cmake ninja-build libsdl3-dev
+          sudo apt-get install -y clang g++ cmake ninja-build libsdl3-dev libclang-rt-dev
       - name: Configure with Ninja and Clang
-        run: cmake --preset linux-clang
+        run: cmake --preset linux-clang ${{ matrix.options }}
       - name: Build
-        run: cmake --build --preset linux-clang
-      - name: Test the application and install
-        run: ctest --preset linux-clang
+        run: cmake --build --preset linux-clang --target ${{ matrix.target }}
+      - name: Test
+        run: ctest --preset linux-clang --tests-regex '${{ matrix.tests }}'
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy

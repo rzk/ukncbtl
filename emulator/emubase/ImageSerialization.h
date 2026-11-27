@@ -2,11 +2,10 @@
 #pragma once
 
 #include "util/LittleEndian.h"
+#include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <span>
 #include <stdexcept>
-#include <type_traits>
 
 // Snapshot fields are little-endian, independent of pointer alignment.
 namespace image {
@@ -31,13 +30,10 @@ public:
         bytes_.front() = value;
         bytes_ = bytes_.subspan(1);
     }
-    template<class T, size_t N>
-    void copy(const T (&src)[N])
+    void copy(std::span<const std::byte> source)
     {
-        static_assert(std::is_trivially_copyable_v<T>);
-        const auto source = std::as_bytes(std::span{src});
         ensure(source.size());
-        std::memcpy(bytes_.data(), source.data(), source.size());
+        std::ranges::copy(source, std::as_writable_bytes(bytes_.first(source.size())).begin());
         bytes_ = bytes_.subspan(source.size());
     }
     void skip(size_t count) { ensure(count); bytes_ = bytes_.subspan(count); }
@@ -69,13 +65,10 @@ public:
         bytes_ = bytes_.subspan(1);
         return value;
     }
-    template<class T, size_t N>
-    void copy(T (&dest)[N])
+    void copy(std::span<std::byte> target)
     {
-        static_assert(std::is_trivially_copyable_v<T>);
-        auto target = std::as_writable_bytes(std::span{dest});
         ensure(target.size());
-        std::memcpy(target.data(), bytes_.data(), target.size());
+        std::ranges::copy(std::as_bytes(bytes_.first(target.size())), target.begin());
         bytes_ = bytes_.subspan(target.size());
     }
     void skip(size_t count) { ensure(count); bytes_ = bytes_.subspan(count); }

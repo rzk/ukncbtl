@@ -68,3 +68,15 @@ TEST(MouseInput, ResizingReanchorsAndMotionIsBounded)
     mouse.Move(std::numeric_limits<float>::quiet_NaN(), 0, {0, 0, 1, 1});
     EXPECT_EQ(mouse.Next().dx, 0);
 }
+
+TEST(MouseInput, ScalesLargeFiniteViewportsWithoutOverflow)
+{
+    mouse_input::Tracker mouse;
+    constexpr auto size = std::numeric_limits<float>::max();
+    const mouse_input::Rect viewport{0, 0, size, size};
+    mouse.Move(0, 0, viewport);
+    mouse.Move(size / 8, size / 8, viewport);
+    const auto sample = mouse.Next();
+    EXPECT_EQ(sample.dx, 80);
+    EXPECT_EQ(sample.dy, 36);
+}

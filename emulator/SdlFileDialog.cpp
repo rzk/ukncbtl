@@ -1,6 +1,7 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "SdlFileDialog.h"
 #include <SDL3/SDL_dialog.h>
+#include <array>
 #include <utility>
 
 bool sdl_file_dialog::State::Begin()
@@ -92,8 +93,8 @@ bool sdl_file_dialog::Open(const std::shared_ptr<State>& state, SDL_Window& wind
     if (!state) return false;
     auto request = std::make_unique<Request>(state, kind, slot, Purpose::disk, 0, 0, readOnly);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"Disk images", "dsk;rtd;img;hdi"}, {"All files", "*"}};
-    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"Disk images", "dsk;rtd;img;hdi"}, {"All files", "*"}});
+    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr, false);
     return true;
 }
 
@@ -102,8 +103,8 @@ bool sdl_file_dialog::SaveScreenshot(const std::shared_ptr<State>& state, SDL_Wi
     if (!state) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::screenshot);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"PNG image", "png"}, {"BMP image", "bmp"}};
-    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"PNG image", "png"}, {"BMP image", "bmp"}});
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr);
     return true;
 }
 
@@ -112,8 +113,8 @@ bool sdl_file_dialog::OpenSnapshot(const std::shared_ptr<State>& state, SDL_Wind
     if (!state) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::snapshotLoad);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"UKNC state images", "uknc"}, {"All files", "*"}};
-    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"UKNC state images", "uknc"}, {"All files", "*"}});
+    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr, false);
     return true;
 }
 
@@ -122,8 +123,8 @@ bool sdl_file_dialog::SaveSnapshot(const std::shared_ptr<State>& state, SDL_Wind
     if (!state) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::snapshotSave);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"UKNC state images", "uknc"}, {"All files", "*"}};
-    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"UKNC state images", "uknc"}, {"All files", "*"}});
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr);
     return true;
 }
 
@@ -133,8 +134,8 @@ bool sdl_file_dialog::OpenRom(const std::shared_ptr<State>& state, SDL_Window& w
     if (purpose == Purpose::cartridge && (slot < 0 || slot >= 2)) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, slot, purpose);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"ROM images", "bin;rom"}, {"All files", "*"}};
-    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"ROM images", "bin;rom"}, {"All files", "*"}});
+    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr, false);
     return true;
 }
 
@@ -143,8 +144,8 @@ bool sdl_file_dialog::SaveDisk(const std::shared_ptr<State>& state, SDL_Window& 
     if (!state || (tracks != 40 && tracks != 80)) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, tracks, Purpose::createDisk);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"Floppy disk images", "dsk"}};
-    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"Floppy disk images", "dsk"}});
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr);
     return true;
 }
 
@@ -153,8 +154,8 @@ bool sdl_file_dialog::SavePrinter(const std::shared_ptr<State>& state, SDL_Windo
     if (!state) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::printer);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"Printer output", "txt;log"}, {"All files", "*"}};
-    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"Printer output", "txt;log"}, {"All files", "*"}});
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr);
     return true;
 }
 
@@ -163,8 +164,8 @@ bool sdl_file_dialog::OpenTape(const std::shared_ptr<State>& state, SDL_Window& 
     if (!state) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::tapeOpen);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"WAV audio", "wav"}, {"All files", "*"}};
-    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"WAV audio", "wav"}, {"All files", "*"}});
+    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr, false);
     return true;
 }
 
@@ -173,8 +174,8 @@ bool sdl_file_dialog::SaveTape(const std::shared_ptr<State>& state, SDL_Window& 
     if (!state) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::tapeCreate);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"WAV audio", "wav"}};
-    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"WAV audio", "wav"}});
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr);
     return true;
 }
 
@@ -183,8 +184,8 @@ bool sdl_file_dialog::OpenSubtitles(const std::shared_ptr<State>& state, SDL_Win
     if (!state) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::subtitles);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"Disassembly listings", "lst;txt"}, {"All files", "*"}};
-    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr, false);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"Disassembly listings", "lst;txt"}, {"All files", "*"}});
+    SDL_ShowOpenFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr, false);
     return true;
 }
 
@@ -194,8 +195,8 @@ bool sdl_file_dialog::SaveMemoryDump(const std::shared_ptr<State>& state, SDL_Wi
     if (!state || end <= start || source < preview_debugger::MemorySource::cpu || source > preview_debugger::MemorySource::rom) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, static_cast<int>(source), Purpose::memoryDump, start, end);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"Binary memory dump", "bin"}};
-    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"Binary memory dump", "bin"}});
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr);
     return true;
 }
 
@@ -204,8 +205,8 @@ bool sdl_file_dialog::SaveDisplayList(const std::shared_ptr<State>& state, SDL_W
     if (!state) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::displayListDump);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"Text file", "txt"}};
-    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"Text file", "txt"}});
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr);
     return true;
 }
 
@@ -214,8 +215,8 @@ bool sdl_file_dialog::SaveConsoleLog(const std::shared_ptr<State>& state, SDL_Wi
     if (!state) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, -1, Purpose::consoleLog);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"Text file", "txt"}};
-    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 1, nullptr);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"Text file", "txt"}});
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr);
     return true;
 }
 
@@ -224,7 +225,7 @@ bool sdl_file_dialog::SaveTrace(const std::shared_ptr<State>& state, SDL_Window&
     if (!state || !mask) return false;
     auto request = std::make_unique<Request>(state, media_slots::Kind::floppy, mask, Purpose::trace);
     if (!state->Begin()) return false;
-    static constexpr SDL_DialogFileFilter filters[]{{"Trace log", "log;txt"}, {"All files", "*"}};
-    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters, 2, nullptr);
+    static constexpr auto filters = std::to_array<SDL_DialogFileFilter>({{"Trace log", "log;txt"}, {"All files", "*"}});
+    SDL_ShowSaveFileDialog(OnDialog, request.release(), &window, filters.data(), static_cast<int>(filters.size()), nullptr);
     return true;
 }
