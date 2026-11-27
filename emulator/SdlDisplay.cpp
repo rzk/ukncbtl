@@ -2,6 +2,7 @@
 #include "SdlDisplay.h"
 #include <SDL3/SDL_events.h>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <mutex>
 
@@ -114,15 +115,17 @@ FrameWorker::Outcome sdl_display::WaitForWorker(FrameWorker& worker, CompletionW
     return worker.WaitOutcome();
 }
 
-SDL_FRect sdl_display::Viewport(float width, float height, float scaleY, float topUi, float bottomUi)
+SDL_FRect sdl_display::Viewport(float width, float height, float scaleY,
+    float topUi, float bottomUi, int screenWidth, int screenHeight)
 {
     width = std::max(0.0f, width);
     height = std::max(0.0f, height);
     scaleY = std::max(0.0f, scaleY);
-    const float top = std::min(height, std::max(0.0f, topUi) * scaleY);
-    const float bottom = std::min(height - top, std::max(0.0f, bottomUi) * scaleY);
-    const float available = height - top - bottom;
-    const float drawWidth = std::min(width, available * 4.0f / 3.0f);
-    const float drawHeight = drawWidth * 3.0f / 4.0f;
-    return {(width - drawWidth) / 2.0f, top + (available - drawHeight) / 2.0f, drawWidth, drawHeight};
+    const float top = std::min(height, std::ceil(std::max(0.0f, topUi) * scaleY));
+    const float bottom = std::floor(height - std::max(0.0f, bottomUi) * scaleY);
+    const float availableHeight = std::max(0.0f, bottom - top);
+    const float drawWidth = std::min(width, static_cast<float>(screenWidth));
+    const float drawHeight = std::min(availableHeight, static_cast<float>(screenHeight));
+    return {std::floor((width - drawWidth) / 2.0f), top + std::floor((availableHeight - drawHeight) / 2.0f),
+        drawWidth, drawHeight};
 }

@@ -3206,32 +3206,6 @@ int Run(const preview_options::Options& options)
         if (toggleFullscreen && !sdl_display::ToggleFullscreen(*window))
         { actionError = "Could not change fullscreen mode."; showActionError = true; }
         (void)updateAudio(running && soundEnabled, speedChanged, volumeChanged);
-        int width = 0, height = 0;
-        if (!SDL_GetRenderOutputSize(renderer.get(), &width, &height)) return 1;
-        const auto scale = ImGui::GetIO().DisplayFramebufferScale;
-        const auto destination = sdl_display::Viewport(static_cast<float>(width), static_cast<float>(height), scale.y,
-            menuHeight + toolbarHeight, statusHeight);
-        if (!settings.mouse || !running || focusLost || ImGui::GetIO().WantCaptureMouse ||
-            !(SDL_GetWindowFlags(window.get()) & SDL_WINDOW_INPUT_FOCUS) ||
-            SDL_GetMouseFocus() != window.get() || scale.x <= 0 || scale.y <= 0)
-            releaseMouse();
-        else
-        {
-            const mouse_input::Rect viewport{destination.x / scale.x, destination.y / scale.y,
-                destination.w / scale.x, destination.h / scale.y};
-            for (const auto& input : mouseEvents)
-            {
-                if (input.type == SDL_EVENT_MOUSE_MOTION)
-                    mouse.Move(input.motion.x, input.motion.y, viewport);
-                else
-                {
-                    mouse.Move(input.button.x, input.button.y, viewport);
-                    if (input.button.button == SDL_BUTTON_LEFT || input.button.button == SDL_BUTTON_RIGHT)
-                        mouse.Button(input.button.button == SDL_BUTTON_LEFT, input.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
-                }
-            }
-        }
-        if (tape.TakeError()) { actionError = "Tape I/O failed and playback or recording was stopped."; showActionError = true; }
 #ifdef UKNCBTL_TEST_HOOKS
         if (testStaticVideo)
         {
@@ -3240,6 +3214,39 @@ int Run(const preview_options::Options& options)
             if (staticVideoPhase == 4) board.SetRAMByte(0, 0, board.GetRAMByte(0, 0) ^ 0xff);
         }
 #endif
+        const auto& dimensions = screen_scale::GetMode(displayMode);
+        int width = 0, height = 0;
+        if (!SDL_GetRenderOutputSize(renderer.get(), &width, &height)) return 1;
+        const auto scale = ImGui::GetIO().DisplayFramebufferScale;
+        const auto destination = sdl_display::Viewport(static_cast<float>(width), static_cast<float>(height), scale.y,
+            menuHeight + toolbarHeight, statusHeight, dimensions.width, dimensions.height);
+        if (!settings.mouse || !running || focusLost || ImGui::GetIO().WantCaptureMouse ||
+            !(SDL_GetWindowFlags(window.get()) & SDL_WINDOW_INPUT_FOCUS) ||
+            SDL_GetMouseFocus() != window.get() || scale.x <= 0 || scale.y <= 0 ||
+            destination.w <= 0 || destination.h <= 0)
+            releaseMouse();
+        else
+        {
+            const mouse_input::Rect viewport{destination.x / scale.x, destination.y / scale.y,
+                dimensions.width / scale.x, dimensions.height / scale.y};
+            const float visibleRight = (destination.x + destination.w) / scale.x;
+            const float visibleBottom = (destination.y + destination.h) / scale.y;
+            for (const auto& input : mouseEvents)
+            {
+                const bool motion = input.type == SDL_EVENT_MOUSE_MOTION;
+                const float x = motion ? input.motion.x : input.button.x;
+                const float y = motion ? input.motion.y : input.button.y;
+                if (x >= visibleRight || y >= visibleBottom)
+                {
+                    mouse.Reset();
+                    continue;
+                }
+                mouse.Move(x, y, viewport);
+                if (!motion && (input.button.button == SDL_BUTTON_LEFT || input.button.button == SDL_BUTTON_RIGHT))
+                    mouse.Button(input.button.button == SDL_BUTTON_LEFT, input.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+            }
+        }
+        if (tape.TakeError()) { actionError = "Tape I/O failed and playback or recording was stopped."; showActionError = true; }
         const auto palette = video_palette::Get(static_cast<video_palette::Mode>(paletteMode));
         if (copyScreenText)
         {
@@ -3301,7 +3308,6 @@ int Run(const preview_options::Options& options)
         if (frameStarted && !frameWorker.Start()) return 1;
 
         const auto videoModes = std::pair{displayMode, paletteMode};
-        const auto& dimensions = screen_scale::GetMode(displayMode);
         const bool prepareVideo = memoryChanged || preparedVideoModes != videoModes;
         if (prepareVideo)
         {
@@ -3322,7 +3328,7 @@ int Run(const preview_options::Options& options)
             const bool expectPreparation = staticVideoPhase != 1 && staticVideoPhase != 5;
             const bool expectUpload = staticVideoPhase != 1 && !staticVideoResetPending;
             if (frameStarted || prepareVideo != expectPreparation || screenNeedsUpload != expectUpload ||
-                destination.w <= 0 || destination.h <= 0)
+                destination.w != dimensions.width || destination.h != dimensions.height)
             {
                 SDL_Log("Static video phase %u: frame started=%d, prepared video=%d, needs upload=%d, viewport=%gx%g",
                     staticVideoPhase, frameStarted, prepareVideo, screenNeedsUpload, destination.w, destination.h);
@@ -3386,7 +3392,8 @@ int Run(const preview_options::Options& options)
                 { SDL_Log("Screen upload failed: %s", SDL_GetError()); return 1; }
                 screenNeedsUpload = false;
             }
-            if (!screen.Draw(destination)) { SDL_Log("Screen draw failed: %s", SDL_GetError()); return 1; }
+            const SDL_FRect source{0, 0, destination.w, destination.h};
+            if (!screen.Draw(destination, &source)) { SDL_Log("Screen draw failed: %s", SDL_GetError()); return 1; }
         }
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer.get());
         {

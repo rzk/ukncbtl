@@ -15,17 +15,32 @@
 
 namespace
 {
-TEST(SdlDisplay, FitsViewportBetweenBarsAtDifferentScales)
+TEST(SdlDisplay, CentersSelectedDimensionsInFramebufferPixels)
 {
-    const auto screen = sdl_display::Viewport(1280, 960, 2, 30, 20);
-    EXPECT_NEAR(screen.x, 66.6667f, 0.001f);
-    EXPECT_FLOAT_EQ(screen.y, 60);
-    EXPECT_NEAR(screen.w, 1146.6666f, 0.001f);
-    EXPECT_FLOAT_EQ(screen.h, 860);
-    const auto tiny = sdl_display::Viewport(200, 20, 1, 40, 20);
-    EXPECT_FLOAT_EQ(tiny.w, 0);
+    const auto standard = sdl_display::Viewport(1280, 960, 2, 30, 20, 640, 288);
+    EXPECT_FLOAT_EQ(standard.x, 320);
+    EXPECT_FLOAT_EQ(standard.y, 346);
+    EXPECT_FLOAT_EQ(standard.w, 640);
+    EXPECT_FLOAT_EQ(standard.h, 288);
+
+    const auto interlaced = sdl_display::Viewport(1281, 960, 2, 30, 20, 960, 576);
+    EXPECT_FLOAT_EQ(interlaced.x, 160);
+    EXPECT_FLOAT_EQ(interlaced.y, 202);
+    EXPECT_FLOAT_EQ(interlaced.w, 960);
+    EXPECT_FLOAT_EQ(interlaced.h, 576);
+}
+
+TEST(SdlDisplay, ClipsOversizedScreenToAvailableSpace)
+{
+    const auto clipped = sdl_display::Viewport(800, 600, 1.5f, 31, 21, 960, 720);
+    EXPECT_FLOAT_EQ(clipped.x, 0);
+    EXPECT_FLOAT_EQ(clipped.y, 47);
+    EXPECT_FLOAT_EQ(clipped.w, 800);
+    EXPECT_FLOAT_EQ(clipped.h, 521);
+
+    const auto tiny = sdl_display::Viewport(200, 20, 1, 40, 20, 640, 288);
+    EXPECT_FLOAT_EQ(tiny.y, 20);
     EXPECT_FLOAT_EQ(tiny.h, 0);
-    EXPECT_GE(tiny.y, 0);
 }
 
 class SdlDisplayTest : public testing::Test
