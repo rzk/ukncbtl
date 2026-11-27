@@ -18,7 +18,7 @@ class Renderer
 public:
     explicit Renderer(SDL_Renderer& renderer);
     [[nodiscard]] std::expected<void, Error> UploadTopDown(int width, int height, std::span<const std::uint32_t> pixels);
-    [[nodiscard]] std::expected<void, Error> Draw(const SDL_FRect& destination) const;
+    [[nodiscard]] std::expected<void, Error> Draw(const SDL_FRect& destination, const SDL_FRect* source = nullptr) const;
     void Invalidate();
 
 private:

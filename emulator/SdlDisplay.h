@@ -44,7 +44,8 @@ void WaitForCompletion(CompletionWake& wake, const std::function<bool(std::chron
 void WaitUntilWorkerReady(FrameWorker& worker, CompletionWake& wake, const std::function<void()>& afterPump = {});
 [[nodiscard]] FrameWorker::Outcome WaitForWorker(FrameWorker& worker, CompletionWake& wake,
     const std::function<void()>& afterPump = {});
-// UI heights are logical coordinates; the returned 4:3 rectangle is in pixels.
+// UI heights are logical coordinates. Center the screen at its selected pixel
+// size where it fits, and return the visible portion starting at source (0, 0).
 [[nodiscard]] SDL_FRect Viewport(float width, float height, float scaleY,
-    float topUi, float bottomUi);
+    float topUi, float bottomUi, int screenWidth, int screenHeight);
 }

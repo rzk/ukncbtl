@@ -63,6 +63,25 @@ TEST_F(SdlScreenRendererTest, ReusesAndResizesTexturesAndHonorsDestination)
     ExpectPixel(3, 0, 0, 255, 0);
 }
 
+TEST_F(SdlScreenRendererTest, DrawsVisibleSourcePixelsWithoutResampling)
+{
+    sdl_screen::Renderer screen(*renderer);
+    ASSERT_TRUE(SDL_SetRenderDrawColor(renderer.get(), 0, 0, 0, 255));
+    ASSERT_TRUE(SDL_RenderClear(renderer.get()));
+    const std::array<std::uint32_t, 6> pixels{
+        0x00ff0000, 0x0000ff00, 0x000000ff,
+        0x000000ff, 0x000000ff, 0x000000ff,
+    };
+    ASSERT_TRUE(screen.UploadTopDown(3, 2, pixels));
+    const SDL_FRect source{0, 0, 2, 1};
+    ASSERT_TRUE(screen.Draw(SDL_FRect{1, 1, source.w, source.h}, &source));
+    ASSERT_TRUE(SDL_RenderPresent(renderer.get()));
+    ExpectPixel(1, 1, 255, 0, 0);
+    ExpectPixel(2, 1, 0, 255, 0);
+    ExpectPixel(3, 1, 0, 0, 0);
+    ExpectPixel(1, 2, 0, 0, 0);
+}
+
 TEST_F(SdlScreenRendererTest, DrawsPreparedEmulatorFrame)
 {
     std::vector<std::uint32_t> source(video::Width * video::Height);

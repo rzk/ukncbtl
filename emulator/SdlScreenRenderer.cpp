@@ -60,11 +60,12 @@ std::expected<void, sdl_screen::Error> sdl_screen::Renderer::UploadTopDown(
     return {};
 }
 
-std::expected<void, sdl_screen::Error> sdl_screen::Renderer::Draw(const SDL_FRect& destination) const
+std::expected<void, sdl_screen::Error> sdl_screen::Renderer::Draw(
+    const SDL_FRect& destination, const SDL_FRect* source) const
 {
     UKNC_PROFILE_SCOPE("Screen draw");
     if (!texture_) return std::unexpected(Error::invalid_image);
-    if (!SDL_RenderTexture(renderer_, texture_.get(), nullptr, &destination))
+    if (!SDL_RenderTexture(renderer_, texture_.get(), source, &destination))
         return std::unexpected(Error::sdl_failure);
     return {};
 }
