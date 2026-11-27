@@ -1,22 +1,19 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
+#include "emubase/Processor.h"
 #include <gtest/gtest.h>
 
-void TestModuleInitialize();
-void TestModuleCleanup();
-
-namespace {
-class CoreEnvironment final : public testing::Environment
+namespace
 {
-public:
-    void SetUp() override { TestModuleInitialize(); }
-    void TearDown() override { TestModuleCleanup(); }
+class ProcessorEnvironment : public testing::Environment
+{
+    void SetUp() override { CProcessor::Init(); }
+    void TearDown() override { CProcessor::Done(); }
 };
 }
 
 int main(int argc, char** argv)
 {
     testing::InitGoogleTest(&argc, argv);
-    testing::AddGlobalTestEnvironment(new CoreEnvironment);
+    testing::AddGlobalTestEnvironment(new ProcessorEnvironment);
     return RUN_ALL_TESTS();
 }

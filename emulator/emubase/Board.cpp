@@ -352,11 +352,6 @@ bool CMotherboard::IsFloppyEngineOn() const
     return m_pFloppyCtl->IsEngineOn();
 }
 
-bool CMotherboard::AttachFloppyImage(int slot, const wchar_t* sFileName)
-{
-    return sFileName && AttachFloppyImage(slot, std::filesystem::path(sFileName));
-}
-
 bool CMotherboard::AttachFloppyImage(int slot, const std::filesystem::path& path, bool readOnly)
 {
     assert(slot >= 0 && slot < 4);
@@ -422,11 +417,6 @@ std::optional<HardDiskFailure> CMotherboard::TakeHardDiskFailure()
         }
     }
     return std::nullopt;
-}
-
-bool CMotherboard::AttachHardImage(int slot, const wchar_t* sFileName)
-{
-    return sFileName && AttachHardImage(slot, std::filesystem::path(sFileName));
 }
 
 bool CMotherboard::AttachHardImage(int slot, const std::filesystem::path& path, bool readOnly)
@@ -914,7 +904,6 @@ bool CMotherboard::SystemFrame()
                     if (pMemCtl->NetworkInput(b) && (pMemCtl->m_Port176560 & 0100))
                     {
                         m_pCPU->InterruptVIRQ(9, 0360);
-                        //DebugLog(_T("Net INT 0360\r\n"));//DEBUG
                     }
                 }
             }
@@ -938,7 +927,6 @@ bool CMotherboard::SystemFrame()
                     if (pMemCtl->m_Port176564 & 0100)  // Interrupt?
                     {
                         m_pCPU->InterruptVIRQ(10, 0364);
-                        //DebugLog(_T("Net INT 0364\r\n"));//DEBUG
                     }
                 }
             }

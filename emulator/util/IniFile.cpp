@@ -81,32 +81,7 @@ std::expected<IniFile, IniFileError> IniFile::Open(const std::filesystem::path& 
     return result;
 }
 
-std::expected<IniFile, IniFileError> IniFile::OpenLegacy(
-    const std::filesystem::path& path, ini_encoding::LegacyEncoding encoding)
-{
-    const auto bytes = ReadBytes(path);
-    if (!bytes) return std::unexpected(bytes.error());
-    const auto decoded = ini_encoding::DecodeLegacy(*bytes, encoding);
-    if (!decoded) return std::unexpected(EncodingError(decoded.error()));
-    IniFile result;
-    result.document_ = IniDocument(*decoded);
-    return result;
-}
-
 std::expected<void, IniFileError> IniFile::Save(const std::filesystem::path& path) const
-{
-    return SaveImpl(path, true);
-}
-
-std::expected<void, IniFileError> IniFile::ImportLegacy(const std::filesystem::path& source,
-    const std::filesystem::path& destination, ini_encoding::LegacyEncoding encoding)
-{
-    const auto file = OpenLegacy(source, encoding);
-    if (!file) return std::unexpected(file.error());
-    return file->SaveImpl(destination, false);
-}
-
-std::expected<void, IniFileError> IniFile::SaveImpl(const std::filesystem::path& path, bool replace) const
 {
     const auto encoded = ini_encoding::Encode(document_.Serialize(), encoding_);
     if (!encoded) return std::unexpected(EncodingError(encoded.error()));
@@ -122,9 +97,7 @@ std::expected<void, IniFileError> IniFile::SaveImpl(const std::filesystem::path&
     file.close();
     if (!file) return std::unexpected(IniFileError::write_failed);
     std::error_code error;
-    if (replace) std::filesystem::rename(staged, path, error);
-    else std::filesystem::create_hard_link(staged, path, error);
-    if (error == std::errc::file_exists) return std::unexpected(IniFileError::destination_exists);
+    std::filesystem::rename(staged, path, error);
     if (error) return std::unexpected(IniFileError::replace_failed);
     return {};
 }

@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PreviewDebugger.h"
+#include "util/PathIdentity.h"
 #include "DebugStep.h"
 #include "FrameControl.h"
 #include "FrameWorker.h"
@@ -456,9 +457,7 @@ bool preview_debugger::Session::ClearTrace()
 bool preview_debugger::Session::TraceConflicts(const std::filesystem::path& path) const
 {
     if (!trace_ || path.empty()) return false;
-    if (tracePath_ == path) return true;
-    std::error_code error;
-    return std::filesystem::equivalent(tracePath_, path, error) && !error;
+    return path_identity::SameFile(tracePath_, path);
 }
 
 bool preview_debugger::Session::PollTraceError()

@@ -294,7 +294,6 @@ public:  // System control
     void        MouseMove(int16_t dx, int16_t dy, bool btnLeft, bool btnRight);
 
     /// \brief Attach floppy image to the slot -- insert the disk.
-    bool        AttachFloppyImage(int slot, const wchar_t* sFileName);
     bool        AttachFloppyImage(int slot, const std::filesystem::path& path, bool readOnly = false);
     bool        AttachPreparedFloppy(int slot, PreparedFloppyImage image);
     /// \brief Empty the floppy slot -- remove the disk.
@@ -324,7 +323,6 @@ public:  // System control
     void        UnloadROMCartridge(int cartno);
 
     /// \brief Attach hard drive image to the slot.
-    bool        AttachHardImage(int slot, const wchar_t* sFileName);
     bool        AttachHardImage(int slot, const std::filesystem::path& path, bool readOnly = false);
     void        InstallHardDrive(int slot, std::unique_ptr<CHardDrive> drive);
     /// \brief Empty hard drive slot.

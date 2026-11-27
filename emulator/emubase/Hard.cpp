@@ -172,7 +172,6 @@ CHardDrive::~CHardDrive()
 
 void CHardDrive::Reset()
 {
-    //DebugLog(_T("HDD Reset\r\n"));
 
     AbandonReadAhead();
     m_status = IDE_STATUS_BUSY;
@@ -180,11 +179,6 @@ void CHardDrive::Reset()
     m_command = 0;
     m_timeoutcount = 2;
     m_timeoutevent = TimeoutEvent::reset_done;
-}
-
-bool CHardDrive::AttachImage(const wchar_t* sFileName)
-{
-    return sFileName && AttachImage(std::filesystem::path(sFileName));
 }
 
 bool CHardDrive::AttachImage(const std::filesystem::path& path, bool readOnly)
@@ -303,11 +297,9 @@ uint16_t CHardDrive::ReadPort(uint16_t port)
             m_bufferoffset += 2;
 
             //if (m_bufferoffset == 2)
-            //    DebugLogFormat(_T("HDD Read sector start {:04x}\r\n"), data);
 
             if (m_bufferoffset >= IDE_DISK_SECTOR_SIZE)
             {
-                //DebugLog(_T("HDD Read sector complete\r\n"));
 
                 ContinueRead();
             }
@@ -336,7 +328,6 @@ uint16_t CHardDrive::ReadPort(uint16_t port)
         break;
     }
 
-    //DebugPrintFormat(_T("HDD Read  {:x}     0x{:04x}\r\n"), port, data);
     return data;
 }
 
@@ -344,7 +335,6 @@ void CHardDrive::WritePort(uint16_t port, uint16_t data)
 {
     assert(port >= 0x1F0 && port <= 0x1F7);
 
-//    DebugPrintFormat(_T("HDD Write {:x} <-- 0x{:04x}\r\n"), port, data);
 
     switch (port)
     {
@@ -358,7 +348,6 @@ void CHardDrive::WritePort(uint16_t port, uint16_t data)
             m_bufferoffset += 2;
 
             //if (m_bufferoffset == 2)
-            //    DebugLogFormat(_T("HDD Write sector start {:04x}\r\n"), data);
 
             if (m_bufferoffset >= IDE_DISK_SECTOR_SIZE)
             {
@@ -434,7 +423,6 @@ void CHardDrive::HandleCommand(uint8_t command)
     {
     case IDE_COMMAND_READ_MULTIPLE:
     case IDE_COMMAND_READ_MULTIPLE1:
-        //DebugLogFormat(_T("HDD COMMAND {:02x} (READ MULT): C={}, H={}, SN={}, SC={}\r\n"),
         //        command, m_curcylinder, m_curhead, m_cursector, m_sectorcount);
 
         m_status &= ~IDE_STATUS_BUFFER_READY;
@@ -442,7 +430,6 @@ void CHardDrive::HandleCommand(uint8_t command)
         break;
 
     case IDE_COMMAND_SET_CONFIG:
-        //DebugLogFormat(_T("HDD COMMAND {:02x} (SET CONFIG): H={}, SC={}\r\n"),
         //        command, m_curhead, m_sectorcount);
 
         m_numsectors = m_sectorcount;
@@ -451,7 +438,6 @@ void CHardDrive::HandleCommand(uint8_t command)
 
     case IDE_COMMAND_WRITE_MULTIPLE:
     case IDE_COMMAND_WRITE_MULTIPLE1:
-        //DebugLogFormat(_T("HDD COMMAND {:02x} (WRITE MULT): C={}, H={}, SN={}, SC={}\r\n"),
         //        command, m_curcylinder, m_curhead, m_cursector, m_sectorcount);
 
         AbandonReadAhead();
@@ -464,7 +450,6 @@ void CHardDrive::HandleCommand(uint8_t command)
         break;
 
     case IDE_COMMAND_IDENTIFY:
-        //DebugLogFormat(_T("HDD COMMAND {:02x} (IDENTIFY)\r\n"), command);
 
         AbandonReadAhead();
         IdentifyDrive();  // Prepare the buffer
@@ -478,7 +463,6 @@ void CHardDrive::HandleCommand(uint8_t command)
         break;
 
     default:
-        //DebugLogFormat(_T("HDD COMMAND {:02x} (UNKNOWN): C={}, H={}, SN={}, SC={}\r\n"),
         //        command, m_curcylinder, m_curhead, m_cursector, m_sectorcount);
         break;
     }
@@ -606,7 +590,6 @@ void CHardDrive::WriteSectorDone()
     // Write buffer to the HDD image
     const auto fileOffset = CalculateOffset();
 
-    //if (fileOffset) DebugLogFormat(_T("WriteSector {:x}\r\n"), *fileOffset);
 
     if (m_fpFile && !m_okReadOnly && fileOffset)
     {

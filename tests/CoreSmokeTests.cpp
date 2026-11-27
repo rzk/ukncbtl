@@ -1,23 +1,11 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include <gtest/gtest.h>
-#include "emubase/Emubase.h"
-#include "util/File.h"
+#include "TestHelpers.h"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
 
-#ifdef _DEBUG
-int AssertFailedLine(const char* file, int line)
-{
-    std::fprintf(stderr, "Assertion failed at %s:%d\n", file, line);
-    std::abort();
-}
-#endif
-void DebugLog(LPCTSTR) {}
-const TCHAR* REGISTER_NAME[] = {_T("R0"), _T("R1"), _T("R2"), _T("R3"),
-                               _T("R4"), _T("R5"), _T("SP"), _T("PC")};
 
 namespace {
 class CoreSmokeTests : public testing::Test
@@ -33,8 +21,8 @@ TEST_F(CoreSmokeTests, DisassemblesThreeWordInstruction)
     const auto decoded = DisassembleInstruction(instruction, 01000);
     ASSERT_TRUE(decoded);
     EXPECT_EQ(decoded->length, 3);
-    EXPECT_EQ(decoded->mnemonic, _T("MOV"));
-    EXPECT_EQ(decoded->argument, _T("#000001, 000002(R1)"));
+    EXPECT_EQ(decoded->mnemonic, L"MOV");
+    EXPECT_EQ(decoded->argument, L"#000001, 000002(R1)");
 }
 
 TEST_F(CoreSmokeTests, DisassemblerRejectsEmptyAndPadsTruncatedSpans)
@@ -44,7 +32,7 @@ TEST_F(CoreSmokeTests, DisassemblerRejectsEmptyAndPadsTruncatedSpans)
     const auto decoded = DisassembleInstruction(instruction, 01000);
     ASSERT_TRUE(decoded);
     EXPECT_EQ(decoded->length, 3);
-    EXPECT_EQ(decoded->argument, _T("#000000, 000000(R1)"));
+    EXPECT_EQ(decoded->argument, L"#000000, 000000(R1)");
 }
 
 TEST_F(CoreSmokeTests, JumpRequiresOperandAndRecognizesSelfTarget)
@@ -100,7 +88,7 @@ TEST_F(CoreSmokeTests, FailedHardDriveAttachLeavesSlotEmpty)
 {
     CMotherboard board;
     board.Reset();
-    EXPECT_FALSE(board.AttachHardImage(1, _T("?:\\invalid-ukncbtl-image")));
+    EXPECT_FALSE(board.AttachHardImage(1, std::filesystem::path{}));
     EXPECT_FALSE(board.IsHardImageAttached(1));
 }
 
@@ -126,36 +114,21 @@ TEST_F(CoreSmokeTests, DebugTicksCanRunAfterReset)
 class CoreDiskSmokeTests : public CoreSmokeTests
 {
 protected:
-    std::array<TCHAR, MAX_PATH> path{};
+    TempFile imageFile{L".hdi"};
     void SetUp() override
     {
         CoreSmokeTests::SetUp();
-        std::array<TCHAR, MAX_PATH> directory{};
-        ASSERT_NE(GetTempPath(MAX_PATH, directory.data()), 0u);
-        ASSERT_NE(GetTempFileName(directory.data(), _T("hdd"), 0, path.data()), 0u);
-        std::array<uint8_t, 4 * 2 * 8 * 512> image{};
+        std::vector<uint8_t> image(4 * 2 * 8 * 512);
         image[0] = 8;
         image[1] = 2;
-        UniqueFile file(_tfopen(path.data(), _T("wb")));
-        ASSERT_TRUE(file);
-        ASSERT_EQ(std::fwrite(image.data(), 1, image.size(), file.get()), image.size());
-        ASSERT_EQ(std::fclose(file.release()), 0);
-    }
-    void TearDown() override
-    {
-        if (path[0])
-        {
-            SetFileAttributes(path.data(), FILE_ATTRIBUTE_NORMAL);
-            DeleteFile(path.data());
-        }
-        CoreSmokeTests::TearDown();
+        imageFile.Write(image);
     }
 };
 
 TEST_F(CoreDiskSmokeTests, HardDriveReadsSectorAndRejectsSectorZero)
 {
     CHardDrive drive;
-    ASSERT_TRUE(drive.AttachImage(path.data()));
+    ASSERT_TRUE(drive.AttachImage(imageFile.Path()));
     drive.Reset();
     drive.WritePort(0x1f2, 1);
     drive.WritePort(0x1f3, 1);
@@ -175,9 +148,9 @@ TEST_F(CoreDiskSmokeTests, HardDriveReadsSectorAndRejectsSectorZero)
 
 TEST_F(CoreDiskSmokeTests, ReadOnlyFloppyCanDetachAfterWriteAttempt)
 {
-    ASSERT_TRUE(SetFileAttributes(path.data(), FILE_ATTRIBUTE_READONLY));
+    imageFile.SetReadOnly(true);
     CFloppyController floppy;
-    ASSERT_TRUE(floppy.AttachImage(0, path.data()));
+    ASSERT_TRUE(floppy.AttachImage(0, imageFile.Path()));
     ASSERT_TRUE(floppy.IsReadOnly(0));
     floppy.SetCommand(FLOPPY_CMD_ENGINESTART | 02000 | 3);
     for (int i = 0; i < 47; ++i) floppy.Periodic();

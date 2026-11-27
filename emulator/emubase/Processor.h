@@ -12,6 +12,8 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 #pragma once
 
+#include <limits>
+
 #include <array>
 
 #include "Defines.h"
@@ -354,15 +356,29 @@ inline void CProcessor::InterruptVIRQ(int que, uint16_t interrupt)
 }
 
 // PSW bits calculations - implementation
-extern "C" int CpuAddOverflow8(uint8_t a, uint8_t b);
-extern "C" int CpuAddOverflow16(uint16_t a, uint16_t b);
-extern "C" int CpuSubOverflow8(uint8_t a, uint8_t b);
-extern "C" int CpuSubOverflow16(uint16_t a, uint16_t b);
+namespace cpu_overflow
+{
+template<class T>
+constexpr bool Add(T a, T b)
+{
+    constexpr auto sign = T{1} << (std::numeric_limits<T>::digits - 1);
+    const auto result = static_cast<T>(a + b);
+    return (~(a ^ b) & (a ^ result) & sign) != 0;
+}
 
-inline bool CProcessor::CheckAddForOverflow(uint8_t a, uint8_t b) { return CpuAddOverflow8(a, b) != 0; }
-inline bool CProcessor::CheckAddForOverflow(uint16_t a, uint16_t b) { return CpuAddOverflow16(a, b) != 0; }
-inline bool CProcessor::CheckSubForOverflow(uint8_t a, uint8_t b) { return CpuSubOverflow8(a, b) != 0; }
-inline bool CProcessor::CheckSubForOverflow(uint16_t a, uint16_t b) { return CpuSubOverflow16(a, b) != 0; }
+template<class T>
+constexpr bool Subtract(T a, T b)
+{
+    constexpr auto sign = T{1} << (std::numeric_limits<T>::digits - 1);
+    const auto result = static_cast<T>(a - b);
+    return ((a ^ b) & (a ^ result) & sign) != 0;
+}
+}
+
+inline bool CProcessor::CheckAddForOverflow(uint8_t a, uint8_t b) { return cpu_overflow::Add(a, b); }
+inline bool CProcessor::CheckAddForOverflow(uint16_t a, uint16_t b) { return cpu_overflow::Add(a, b); }
+inline bool CProcessor::CheckSubForOverflow(uint8_t a, uint8_t b) { return cpu_overflow::Subtract(a, b); }
+inline bool CProcessor::CheckSubForOverflow(uint16_t a, uint16_t b) { return cpu_overflow::Subtract(a, b); }
 inline bool CProcessor::CheckAddForCarry (uint8_t a, uint8_t b)
 {
     uint16_t sum = (uint16_t)a + (uint16_t)b;

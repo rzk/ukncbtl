@@ -1,27 +1,19 @@
 cmake_minimum_required(VERSION 3.20)
-project(UKNCBTL LANGUAGES CXX)
+project(UKNCBTL LANGUAGES C CXX)
+
+if(NOT CMAKE_GENERATOR STREQUAL "Ninja")
+  message(FATAL_ERROR "UKNCBTL requires the Ninja CMake generator")
+endif()
+if(NOT CMAKE_C_COMPILER_ID MATCHES "^(Apple)?Clang$" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "^(Apple)?Clang$")
+  message(FATAL_ERROR "UKNCBTL requires Clang for both C and C++")
+endif()
 
 # Use the same language contract for the application, renderer, tests and tools.
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(UKNCBTL_BUILD_LEGACY "Build the existing Windows/MSVC application during migration" OFF)
-option(UKNCBTL_USE_PORTABLE_SETTINGS "Use the experimental portable settings backend in the legacy application" OFF)
-option(UKNCBTL_ENABLE_SDL3 "Build the SDL3 migration targets" ON)
-option(UKNCBTL_ENABLE_IMGUI "Build Dear ImGui SDL3 migration targets" ON)
-if(UKNCBTL_ENABLE_IMGUI AND NOT UKNCBTL_ENABLE_SDL3)
-  message(FATAL_ERROR "UKNCBTL_ENABLE_IMGUI requires UKNCBTL_ENABLE_SDL3=ON")
-endif()
-if(UKNCBTL_BUILD_LEGACY)
-  if(NOT WIN32 OR NOT MSVC)
-    message(FATAL_ERROR "The legacy application currently requires Windows and MSVC; set UKNCBTL_BUILD_LEGACY=OFF for portable targets")
-  endif()
-  if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR NOT CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
-    message(FATAL_ERROR "The legacy application currently requires an x86-64 (x64) build")
-  endif()
-  enable_language(RC)
-  # Match the legacy application's CRT and its dependencies.
+if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 include(CTest)
@@ -29,20 +21,41 @@ option(UKNCBTL_BUILD_BENCHMARKS "Build headless Google Benchmark workloads" OFF)
 option(UKNCBTL_BUILD_FRAME_BENCHMARK "Build portable frame, trace, and tape benchmarks" OFF)
 option(UKNCBTL_ENABLE_TRACY "Instrument the emulator with Tracy" OFF)
 option(UKNCBTL_ENABLE_ASAN "Instrument C++ targets and dependencies with AddressSanitizer" OFF)
-if(NOT UKNCBTL_BUILD_LEGACY AND (UKNCBTL_BUILD_BENCHMARKS OR UKNCBTL_ENABLE_ASAN))
-  message(FATAL_ERROR "Benchmarks and ASan are currently available only in the legacy build")
-endif()
 if(UKNCBTL_ENABLE_ASAN)
-  # MSVC's runtime checks and edit-and-continue conflict with AddressSanitizer.
-  string(REGEX REPLACE "/RTC[1su]+" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
-  string(REPLACE "/ZI" "/Zi" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
-  # MSVC STL container annotations must agree in every linked object, including
-  # GoogleTest, Benchmark and Tracy. Apply these before fetching dependencies.
-  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/fsanitize=address;/Zi>")
-  add_link_options(/INCREMENTAL:NO)
+  if(MSVC)
+    # clang-cl's sanitizer runtime uses the shared CRT.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    string(REGEX REPLACE "/RTC[1su]+" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+    string(REPLACE "/ZI" "/Zi" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+    add_compile_options(/fsanitize=address /Zi)
+    # CMake invokes the Windows linker directly, so it cannot rely on the
+    # compiler driver to select and link compiler-rt.
+    execute_process(COMMAND "${CMAKE_CXX_COMPILER}" /clang:-print-resource-dir
+      OUTPUT_VARIABLE clang_resources OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+    if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
+      set(asan_arch x86_64)
+    elseif(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+      set(asan_arch aarch64)
+    else()
+      set(asan_arch i386)
+    endif()
+    set(asan_runtime_dir "${clang_resources}/lib/windows")
+    set(asan_runtime "clang_rt.asan_dynamic-${asan_arch}")
+    set(asan_thunk "clang_rt.asan_dynamic_runtime_thunk-${asan_arch}")
+    if(NOT EXISTS "${asan_runtime_dir}/${asan_runtime}.dll" OR
+        NOT EXISTS "${asan_runtime_dir}/${asan_runtime}.lib" OR
+        NOT EXISTS "${asan_runtime_dir}/${asan_thunk}.lib")
+      message(FATAL_ERROR "Clang AddressSanitizer runtime for ${asan_arch} is missing in ${asan_runtime_dir}")
+    endif()
+    add_link_options(/INCREMENTAL:NO "${asan_runtime_dir}/${asan_runtime}.lib"
+      "/WHOLEARCHIVE:${asan_runtime_dir}/${asan_thunk}.lib")
+    configure_file("${asan_runtime_dir}/${asan_runtime}.dll" "${CMAKE_CURRENT_BINARY_DIR}/${asan_runtime}.dll" COPYONLY)
+  else()
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+  endif()
 endif()
 include(cmake/Dependencies.cmake)
-include(cmake/CpuOverflow.cmake)
 
 function(ukncbtl_toolchain target)
   target_compile_features(${target} PUBLIC cxx_std_23)
@@ -51,30 +64,28 @@ function(ukncbtl_toolchain target)
   endif()
 endfunction()
 
-if(UKNCBTL_ENABLE_IMGUI)
-  add_library(DearImGui STATIC
-    "${imgui_SOURCE_DIR}/imgui.cpp" "${imgui_SOURCE_DIR}/imgui_draw.cpp"
-    "${imgui_SOURCE_DIR}/imgui_tables.cpp" "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
-    "${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp"
-    "${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp")
-  ukncbtl_toolchain(DearImGui)
-  target_include_directories(DearImGui PUBLIC "${imgui_SOURCE_DIR}" "${imgui_SOURCE_DIR}/backends")
-  target_link_libraries(DearImGui PUBLIC SDL3::SDL3)
-  set(ui_font_data "${CMAKE_CURRENT_BINARY_DIR}/embedded_ui_font.inc")
-  add_custom_command(OUTPUT "${ui_font_data}"
-    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${imgui_SOURCE_DIR}/misc/fonts/DroidSans.ttf" "-DOUTPUT=${ui_font_data}"
-      -P "${PROJECT_SOURCE_DIR}/cmake/EmbedFont.cmake"
-    DEPENDS "${imgui_SOURCE_DIR}/misc/fonts/DroidSans.ttf" "${PROJECT_SOURCE_DIR}/cmake/EmbedFont.cmake" VERBATIM)
-  add_library(UiFont STATIC emulator/UiFont.cpp "${ui_font_data}")
-  ukncbtl_toolchain(UiFont)
-  target_include_directories(UiFont PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-  target_link_libraries(UiFont PRIVATE DearImGui)
-  add_library(UiAppearance STATIC emulator/UiAppearance.cpp)
-  ukncbtl_toolchain(UiAppearance)
-  target_link_libraries(UiAppearance PUBLIC DearImGui)
-  install(FILES "${PROJECT_SOURCE_DIR}/third_party/NOTICE-DroidSans"
-    "${PROJECT_SOURCE_DIR}/third_party/LICENSE-Apache-2.0" DESTINATION licenses)
-endif()
+add_library(DearImGui STATIC
+  "${imgui_SOURCE_DIR}/imgui.cpp" "${imgui_SOURCE_DIR}/imgui_draw.cpp"
+  "${imgui_SOURCE_DIR}/imgui_tables.cpp" "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
+  "${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp"
+  "${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp")
+ukncbtl_toolchain(DearImGui)
+target_include_directories(DearImGui PUBLIC "${imgui_SOURCE_DIR}" "${imgui_SOURCE_DIR}/backends")
+target_link_libraries(DearImGui PUBLIC SDL3::SDL3)
+set(ui_font_data "${CMAKE_CURRENT_BINARY_DIR}/embedded_ui_font.inc")
+add_custom_command(OUTPUT "${ui_font_data}"
+  COMMAND "${CMAKE_COMMAND}" "-DINPUT=${imgui_SOURCE_DIR}/misc/fonts/DroidSans.ttf" "-DOUTPUT=${ui_font_data}"
+    -P "${PROJECT_SOURCE_DIR}/cmake/EmbedFont.cmake"
+  DEPENDS "${imgui_SOURCE_DIR}/misc/fonts/DroidSans.ttf" "${PROJECT_SOURCE_DIR}/cmake/EmbedFont.cmake" VERBATIM)
+add_library(UiFont STATIC emulator/UiFont.cpp "${ui_font_data}")
+ukncbtl_toolchain(UiFont)
+target_include_directories(UiFont PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(UiFont PRIVATE DearImGui)
+add_library(UiAppearance STATIC emulator/UiAppearance.cpp)
+ukncbtl_toolchain(UiAppearance)
+target_link_libraries(UiAppearance PUBLIC DearImGui)
+install(FILES "${PROJECT_SOURCE_DIR}/third_party/NOTICE-DroidSans"
+  "${PROJECT_SOURCE_DIR}/third_party/LICENSE-Apache-2.0" DESTINATION licenses)
 
 add_library(EmulatorProfiling INTERFACE)
 if(UKNCBTL_ENABLE_TRACY)
@@ -146,7 +157,7 @@ add_library(EmulatorCore STATIC
   $<TARGET_OBJECTS:FloppyController> $<TARGET_OBJECTS:HardDrive>
   $<TARGET_OBJECTS:MemoryController> $<TARGET_OBJECTS:Processor>)
 ukncbtl_toolchain(EmulatorCore)
-target_link_libraries(EmulatorCore PUBLIC CpuOverflow SoundAY EmulatorProfiling PRIVATE FrameWorker)
+target_link_libraries(EmulatorCore PUBLIC SoundAY EmulatorProfiling PRIVATE FrameWorker)
 
 add_library(MediaSlots STATIC emulator/MediaSlots.cpp)
 ukncbtl_toolchain(MediaSlots)
@@ -281,43 +292,41 @@ ukncbtl_toolchain(ImagePixels)
 add_library(ScreenshotFormat STATIC emulator/util/ScreenshotFormat.cpp)
 ukncbtl_toolchain(ScreenshotFormat)
 
-if(UKNCBTL_ENABLE_SDL3)
-  add_library(PngFile STATIC emulator/util/PngFile.cpp)
-  ukncbtl_toolchain(PngFile)
-  target_link_libraries(PngFile PRIVATE ImagePixels SDL3::SDL3)
-  add_library(ScreenshotFile STATIC emulator/ScreenshotFile.cpp emulator/AsyncScreenshot.cpp)
-  ukncbtl_toolchain(ScreenshotFile)
-  target_link_libraries(ScreenshotFile PRIVATE Threads::Threads ScreenshotImage ScreenshotFormat BmpFile PngFile StagedFile)
-  add_library(ScreenshotClipboard STATIC emulator/ScreenshotClipboard.cpp emulator/AsyncClipboard.cpp)
-  ukncbtl_toolchain(ScreenshotClipboard)
-  target_link_libraries(ScreenshotClipboard PRIVATE BmpFile ScreenshotImage SDL3::SDL3 Threads::Threads)
-  if(BUILD_TESTING)
-    target_compile_definitions(ScreenshotClipboard PRIVATE UKNCBTL_CLIPBOARD_TEST_HOOKS)
-  endif()
-  add_library(SdlScreenRenderer STATIC emulator/SdlScreenRenderer.cpp)
-  ukncbtl_toolchain(SdlScreenRenderer)
-  target_link_libraries(SdlScreenRenderer PUBLIC SDL3::SDL3 PRIVATE EmulatorProfiling)
-  add_library(SdlKeyboard STATIC emulator/SdlKeyboard.cpp)
-  ukncbtl_toolchain(SdlKeyboard)
-  target_link_libraries(SdlKeyboard PUBLIC SDL3::SDL3)
-  add_library(SdlDisplay STATIC emulator/SdlDisplay.cpp)
-  ukncbtl_toolchain(SdlDisplay)
-  target_link_libraries(SdlDisplay PUBLIC SDL3::SDL3 PRIVATE FrameWorker)
-  add_library(SdlShortcuts STATIC emulator/SdlShortcuts.cpp)
-  ukncbtl_toolchain(SdlShortcuts)
-  target_link_libraries(SdlShortcuts PUBLIC SDL3::SDL3)
-  add_library(SdlSprite STATIC emulator/SdlSprite.cpp)
-  ukncbtl_toolchain(SdlSprite)
-  target_link_libraries(SdlSprite PUBLIC SDL3::SDL3)
-  add_library(SdlAudio STATIC emulator/SdlAudio.cpp)
-  ukncbtl_toolchain(SdlAudio)
-  target_include_directories(SdlAudio PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-  target_link_libraries(SdlAudio PRIVATE FrameWorker)
-  target_link_libraries(SdlAudio PUBLIC SDL3::SDL3 PRIVATE EmulatorCore FramePacing EmulatorProfiling)
-  add_library(SdlFileDialog STATIC emulator/SdlFileDialog.cpp)
-  ukncbtl_toolchain(SdlFileDialog)
-  target_link_libraries(SdlFileDialog PUBLIC SDL3::SDL3)
+add_library(PngFile STATIC emulator/util/PngFile.cpp)
+ukncbtl_toolchain(PngFile)
+target_link_libraries(PngFile PRIVATE ImagePixels SDL3::SDL3)
+add_library(ScreenshotFile STATIC emulator/ScreenshotFile.cpp emulator/AsyncScreenshot.cpp)
+ukncbtl_toolchain(ScreenshotFile)
+target_link_libraries(ScreenshotFile PRIVATE Threads::Threads ScreenshotImage ScreenshotFormat BmpFile PngFile StagedFile)
+add_library(ScreenshotClipboard STATIC emulator/ScreenshotClipboard.cpp emulator/AsyncClipboard.cpp)
+ukncbtl_toolchain(ScreenshotClipboard)
+target_link_libraries(ScreenshotClipboard PRIVATE BmpFile ScreenshotImage SDL3::SDL3 Threads::Threads)
+if(BUILD_TESTING)
+  target_compile_definitions(ScreenshotClipboard PRIVATE UKNCBTL_CLIPBOARD_TEST_HOOKS)
 endif()
+add_library(SdlScreenRenderer STATIC emulator/SdlScreenRenderer.cpp)
+ukncbtl_toolchain(SdlScreenRenderer)
+target_link_libraries(SdlScreenRenderer PUBLIC SDL3::SDL3 PRIVATE EmulatorProfiling)
+add_library(SdlKeyboard STATIC emulator/SdlKeyboard.cpp)
+ukncbtl_toolchain(SdlKeyboard)
+target_link_libraries(SdlKeyboard PUBLIC SDL3::SDL3)
+add_library(SdlDisplay STATIC emulator/SdlDisplay.cpp)
+ukncbtl_toolchain(SdlDisplay)
+target_link_libraries(SdlDisplay PUBLIC SDL3::SDL3 PRIVATE FrameWorker)
+add_library(SdlShortcuts STATIC emulator/SdlShortcuts.cpp)
+ukncbtl_toolchain(SdlShortcuts)
+target_link_libraries(SdlShortcuts PUBLIC SDL3::SDL3)
+add_library(SdlSprite STATIC emulator/SdlSprite.cpp)
+ukncbtl_toolchain(SdlSprite)
+target_link_libraries(SdlSprite PUBLIC SDL3::SDL3)
+add_library(SdlAudio STATIC emulator/SdlAudio.cpp)
+ukncbtl_toolchain(SdlAudio)
+target_include_directories(SdlAudio PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+target_link_libraries(SdlAudio PRIVATE FrameWorker)
+target_link_libraries(SdlAudio PUBLIC SDL3::SDL3 PRIVATE EmulatorCore FramePacing EmulatorProfiling)
+add_library(SdlFileDialog STATIC emulator/SdlFileDialog.cpp)
+ukncbtl_toolchain(SdlFileDialog)
+target_link_libraries(SdlFileDialog PUBLIC SDL3::SDL3)
 
 add_library(Subtitles STATIC emulator/Subtitles.cpp)
 ukncbtl_toolchain(Subtitles)
@@ -368,25 +377,10 @@ add_library(PreviewSettings STATIC emulator/PreviewSettings.cpp)
 ukncbtl_toolchain(PreviewSettings)
 target_include_directories(PreviewSettings PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
 target_link_libraries(PreviewSettings PRIVATE IniFile ScreenScale FramePacing)
-add_library(AsyncSettingsImport STATIC emulator/AsyncSettingsImport.cpp)
-ukncbtl_toolchain(AsyncSettingsImport)
-target_link_libraries(AsyncSettingsImport PRIVATE PreviewSettings Threads::Threads)
-
 add_library(PreviewMediaRestore STATIC emulator/PreviewMediaRestore.cpp)
 ukncbtl_toolchain(PreviewMediaRestore)
 target_link_libraries(PreviewMediaRestore PRIVATE PreviewSettings PreviewRoms MediaSlots AsyncDiskMount PreviewTape EmulatorSnapshot Threads::Threads EmulatorProfiling)
 
-add_library(SettingsStore STATIC emulator/util/SettingsStore.cpp)
-ukncbtl_toolchain(SettingsStore)
-target_link_libraries(SettingsStore PUBLIC IniFile)
-
-add_executable(ukncbtl-import-ini tools/ImportIni.cpp)
-ukncbtl_toolchain(ukncbtl-import-ini)
-target_include_directories(ukncbtl-import-ini PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-target_link_libraries(ukncbtl-import-ini PRIVATE IniFile)
-
-# The snapshot implementation uses the portable board interface; linking its
-# operations into an executable also requires the emulator core.
 add_library(EmulatorSnapshot STATIC emulator/Snapshot.cpp)
 ukncbtl_toolchain(EmulatorSnapshot)
 target_include_directories(EmulatorSnapshot PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
@@ -397,31 +391,25 @@ ukncbtl_toolchain(PreviewSnapshot)
 target_include_directories(PreviewSnapshot PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
 target_link_libraries(PreviewSnapshot PRIVATE EmulatorSnapshot FrameTiming Threads::Threads)
 
-if(UKNCBTL_ENABLE_IMGUI)
-  add_executable(ukncbtl-sdl emulator/SdlMain.cpp)
-  ukncbtl_toolchain(ukncbtl-sdl)
-  if(BUILD_TESTING)
-    target_compile_definitions(ukncbtl-sdl PRIVATE UKNCBTL_TEST_HOOKS UKNCBTL_TRACE_TEST_HOOKS)
-  endif()
-  target_include_directories(ukncbtl-sdl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-  target_link_libraries(ukncbtl-sdl PRIVATE FrameWorker DearImGui UiFont UiAppearance SdlScreenRenderer SdlKeyboard SdlDisplay SdlShortcuts SdlSprite MouseInput VirtualKeyboard PreviewOptions AutoBoot PreviewDebugger PreviewConsole PreviewSprite DisplayListDump SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewMediaRestore PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard ScreenTextCapture VideoPalette FramePacing
-    EmbeddedRom EmulatorCore VideoDecoder AsyncDiskImage AsyncDebuggerExport AsyncSubtitles AsyncRoms AsyncDiskMount AsyncSettingsImport)
-  install(TARGETS ukncbtl-sdl RUNTIME DESTINATION bin)
-  install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME UKNCBTL-LICENSE)
-  install(FILES "${PROJECT_SOURCE_DIR}/third_party/NOTICE-RenderVfw" DESTINATION licenses)
-  install(FILES "${sdl3_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME SDL3-LICENSE)
-  install(FILES "${imgui_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME IMGUI-LICENSE)
-  if(UKNCBTL_ENABLE_TRACY)
-    install(FILES "${tracy_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME TRACY-LICENSE)
-  endif()
+add_executable(ukncbtl emulator/SdlMain.cpp)
+ukncbtl_toolchain(ukncbtl)
+if(BUILD_TESTING)
+  target_compile_definitions(ukncbtl PRIVATE UKNCBTL_TEST_HOOKS UKNCBTL_TRACE_TEST_HOOKS)
+endif()
+target_include_directories(ukncbtl PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+target_link_libraries(ukncbtl PRIVATE FrameWorker DearImGui UiFont UiAppearance SdlScreenRenderer SdlKeyboard SdlDisplay SdlShortcuts SdlSprite MouseInput VirtualKeyboard PreviewOptions AutoBoot PreviewDebugger PreviewConsole PreviewSprite DisplayListDump SdlAudio SdlFileDialog MediaSlots PreviewRoms PreviewSettings PreviewMediaRestore PreviewSnapshot PreviewPrinter PreviewTape DiskImageFile ScreenshotImage ScreenshotFile ScreenshotClipboard ScreenTextCapture VideoPalette FramePacing
+  EmbeddedRom EmulatorCore VideoDecoder AsyncDiskImage AsyncDebuggerExport AsyncSubtitles AsyncRoms AsyncDiskMount)
+install(TARGETS ukncbtl RUNTIME DESTINATION bin)
+install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME UKNCBTL-LICENSE)
+install(FILES "${PROJECT_SOURCE_DIR}/third_party/NOTICE-RenderVfw" DESTINATION licenses)
+install(FILES "${sdl3_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME SDL3-LICENSE)
+install(FILES "${imgui_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME IMGUI-LICENSE)
+if(UKNCBTL_ENABLE_TRACY)
+  install(FILES "${tracy_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME TRACY-LICENSE)
 endif()
 
 if(BUILD_TESTING)
   include(GoogleTest)
-  add_test(NAME IniImportCli COMMAND ${CMAKE_COMMAND}
-    "-DIMPORTER=$<TARGET_FILE:ukncbtl-import-ini>"
-    "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/ini-import-cli-test"
-    -P "${PROJECT_SOURCE_DIR}/tests/IniImportCli.cmake")
   function(ukncbtl_portable_test target)
     add_executable(${target} ${ARGN})
     ukncbtl_toolchain(${target})
@@ -460,197 +448,196 @@ if(BUILD_TESTING)
   ukncbtl_portable_test(PreviewSpriteTests tests/PreviewSpriteTests.cpp)
   target_link_libraries(PreviewSpriteTests PRIVATE PreviewSprite EmulatorCore)
   ukncbtl_portable_test(PreviewSettingsTests tests/PreviewSettingsTests.cpp)
-  target_link_libraries(PreviewSettingsTests PRIVATE PreviewSettings IniFile AsyncSettingsImport)
+  target_link_libraries(PreviewSettingsTests PRIVATE PreviewSettings IniFile)
   ukncbtl_portable_test(PreviewSnapshotTests tests/PreviewSnapshotTests.cpp)
   target_link_libraries(PreviewSnapshotTests PRIVATE PreviewSnapshot FrameWorker EmulatorCore)
   ukncbtl_portable_test(PreviewRomsTests tests/PreviewRomsTests.cpp)
   target_link_libraries(PreviewRomsTests PRIVATE PreviewRoms PreviewSnapshot EmbeddedRom EmulatorCore AsyncRoms FrameWorker)
-  if(UKNCBTL_ENABLE_SDL3)
-    ukncbtl_portable_test(Sdl3SmokeTests tests/Sdl3SmokeTests.cpp)
-    target_link_libraries(Sdl3SmokeTests PRIVATE SDL3::SDL3)
-    ukncbtl_portable_test(PngFileTests tests/PngFileTests.cpp)
-    target_link_libraries(PngFileTests PRIVATE PngFile SDL3::SDL3)
-    ukncbtl_portable_test(ScreenshotFileTests tests/ScreenshotFileTests.cpp)
-    target_link_libraries(ScreenshotFileTests PRIVATE ScreenshotFile ScreenshotImage ScreenshotClipboard SDL3::SDL3)
-    ukncbtl_portable_test(ScreenshotClipboardTests tests/ScreenshotClipboardTests.cpp)
-    target_link_libraries(ScreenshotClipboardTests PRIVATE ScreenshotClipboard SdlDisplay SDL3::SDL3 Threads::Threads)
-    ukncbtl_portable_test(SdlScreenRendererTests tests/SdlScreenRendererTests.cpp)
-    target_link_libraries(SdlScreenRendererTests PRIVATE SdlScreenRenderer ScreenScale)
-    ukncbtl_portable_test(SdlKeyboardTests tests/SdlKeyboardTests.cpp)
-    target_link_libraries(SdlKeyboardTests PRIVATE SdlKeyboard HostInput VirtualKeyboard EmulatorCore)
-    ukncbtl_portable_test(SdlDisplayTests tests/SdlDisplayTests.cpp)
-    target_link_libraries(SdlDisplayTests PRIVATE SdlDisplay ScreenText FrameWorker SDL3::SDL3)
-    ukncbtl_portable_test(SdlShortcutsTests tests/SdlShortcutsTests.cpp)
-    target_link_libraries(SdlShortcutsTests PRIVATE SdlShortcuts)
-    ukncbtl_portable_test(SdlSpriteTests tests/SdlSpriteTests.cpp)
-    target_link_libraries(SdlSpriteTests PRIVATE SdlSprite SDL3::SDL3)
-    ukncbtl_portable_test(SdlAudioTests tests/SdlAudioTests.cpp)
-    target_link_libraries(SdlAudioTests PRIVATE SdlAudio FrameWorker ScreenshotFile EmulatorCore)
-    ukncbtl_portable_test(SdlFileDialogTests tests/SdlFileDialogTests.cpp)
-    target_link_libraries(SdlFileDialogTests PRIVATE SdlFileDialog)
+  ukncbtl_portable_test(Sdl3SmokeTests tests/Sdl3SmokeTests.cpp)
+  target_link_libraries(Sdl3SmokeTests PRIVATE SDL3::SDL3)
+  ukncbtl_portable_test(PngFileTests tests/PngFileTests.cpp)
+  target_link_libraries(PngFileTests PRIVATE PngFile SDL3::SDL3)
+  ukncbtl_portable_test(ScreenshotFileTests tests/ScreenshotFileTests.cpp)
+  target_link_libraries(ScreenshotFileTests PRIVATE ScreenshotFile ScreenshotImage ScreenshotClipboard SDL3::SDL3)
+  ukncbtl_portable_test(ScreenshotClipboardTests tests/ScreenshotClipboardTests.cpp)
+  target_link_libraries(ScreenshotClipboardTests PRIVATE ScreenshotClipboard SdlDisplay SDL3::SDL3 Threads::Threads)
+  ukncbtl_portable_test(SdlScreenRendererTests tests/SdlScreenRendererTests.cpp)
+  target_link_libraries(SdlScreenRendererTests PRIVATE SdlScreenRenderer ScreenScale)
+  ukncbtl_portable_test(SdlKeyboardTests tests/SdlKeyboardTests.cpp)
+  target_link_libraries(SdlKeyboardTests PRIVATE SdlKeyboard HostInput VirtualKeyboard EmulatorCore)
+  ukncbtl_portable_test(SdlDisplayTests tests/SdlDisplayTests.cpp)
+  target_link_libraries(SdlDisplayTests PRIVATE SdlDisplay ScreenText FrameWorker SDL3::SDL3)
+  ukncbtl_portable_test(SdlShortcutsTests tests/SdlShortcutsTests.cpp)
+  target_link_libraries(SdlShortcutsTests PRIVATE SdlShortcuts)
+  ukncbtl_portable_test(SdlSpriteTests tests/SdlSpriteTests.cpp)
+  target_link_libraries(SdlSpriteTests PRIVATE SdlSprite SDL3::SDL3)
+  ukncbtl_portable_test(SdlAudioTests tests/SdlAudioTests.cpp)
+  target_link_libraries(SdlAudioTests PRIVATE SdlAudio FrameWorker ScreenshotFile EmulatorCore)
+  ukncbtl_portable_test(SdlFileDialogTests tests/SdlFileDialogTests.cpp)
+  target_link_libraries(SdlFileDialogTests PRIVATE SdlFileDialog)
+  add_executable(SdlStateFixture tests/SdlStateFixture.cpp)
+  ukncbtl_toolchain(SdlStateFixture)
+  target_include_directories(SdlStateFixture PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
+  target_link_libraries(SdlStateFixture PRIVATE PreviewRoms EmulatorSnapshot EmulatorCore WavPcmFile SDL3::SDL3)
+  ukncbtl_portable_test(ImGuiSdlTests tests/ImGuiSdlTests.cpp)
+  target_link_libraries(ImGuiSdlTests PRIVATE DearImGui UiFont UiAppearance SdlScreenRenderer)
+  add_test(NAME SdlFrontendSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlFrontendSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlFrameFailureSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_FRAME_FAILURE=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlFrameFailureSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlFrameAndPrinterFailureSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_FRAME_AND_PRINTER_FAILURE=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlFrameAndPrinterFailureSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlPrinterWorkerSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-printer-worker-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlPrinterWorker.cmake")
+  set_tests_properties(SdlPrinterWorkerSmoke PROPERTIES TIMEOUT 45)
+  add_test(NAME SdlSlowFrameSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_SLOW_FRAME=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlSlowFrameSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlAudioOverlapSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_AUDIO_OVERLAP=1 UKNCBTL_TEST_BOARD_OPERATIONS=1 $<TARGET_FILE:ukncbtl> --smoke-test --sound)
+  add_test(NAME SdlAudioStartupOverlapSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_AUDIO_STARTUP_OVERLAP=1 $<TARGET_FILE:ukncbtl> --smoke-test --sound)
+  add_test(NAME SdlAudioOpenExitSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_AUDIO_OVERLAP=1 UKNCBTL_TEST_BOARD_OPERATIONS=1 UKNCBTL_TEST_AUDIO_OPEN_EXIT=1
+    $<TARGET_FILE:ukncbtl> --smoke-test --sound)
+  set_tests_properties(SdlAudioOverlapSmoke SdlAudioStartupOverlapSmoke SdlAudioOpenExitSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlStaticVideoSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_STATIC_VIDEO=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlStaticVideoSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlSpriteWorkerSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_SPRITE_IMAGE=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlSpriteWorkerSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlScreenshotFailureExitSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_SCREENSHOT_FAILURE_EXIT=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlScreenshotFailureExitSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlSnapshotFailureExitSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_SNAPSHOT_FAILURE_EXIT=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlSnapshotFailureExitSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlScreenshotErrorMergeSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_SCREENSHOT_ERROR_MERGE=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlScreenshotErrorMergeSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlConcurrentScreenshotSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-screenshot-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentScreenshot.cmake")
+  set_tests_properties(SdlConcurrentScreenshotSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlConcurrentClipboardSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_COPY_SCREENSHOT=1 $<TARGET_FILE:ukncbtl> --smoke-test --sound)
+  set_tests_properties(SdlConcurrentClipboardSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlClipboardDuringFrameSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_CLIPBOARD_DURING_FRAME=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlClipboardDuringFrameSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlClipboardSupersedeSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_COPY_SCREENSHOT=1 UKNCBTL_TEST_CLIPBOARD_SUPERSEDE=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  add_test(NAME SdlClipboardPendingExitSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_COPY_SCREENSHOT=1 UKNCBTL_TEST_CLIPBOARD_EXIT=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  add_test(NAME SdlImGuiClipboardSupersedeSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_COPY_SCREENSHOT=1 UKNCBTL_TEST_CLIPBOARD_SUPERSEDE=1 UKNCBTL_TEST_IMGUI_CLIPBOARD=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlClipboardSupersedeSmoke SdlClipboardPendingExitSmoke SdlImGuiClipboardSupersedeSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlScreenTextPendingExitSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_SCREEN_TEXT_EXIT=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlScreenTextPendingExitSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlDebuggerInspectionSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_DEBUGGER_INSPECTION=1 UKNCBTL_TEST_BOARD_OPERATIONS=1 $<TARGET_FILE:ukncbtl> --smoke-test)
+  add_test(NAME SdlDebuggerSearchDiscardSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    UKNCBTL_TEST_DEBUGGER_INSPECTION=1 UKNCBTL_TEST_DEBUGGER_SEARCH_DISCARD=1
+    $<TARGET_FILE:ukncbtl> --smoke-test)
+  set_tests_properties(SdlDebuggerInspectionSmoke SdlDebuggerSearchDiscardSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlConcurrentSnapshotSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-snapshot-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentSnapshot.cmake")
+  set_tests_properties(SdlConcurrentSnapshotSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlAsyncDiskImageSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-disk-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncDiskImage.cmake")
+  set_tests_properties(SdlAsyncDiskImageSmoke PROPERTIES TIMEOUT 60)
+  add_test(NAME SdlAsyncDebuggerExportSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-export-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncDebuggerExport.cmake")
+  set_tests_properties(SdlAsyncDebuggerExportSmoke PROPERTIES TIMEOUT 120)
+  add_test(NAME SdlAsyncSubtitlesSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-subtitles-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncSubtitles.cmake")
+  set_tests_properties(SdlAsyncSubtitlesSmoke PROPERTIES TIMEOUT 90)
+  add_test(NAME SdlAsyncRomsSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-roms-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncRoms.cmake")
+  set_tests_properties(SdlAsyncRomsSmoke PROPERTIES TIMEOUT 120)
+  add_test(NAME SdlAsyncTapeSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DFIXTURE=$<TARGET_FILE:SdlStateFixture>"
+    "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-tape-test" -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncTape.cmake")
+  set_tests_properties(SdlAsyncTapeSmoke PROPERTIES TIMEOUT 60)
+  add_test(NAME SdlConcurrentTraceSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-trace-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentTrace.cmake")
+  set_tests_properties(SdlConcurrentTraceSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlTraceControlsSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-trace-controls-test"
+    -DTEST_TRACE_CONTROLS=ON -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentTrace.cmake")
+  set_tests_properties(SdlTraceControlsSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlTraceFailureRecoverySmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-trace-recovery-test"
+    -DTEST_TRACE_FAILURE=ON -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentTrace.cmake")
+  set_tests_properties(SdlTraceFailureRecoverySmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlTraceFailureExitSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-trace-exit-test"
+    -DTEST_TRACE_FAILURE_EXIT=ON -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentTrace.cmake")
+  set_tests_properties(SdlTraceFailureExitSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlTraceRecordFrameRecoverySmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-trace-frame-recovery-test"
+    -DTEST_TRACE_RECORD_FAILURE=ON -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentTrace.cmake")
+  set_tests_properties(SdlTraceRecordFrameRecoverySmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlCombinedWorkersSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-combined-workers-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlCombinedWorkers.cmake")
+  set_tests_properties(SdlCombinedWorkersSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlSnapshotWriteFailureSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-snapshot-error-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlSnapshotWriteFailure.cmake")
+  set_tests_properties(SdlSnapshotWriteFailureSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlScreenshotMediaConflictSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-screenshot-conflict-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlScreenshotMediaConflict.cmake")
+  set_tests_properties(SdlScreenshotMediaConflictSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlEarlyFrameExitSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-early-exit-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlEarlyFrameExit.cmake")
+  set_tests_properties(SdlEarlyFrameExitSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlResponsiveShutdownSmoke COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-responsive-shutdown-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlResponsiveShutdown.cmake")
+  set_tests_properties(SdlResponsiveShutdownSmoke PROPERTIES TIMEOUT 30)
+  add_test(NAME SdlStartupCli COMMAND ${CMAKE_COMMAND}
+    "-DAPP=$<TARGET_FILE:ukncbtl>" "-DSTATE_FIXTURE=$<TARGET_FILE:SdlStateFixture>"
+    "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-startup-test"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlStartupCli.cmake")
+  set_tests_properties(SdlStartupCli PROPERTIES TIMEOUT 30)
+  set(install_readobj "")
+  if(WIN32 AND NOT UKNCBTL_ENABLE_ASAN)
+    get_filename_component(clang_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    find_program(UKNCBTL_LLVM_READOBJ NAMES llvm-readobj HINTS "${clang_bin}")
+    if(UKNCBTL_LLVM_READOBJ)
+      set(install_readobj "${UKNCBTL_LLVM_READOBJ}")
+    endif()
   endif()
-  if(UKNCBTL_ENABLE_IMGUI)
-    add_executable(SdlStateFixture tests/SdlStateFixture.cpp)
-    ukncbtl_toolchain(SdlStateFixture)
-    target_include_directories(SdlStateFixture PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-    target_link_libraries(SdlStateFixture PRIVATE PreviewRoms EmulatorSnapshot EmulatorCore WavPcmFile SDL3::SDL3)
-    ukncbtl_portable_test(ImGuiSdlTests tests/ImGuiSdlTests.cpp)
-    target_link_libraries(ImGuiSdlTests PRIVATE DearImGui UiFont UiAppearance SdlScreenRenderer)
-    add_test(NAME SdlFrontendSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlFrontendSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlFrameFailureSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_FRAME_FAILURE=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlFrameFailureSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlFrameAndPrinterFailureSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_FRAME_AND_PRINTER_FAILURE=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlFrameAndPrinterFailureSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlPrinterWorkerSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-printer-worker-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlPrinterWorker.cmake")
-    set_tests_properties(SdlPrinterWorkerSmoke PROPERTIES TIMEOUT 45)
-    add_test(NAME SdlSlowFrameSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_SLOW_FRAME=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlSlowFrameSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlAudioOverlapSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_AUDIO_OVERLAP=1 UKNCBTL_TEST_BOARD_OPERATIONS=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test --sound)
-    add_test(NAME SdlAudioStartupOverlapSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_AUDIO_STARTUP_OVERLAP=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test --sound)
-    add_test(NAME SdlAudioOpenExitSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_AUDIO_OVERLAP=1 UKNCBTL_TEST_BOARD_OPERATIONS=1 UKNCBTL_TEST_AUDIO_OPEN_EXIT=1
-      $<TARGET_FILE:ukncbtl-sdl> --smoke-test --sound)
-    set_tests_properties(SdlAudioOverlapSmoke SdlAudioStartupOverlapSmoke SdlAudioOpenExitSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlStaticVideoSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_STATIC_VIDEO=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlStaticVideoSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlSpriteWorkerSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_SPRITE_IMAGE=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlSpriteWorkerSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlScreenshotFailureExitSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_SCREENSHOT_FAILURE_EXIT=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlScreenshotFailureExitSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlSnapshotFailureExitSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_SNAPSHOT_FAILURE_EXIT=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlSnapshotFailureExitSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlScreenshotErrorMergeSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_SCREENSHOT_ERROR_MERGE=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlScreenshotErrorMergeSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlConcurrentScreenshotSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-screenshot-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentScreenshot.cmake")
-    set_tests_properties(SdlConcurrentScreenshotSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlConcurrentClipboardSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_COPY_SCREENSHOT=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test --sound)
-    set_tests_properties(SdlConcurrentClipboardSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlClipboardDuringFrameSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_CLIPBOARD_DURING_FRAME=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlClipboardDuringFrameSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlClipboardSupersedeSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_COPY_SCREENSHOT=1 UKNCBTL_TEST_CLIPBOARD_SUPERSEDE=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    add_test(NAME SdlClipboardPendingExitSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_COPY_SCREENSHOT=1 UKNCBTL_TEST_CLIPBOARD_EXIT=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    add_test(NAME SdlImGuiClipboardSupersedeSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_COPY_SCREENSHOT=1 UKNCBTL_TEST_CLIPBOARD_SUPERSEDE=1 UKNCBTL_TEST_IMGUI_CLIPBOARD=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlClipboardSupersedeSmoke SdlClipboardPendingExitSmoke SdlImGuiClipboardSupersedeSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlScreenTextPendingExitSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_SCREEN_TEXT_EXIT=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlScreenTextPendingExitSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlDebuggerInspectionSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_DEBUGGER_INSPECTION=1 UKNCBTL_TEST_BOARD_OPERATIONS=1 $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    add_test(NAME SdlDebuggerSearchDiscardSmoke COMMAND ${CMAKE_COMMAND} -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-      UKNCBTL_TEST_DEBUGGER_INSPECTION=1 UKNCBTL_TEST_DEBUGGER_SEARCH_DISCARD=1
-      $<TARGET_FILE:ukncbtl-sdl> --smoke-test)
-    set_tests_properties(SdlDebuggerInspectionSmoke SdlDebuggerSearchDiscardSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlConcurrentSnapshotSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-snapshot-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentSnapshot.cmake")
-    set_tests_properties(SdlConcurrentSnapshotSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlAsyncDiskImageSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-disk-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncDiskImage.cmake")
-    set_tests_properties(SdlAsyncDiskImageSmoke PROPERTIES TIMEOUT 60)
-    add_test(NAME SdlAsyncDebuggerExportSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-export-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncDebuggerExport.cmake")
-    set_tests_properties(SdlAsyncDebuggerExportSmoke PROPERTIES TIMEOUT 120)
-    add_test(NAME SdlAsyncSubtitlesSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-subtitles-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncSubtitles.cmake")
-    set_tests_properties(SdlAsyncSubtitlesSmoke PROPERTIES TIMEOUT 90)
-    add_test(NAME SdlAsyncRomsSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-roms-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncRoms.cmake")
-    set_tests_properties(SdlAsyncRomsSmoke PROPERTIES TIMEOUT 120)
-    add_test(NAME SdlAsyncTapeSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DFIXTURE=$<TARGET_FILE:SdlStateFixture>"
-      "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-tape-test" -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncTape.cmake")
-    set_tests_properties(SdlAsyncTapeSmoke PROPERTIES TIMEOUT 60)
-    add_test(NAME SdlAsyncSettingsImportSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-async-settings-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlAsyncSettingsImport.cmake")
-    set_tests_properties(SdlAsyncSettingsImportSmoke PROPERTIES TIMEOUT 60)
-    add_test(NAME SdlConcurrentTraceSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-trace-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentTrace.cmake")
-    set_tests_properties(SdlConcurrentTraceSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlTraceControlsSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-trace-controls-test"
-      -DTEST_TRACE_CONTROLS=ON -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentTrace.cmake")
-    set_tests_properties(SdlTraceControlsSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlTraceFailureRecoverySmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-trace-recovery-test"
-      -DTEST_TRACE_FAILURE=ON -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentTrace.cmake")
-    set_tests_properties(SdlTraceFailureRecoverySmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlTraceFailureExitSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-trace-exit-test"
-      -DTEST_TRACE_FAILURE_EXIT=ON -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentTrace.cmake")
-    set_tests_properties(SdlTraceFailureExitSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlTraceRecordFrameRecoverySmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-trace-frame-recovery-test"
-      -DTEST_TRACE_RECORD_FAILURE=ON -P "${PROJECT_SOURCE_DIR}/tests/SdlConcurrentTrace.cmake")
-    set_tests_properties(SdlTraceRecordFrameRecoverySmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlCombinedWorkersSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-combined-workers-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlCombinedWorkers.cmake")
-    set_tests_properties(SdlCombinedWorkersSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlSnapshotWriteFailureSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-snapshot-error-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlSnapshotWriteFailure.cmake")
-    set_tests_properties(SdlSnapshotWriteFailureSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlScreenshotMediaConflictSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-screenshot-conflict-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlScreenshotMediaConflict.cmake")
-    set_tests_properties(SdlScreenshotMediaConflictSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlEarlyFrameExitSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-early-exit-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlEarlyFrameExit.cmake")
-    set_tests_properties(SdlEarlyFrameExitSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlResponsiveShutdownSmoke COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-responsive-shutdown-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlResponsiveShutdown.cmake")
-    set_tests_properties(SdlResponsiveShutdownSmoke PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlStartupCli COMMAND ${CMAKE_COMMAND}
-      "-DAPP=$<TARGET_FILE:ukncbtl-sdl>" "-DSTATE_FIXTURE=$<TARGET_FILE:SdlStateFixture>"
-      "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-startup-test"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlStartupCli.cmake")
-    set_tests_properties(SdlStartupCli PROPERTIES TIMEOUT 30)
-    add_test(NAME SdlInstallSmoke COMMAND ${CMAKE_COMMAND}
-      "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-install-test"
-      "-DEXE_NAME=$<TARGET_FILE_NAME:ukncbtl-sdl>" "-DCONFIG=$<CONFIG>"
-      -P "${PROJECT_SOURCE_DIR}/tests/SdlInstallSmoke.cmake")
-    set_tests_properties(SdlInstallSmoke PROPERTIES TIMEOUT 60)
-  endif()
+  add_test(NAME SdlInstallSmoke COMMAND ${CMAKE_COMMAND}
+    "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}" "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdl-install-test"
+    "-DEXE_NAME=$<TARGET_FILE_NAME:ukncbtl>" "-DCONFIG=$<CONFIG>"
+    "-DLLVM_READOBJ=${install_readobj}"
+    "-DASAN_RUNTIME_DIR=${asan_runtime_dir}"
+    -P "${PROJECT_SOURCE_DIR}/tests/SdlInstallSmoke.cmake")
+  set_tests_properties(SdlInstallSmoke PROPERTIES TIMEOUT 60)
   ukncbtl_portable_test(TraceTests tests/TraceTests.cpp)
   ukncbtl_portable_test(SettingsCodecTests tests/SettingsCodecTests.cpp)
-  ukncbtl_portable_test(CachedSettingTests tests/CachedSettingTests.cpp)
   ukncbtl_portable_test(IniDocumentTests tests/IniDocumentTests.cpp)
   target_link_libraries(IniDocumentTests PRIVATE IniDocument)
   ukncbtl_portable_test(IniEncodingTests tests/IniEncodingTests.cpp)
   target_link_libraries(IniEncodingTests PRIVATE IniEncoding IniDocument)
   ukncbtl_portable_test(IniFileTests tests/IniFileTests.cpp)
   target_link_libraries(IniFileTests PRIVATE IniFile)
-  ukncbtl_portable_test(SettingsStoreTests tests/SettingsStoreTests.cpp)
-  target_link_libraries(SettingsStoreTests PRIVATE SettingsStore)
   ukncbtl_portable_test(StereoPcmBatchTests tests/StereoPcmBatchTests.cpp)
   ukncbtl_portable_test(FrameTimingTests tests/FrameTimingTests.cpp)
   target_link_libraries(FrameTimingTests PRIVATE FrameTiming)
@@ -707,158 +694,47 @@ if(BUILD_TESTING)
   target_link_libraries(ScreenScaleReferenceTests PRIVATE ScreenScale)
   ukncbtl_portable_test(SoundAYEdgeTests tests/SoundAYEdgeTests.cpp)
   target_link_libraries(SoundAYEdgeTests PRIVATE SoundAY)
-  ukncbtl_portable_test(CpuOverflowTests tests/CpuOverflowTests.cpp)
-  target_link_libraries(CpuOverflowTests PRIVATE CpuOverflow)
-endif()
-
-if(NOT UKNCBTL_BUILD_LEGACY)
-  return()
-endif()
-
-function(ukncbtl_target target)
-  ukncbtl_toolchain(${target})
-  target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
-  target_compile_definitions(${target} PRIVATE UNICODE _UNICODE NOMINMAX)
-  target_precompile_headers(${target} PRIVATE "${PROJECT_SOURCE_DIR}/emulator/stdafx.h")
-endfunction()
-
-add_executable(UKNCBTL WIN32
-  emulator/Common.cpp emulator/util/CommonText.cpp emulator/ConsoleView.cpp emulator/DebugView.cpp
-  emulator/Dialogs.cpp emulator/DisasmView.cpp emulator/InstrHistoryView.cpp
-  emulator/DisplayListView.cpp emulator/Emulator.cpp emulator/KeyboardView.cpp
-  emulator/Main.cpp emulator/MainWindow.cpp emulator/MemoryView.cpp
-  emulator/ScreenView.cpp emulator/ScreenText.cpp emulator/Settings.cpp emulator/SoundGen.cpp
-  emulator/SpriteView.cpp emulator/ViewCalculations.cpp emulator/TapeView.cpp emulator/ToolWindow.cpp
-  emulator/util/BitmapFile.cpp emulator/res/UKNCBTL.rc)
-ukncbtl_target(UKNCBTL)
-target_include_directories(UKNCBTL PRIVATE emulator/res)
-target_link_libraries(UKNCBTL PRIVATE FrameWorker FrameControl FrameTiming FramePacing HostInput WavPcmFile EmulatorCore EmulatorSnapshot VideoDecoder ScreenScale vfw32 comctl32 winmm advapi32 shell32)
-target_link_libraries(UKNCBTL PRIVATE DiskImageFile)
-target_link_libraries(UKNCBTL PRIVATE PrinterOutput)
-target_link_libraries(UKNCBTL PRIVATE RomFile)
-target_link_libraries(UKNCBTL PRIVATE EmbeddedRom)
-target_link_libraries(UKNCBTL PRIVATE MemoryDump)
-target_link_libraries(UKNCBTL PRIVATE DisplayListDump)
-target_link_libraries(UKNCBTL PRIVATE DebugLogFile)
-target_link_libraries(UKNCBTL PRIVATE BmpFile)
-target_link_libraries(UKNCBTL PRIVATE ScreenshotFormat)
-target_link_libraries(UKNCBTL PRIVATE ScreenshotImage)
-target_link_libraries(UKNCBTL PRIVATE VideoPalette)
-target_link_libraries(UKNCBTL PRIVATE ImagePixels)
-target_link_libraries(UKNCBTL PRIVATE SubtitleFile)
-if(UKNCBTL_ENABLE_SDL3)
-  target_compile_definitions(UKNCBTL PRIVATE UKNCBTL_SDL3_PNG)
-  target_link_libraries(UKNCBTL PRIVATE PngFile ScreenshotFile)
-else()
-  target_link_libraries(UKNCBTL PRIVATE windowscodecs)
-endif()
-if(UKNCBTL_USE_PORTABLE_SETTINGS)
-  target_compile_definitions(UKNCBTL PRIVATE UKNCBTL_PORTABLE_SETTINGS)
-  target_link_libraries(UKNCBTL PRIVATE SettingsStore)
-endif()
-target_link_options(UKNCBTL PRIVATE "LINKER:/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='amd64' publicKeyToken='6595b64144ccf1df' language='*'")
-
-install(TARGETS UKNCBTL RUNTIME DESTINATION .)
-
-if(BUILD_TESTING)
-  include(GoogleTest)
-  function(ukncbtl_test target)
-    add_executable(${target} ${ARGN})
-    ukncbtl_target(${target})
-    target_link_libraries(${target} PRIVATE GTest::gtest_main)
-    gtest_discover_tests(${target} DISCOVERY_TIMEOUT 30)
-  endfunction()
-
-  ukncbtl_test(SnapshotTests tests/SnapshotTests.cpp)
-  target_link_libraries(SnapshotTests PRIVATE EmulatorSnapshot EmulatorCore)
-  ukncbtl_test(VideoDecoderTests tests/VideoDecoderTests.cpp)
-  target_link_libraries(VideoDecoderTests PRIVATE VideoDecoder EmulatorCore)
-  ukncbtl_test(CommandTests tests/CommandTests.cpp)
-  target_link_libraries(CommandTests PRIVATE shell32)
-  ukncbtl_test(ConsoleProductTests tests/ConsoleProductTests.cpp)
-  target_compile_definitions(ConsoleProductTests PRIVATE PRODUCT)
-  set_target_properties(ConsoleProductTests PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
-  ukncbtl_test(SettingsTests tests/SettingsTests.cpp emulator/Settings.cpp)
-  if(UKNCBTL_USE_PORTABLE_SETTINGS)
-    target_compile_definitions(SettingsTests PRIVATE UKNCBTL_PORTABLE_SETTINGS)
-    target_link_libraries(SettingsTests PRIVATE SettingsStore)
-  endif()
-  # Exercise the same application settings API against the new store without
-  # changing the production backend before legacy INI migration is complete.
-  add_executable(SettingsPortableTests tests/SettingsTests.cpp emulator/Settings.cpp)
-  ukncbtl_target(SettingsPortableTests)
-  target_compile_definitions(SettingsPortableTests PRIVATE UKNCBTL_PORTABLE_SETTINGS)
-  target_link_libraries(SettingsPortableTests PRIVATE GTest::gtest_main SettingsStore)
-  gtest_discover_tests(SettingsPortableTests TEST_PREFIX "PortableBackend." DISCOVERY_TIMEOUT 30)
-  ukncbtl_test(IniWindowsCompatibilityTests tests/IniWindowsCompatibilityTests.cpp)
-  target_link_libraries(IniWindowsCompatibilityTests PRIVATE IniDocument IniEncoding SettingsStore)
-  ukncbtl_test(CommonTextTests tests/CommonTextTests.cpp emulator/util/CommonText.cpp)
-  ukncbtl_test(SpriteTests tests/SpriteTests.cpp)
-  ukncbtl_test(ViewCalculationTests tests/ViewCalculationTests.cpp emulator/ViewCalculations.cpp)
-  ukncbtl_test(ScreenTextTests tests/ScreenTextTests.cpp emulator/ScreenText.cpp)
-  ukncbtl_test(TextFormatTests tests/TextFormatTests.cpp)
-  ukncbtl_test(BitmapFileTests tests/BitmapFileTests.cpp emulator/util/BitmapFile.cpp)
-  target_include_directories(BitmapFileTests PRIVATE tests)
-  target_link_libraries(BitmapFileTests PRIVATE BmpFile ImagePixels windowscodecs)
-  if(UKNCBTL_ENABLE_SDL3)
-    target_compile_definitions(BitmapFileTests PRIVATE UKNCBTL_SDL3_PNG)
-    target_link_libraries(BitmapFileTests PRIVATE PngFile)
-  endif()
-  ukncbtl_test(BoardFrameTests tests/BoardFrameTests.cpp)
+  ukncbtl_portable_test(CoreRegressionTests
+    tests/BoardTests.cpp
+    tests/DisasmTests.cpp
+    tests/FloppyTests.cpp
+    tests/HardDriveTests.cpp
+    tests/HintTests.cpp
+    tests/MemoryTests.cpp
+    tests/ProcessorControlTests.cpp
+    tests/ProcessorSystemTests.cpp
+    tests/ProcessorTests.cpp
+    tests/SoundAYTests.cpp
+    tests/BenchmarkWorkloadTests.cpp tests/TestHelpers.cpp tests/GoogleTestMain.cpp tests/QuietCoreLog.cpp)
+  target_link_libraries(CoreRegressionTests PRIVATE EmulatorCore StagedFile)
+  ukncbtl_portable_test(BoardFrameTests tests/BoardFrameTests.cpp tests/QuietCoreLog.cpp)
   target_link_libraries(BoardFrameTests PRIVATE EmulatorCore)
-  ukncbtl_test(StorageControllerTests tests/StorageControllerTests.cpp)
-  target_link_libraries(StorageControllerTests PRIVATE EmulatorCore)
-  ukncbtl_test(MemoryEdgeTests tests/MemoryEdgeTests.cpp)
-  target_link_libraries(MemoryEdgeTests PRIVATE EmulatorCore)
-  ukncbtl_test(ProcessorEdgeTests tests/ProcessorEdgeTests.cpp)
-  target_link_libraries(ProcessorEdgeTests PRIVATE EmulatorCore)
-  ukncbtl_test(DiskImageWindowsTests tests/DiskImageWindowsTests.cpp)
-  target_link_libraries(DiskImageWindowsTests PRIVATE DiskImageFile)
-  ukncbtl_test(SoundOutputTests tests/SoundOutputTests.cpp emulator/SoundGen.cpp)
-  target_link_libraries(SoundOutputTests PRIVATE FrameWorker winmm EmulatorProfiling)
-  ukncbtl_test(CoreSmokeTests tests/CoreSmokeTests.cpp)
-  target_link_libraries(CoreSmokeTests PRIVATE EmulatorCore)
-  ukncbtl_test(DisasmCorpusTests tests/DisasmCorpusTests.cpp)
+  ukncbtl_portable_test(DisasmCorpusTests tests/DisasmCorpusTests.cpp tests/QuietCoreLog.cpp)
   target_link_libraries(DisasmCorpusTests PRIVATE EmulatorCore)
-  ukncbtl_test(DisasmEdgeTests tests/DisasmEdgeTests.cpp)
+  ukncbtl_portable_test(DisasmEdgeTests tests/DisasmEdgeTests.cpp tests/QuietCoreLog.cpp)
   target_link_libraries(DisasmEdgeTests PRIVATE EmulatorCore)
-
-  # Preserve the Microsoft test sources while registering each case with GoogleTest.
-  # New tests can use native TEST/TEST_F/TEST_P macros directly.
-  set(legacy_suites BoardTests DisasmTests FloppyTests HardDriveTests HintTests
-      MemoryTests ProcessorControlTests ProcessorSystemTests ProcessorTests SoundAYTests)
-  set(legacy_dir "${CMAKE_CURRENT_BINARY_DIR}/google-tests")
-  file(MAKE_DIRECTORY "${legacy_dir}")
-  set(legacy_wrappers)
-  foreach(suite IN LISTS legacy_suites)
-    set(source "${CMAKE_CURRENT_SOURCE_DIR}/tests/${suite}.cpp")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
-    file(READ "${source}" contents)
-    string(REGEX MATCHALL "TEST_METHOD\\([A-Za-z_][A-Za-z_0-9]*\\)" methods "${contents}")
-    set(wrapper "#include \"stdafx.h\"\n#include \"${source}\"\n#include \"LegacyTestRunner.h\"\n")
-    foreach(method IN LISTS methods)
-      string(REGEX REPLACE "TEST_METHOD\\(([A-Za-z_][A-Za-z_0-9]*)\\)" "\\1" name "${method}")
-      set(test_name "${name}")
-      if(contents MATCHES "BEGIN_TEST_METHOD_ATTRIBUTE\\(${name}\\)[ \t\r\n]*TEST_IGNORE\\(\\)")
-        set(test_name "DISABLED_${name}")
-      endif()
-      string(APPEND wrapper "TEST(${suite}, ${test_name}) { RunLegacyTest([] { ${suite} test; test.${name}(); }); }\n")
-    endforeach()
-    set(wrapper_path "${legacy_dir}/${suite}Runner.cpp")
-    file(CONFIGURE OUTPUT "${wrapper_path}" CONTENT "${wrapper}" @ONLY)
-    list(APPEND legacy_wrappers "${wrapper_path}")
-  endforeach()
-  add_executable(LegacyCoreTests tests/GoogleTestMain.cpp ${legacy_wrappers}
-    tests/TestCommon.cpp tests/TestHelpers.cpp tests/BenchmarkWorkloadTests.cpp
-    tests/GoogleTestAdapterTests.cpp)
-  ukncbtl_target(LegacyCoreTests)
-  target_include_directories(LegacyCoreTests PRIVATE tests/compat tests)
-  target_link_libraries(LegacyCoreTests PRIVATE GTest::gtest EmulatorCore winmm)
-  gtest_discover_tests(LegacyCoreTests DISCOVERY_TIMEOUT 30)
+  ukncbtl_portable_test(MemoryEdgeTests tests/MemoryEdgeTests.cpp tests/QuietCoreLog.cpp)
+  target_link_libraries(MemoryEdgeTests PRIVATE EmulatorCore)
+  ukncbtl_portable_test(ProcessorEdgeTests tests/ProcessorEdgeTests.cpp tests/QuietCoreLog.cpp)
+  target_link_libraries(ProcessorEdgeTests PRIVATE EmulatorCore)
+  ukncbtl_portable_test(VideoDecoderTests tests/VideoDecoderTests.cpp tests/QuietCoreLog.cpp)
+  target_link_libraries(VideoDecoderTests PRIVATE VideoDecoder EmulatorCore)
+  ukncbtl_portable_test(ScreenTextTests tests/ScreenTextTests.cpp)
+  target_link_libraries(ScreenTextTests PRIVATE ScreenText)
+  ukncbtl_portable_test(SpriteTests tests/SpriteTests.cpp)
+  ukncbtl_portable_test(CoreSmokeTests tests/CoreSmokeTests.cpp tests/TestHelpers.cpp tests/QuietCoreLog.cpp)
+  target_link_libraries(CoreSmokeTests PRIVATE EmulatorCore StagedFile)
+  ukncbtl_portable_test(SnapshotTests tests/SnapshotTests.cpp tests/TestHelpers.cpp tests/QuietCoreLog.cpp)
+  target_link_libraries(SnapshotTests PRIVATE EmulatorSnapshot StagedFile)
+  ukncbtl_portable_test(StorageControllerTests tests/StorageControllerTests.cpp tests/TestHelpers.cpp tests/QuietCoreLog.cpp)
+  target_link_libraries(StorageControllerTests PRIVATE EmulatorCore StagedFile)
+  ukncbtl_portable_test(CpuOverflowTests tests/CpuOverflowTests.cpp)
+  target_link_libraries(CpuOverflowTests PRIVATE EmulatorCore)
 endif()
 
 if(UKNCBTL_BUILD_BENCHMARKS)
   add_executable(EmulatorBenchmarks benchmarks/EmulatorBenchmarks.cpp)
-  ukncbtl_target(EmulatorBenchmarks)
+  ukncbtl_toolchain(EmulatorBenchmarks)
+  target_include_directories(EmulatorBenchmarks PRIVATE "${PROJECT_SOURCE_DIR}/emulator")
   target_link_libraries(EmulatorBenchmarks PRIVATE benchmark::benchmark EmulatorCore ScreenScale)
 endif()

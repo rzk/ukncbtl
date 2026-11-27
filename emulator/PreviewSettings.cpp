@@ -4,7 +4,6 @@
 #include "util/ScreenScale.h"
 #include "util/SettingsCodec.h"
 #include <algorithm>
-#include <cwctype>
 #include <optional>
 #include <string>
 #include <utility>
@@ -116,7 +115,7 @@ std::expected<std::optional<IniFile>, IniFileError> Read(const std::filesystem::
 std::optional<std::uint32_t> Number(const IniDocument& doc, std::wstring_view key)
 {
     const auto text = doc.Get(section, key);
-    return text && text->size() < 64 ? settings_codec::DecodeDword(*text) : std::nullopt;
+    return text && text->size() < 64 ? settings_codec::DecodeUnsignedDecimal(*text) : std::nullopt;
 }
 
 bool ReadOnlySetting(const IniDocument& doc, std::wstring_view key)
@@ -162,132 +161,6 @@ bool ValidBreakpoints(const SavedBreakpoints& values)
 bool preview_settings::ValidWindowSize(int width, int height)
 {
     return width >= 320 && width <= 7680 && height >= 240 && height <= 4320;
-}
-
-bool preview_settings::SameFile(const std::filesystem::path& first, const std::filesystem::path& second)
-{
-    if (first.empty() || second.empty()) return false;
-    std::error_code error;
-    if (std::filesystem::equivalent(first, second, error) && !error) return true;
-    error.clear();
-    const auto a = std::filesystem::weakly_canonical(first, error);
-    if (error) return first.lexically_normal() == second.lexically_normal();
-    const auto b = std::filesystem::weakly_canonical(second, error);
-    if (error) return first.lexically_normal() == second.lexically_normal();
-#ifdef _WIN32
-    auto left = a.native(), right = b.native();
-    std::ranges::transform(left, left.begin(), [](wchar_t ch) { return std::towlower(ch); });
-    std::ranges::transform(right, right.begin(), [](wchar_t ch) { return std::towlower(ch); });
-    return left == right;
-#else
-    return a == b;
-#endif
-}
-
-std::expected<preview_settings::Settings, IniFileError> preview_settings::ImportLegacy(
-    const std::filesystem::path& path, ImportEncoding encoding, const Settings& current, bool importMedia)
-{
-    std::expected<IniFile, IniFileError> file = std::unexpected(IniFileError::unsupported_encoding);
-    switch (encoding)
-    {
-    case ImportEncoding::unicode: file = IniFile::Open(path); break;
-    case ImportEncoding::windows1251: file = IniFile::OpenLegacy(path, ini_encoding::LegacyEncoding::windows_1251); break;
-    case ImportEncoding::windows1252: file = IniFile::OpenLegacy(path, ini_encoding::LegacyEncoding::windows_1252); break;
-    }
-    if (!file) return std::unexpected(file.error());
-    const auto& doc = file->Document();
-    auto result = current;
-    bool imported = false;
-    const auto number = [&](std::wstring_view key) -> std::optional<std::uint32_t> {
-        const auto text = doc.Get(L"UKNCBTL", key);
-        return text && text->size() < 64 ? settings_codec::DecodeDword(*text) : std::nullopt;
-    };
-    const auto boolean = [&](std::wstring_view key, bool& target) {
-        const auto value = number(key);
-        if (value && *value <= 1) { target = *value != 0; imported = true; }
-    };
-    boolean(L"Sound", result.sound);
-    boolean(L"SoundAY", result.soundAY);
-    boolean(L"SoundCovox", result.soundCovox);
-    boolean(L"Mouse", result.mouse);
-    boolean(L"Keyboard", result.keyboard);
-    boolean(L"Autostart", result.autostart);
-    boolean(L"Debug", result.debuggerVisible);
-    boolean(L"Toolbar", result.toolbar);
-    boolean(L"DebugMemoryByte", result.memoryBytes);
-    boolean(L"DebugMemoryNumeral", result.memoryHex);
-    // The legacy flag selects CPU when true; the SDL flag selects PPU.
-    if (const auto value = number(L"DebugCpuPpu"); value && *value <= 1)
-    { result.debuggerPpu = *value == 0; imported = true; }
-    if (const auto value = number(L"ScreenViewMode"); value && *value >= 1 && *value <= 3)
-    { result.paletteMode = *value == 1 ? 0 : *value == 2 ? 2 : 1; imported = true; }
-    if (const auto value = number(L"ScreenshotMode"); value && *value < screen_scale::Modes().size())
-    { result.screenshotMode = static_cast<int>(*value); imported = true; }
-    if (const auto value = number(L"RealSpeed"); value && *value <= 0xffff && frame_pacing::IsSupportedSpeed(static_cast<std::uint16_t>(*value)))
-    { result.speed = static_cast<std::uint16_t>(*value); imported = true; }
-    if (const auto value = number(L"SoundVolume"); value && *value <= 0xffff)
-    { result.volume = static_cast<int>((*value * 100u + 32767u) / 65535u); imported = true; }
-    if (const auto value = number(L"NetStation"); value && *value <= 0xffff)
-    { result.networkStation = static_cast<std::uint16_t>(*value); imported = true; }
-    if (const auto value = number(L"SpriteAddress"); value && *value <= 0xffff)
-    { result.spriteAddress = static_cast<std::uint16_t>(*value); imported = true; }
-    if (const auto value = number(L"SpriteWidth"); value && *value >= 1 && *value <= 32)
-    { result.spriteWidth = static_cast<int>(*value); imported = true; }
-    if (const auto value = number(L"SpriteMode"); value && *value <= 4)
-    { result.spriteMode = static_cast<int>(*value); imported = true; }
-    if (const auto value = number(L"DebugMemoryMode"); value && *value <= 5)
-    {
-        constexpr std::array modes{3, 4, 5, 6, 1, 2}; // RAM0/1/2, ROM, CPU, PPU.
-        result.memorySource = modes[*value]; imported = true;
-    }
-    const auto importBreakpoints = [&](std::wstring_view prefix, SavedBreakpoints& target) {
-        SavedBreakpoints values = EmptyBreakpoints();
-        std::size_t count = 0;
-        for (int index = 0; index < 16; ++index)
-        {
-            auto key = std::wstring(prefix);
-            key.push_back(index < 10 ? static_cast<wchar_t>(L'0' + index) : static_cast<wchar_t>(L'A' + index - 10));
-            const auto value = number(key);
-            if (!value || *value >= BreakpointSet::NoBreakpoint || (*value & 1) ||
-                std::find(values.begin(), values.begin() + count, *value) != values.begin() + count || count == values.size()) continue;
-            values[count++] = static_cast<std::uint16_t>(*value);
-        }
-        if (count) { std::sort(values.begin(), values.begin() + count); target = values; imported = true; }
-    };
-    importBreakpoints(L"DebugBreakptCpu", result.cpuBreakpoints);
-    importBreakpoints(L"DebugBreakptPpu", result.ppuBreakpoints);
-    if (importMedia)
-    {
-        bool foundMedia = false;
-        const auto readPath = [&](std::wstring_view key, std::filesystem::path& target) -> bool {
-            const auto text = doc.Get(L"UKNCBTL", key);
-            if (!text || text->size() > 32768) return false;
-            if (text->empty()) { target.clear(); imported = true; return true; }
-            const auto encoded = ini_encoding::Encode(*text, ini_encoding::Encoding::utf8);
-            if (!encoded) return false;
-            try
-            {
-                const std::u8string bytes(encoded->begin(), encoded->end());
-                auto mediaPath = std::filesystem::path(bytes);
-                if (mediaPath.is_relative()) mediaPath = path.parent_path() / mediaPath;
-                target = std::filesystem::absolute(mediaPath).lexically_normal();
-                foundMedia = true; imported = true; return true;
-            }
-            catch (const std::filesystem::filesystem_error&) {}
-            return false;
-        };
-        for (int index = 0; index < 4; ++index)
-            if (readPath(L"Floppy" + std::to_wstring(index), result.floppies[index])) result.floppyReadOnly[index] = false;
-        for (int index = 0; index < 2; ++index)
-        {
-            (void)readPath(L"Cartridge" + std::to_wstring(index + 1), result.cartridges[index]);
-            // Legacy callers use one-based slots with a key helper that adds one.
-            if (readPath(L"Hard" + std::to_wstring(index + 2), result.hardDisks[index])) result.hardDiskReadOnly[index] = false;
-        }
-        if (foundMedia) result.restoreMedia = true;
-    }
-    if (!imported) return std::unexpected(IniFileError::invalid_entry);
-    return result;
 }
 
 std::expected<preview_settings::Settings, IniFileError> preview_settings::Load(const std::filesystem::path& path)

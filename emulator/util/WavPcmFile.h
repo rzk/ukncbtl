@@ -43,9 +43,7 @@ class WavPcmFile
 {
 public:
     [[nodiscard]] static std::expected<WavPcmFile, WavError> Create(const std::filesystem::path& filename, int sampleRate);
-    [[nodiscard]] static std::expected<WavPcmFile, WavError> Create(const wchar_t* filename, int sampleRate);
     [[nodiscard]] static std::expected<WavPcmFile, WavError> Open(const std::filesystem::path& filename);
-    [[nodiscard]] static std::expected<WavPcmFile, WavError> Open(const wchar_t* filename);
 
     WavPcmFile(const WavPcmFile&) = delete;
     WavPcmFile& operator=(const WavPcmFile&) = delete;

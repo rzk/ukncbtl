@@ -1,8 +1,8 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "MediaSlots.h"
+#include "util/PathIdentity.h"
 #include "BackgroundJob.h"
 #include "AsyncDiskMount.h"
-#include "AsyncSettingsImport.h"
 #include "AutoBoot.h"
 #include "DiskImageFile.h"
 #include "AsyncDiskImage.h"
@@ -149,9 +149,6 @@ int Run(const preview_options::Options& options)
     const bool smokeTest = options.smokeTest;
 #ifdef UKNCBTL_TEST_HOOKS
     const bool testFrameAndPrinterFailure = smokeTest && SDL_getenv("UKNCBTL_TEST_FRAME_AND_PRINTER_FAILURE") != nullptr;
-    const char* testSettingsImportPath = smokeTest ? SDL_getenv("UKNCBTL_TEST_SETTINGS_IMPORT_PATH") : nullptr;
-    const bool testSettingsImportExit = testSettingsImportPath && SDL_getenv("UKNCBTL_TEST_SETTINGS_IMPORT_EXIT") != nullptr;
-    const bool testSettingsImportFailure = testSettingsImportPath && SDL_getenv("UKNCBTL_TEST_SETTINGS_IMPORT_FAILURE") != nullptr;
     const bool testStartupPump = smokeTest && SDL_getenv("UKNCBTL_TEST_STARTUP_PUMP") != nullptr;
     const bool testStartupQuit = testStartupPump && SDL_getenv("UKNCBTL_TEST_STARTUP_QUIT") != nullptr;
     const bool testStartupSettings = smokeTest && SDL_getenv("UKNCBTL_TEST_STARTUP_SETTINGS") != nullptr;
@@ -168,12 +165,12 @@ int Run(const preview_options::Options& options)
     std::optional<std::filesystem::path> settingsPath;
     std::string startupError;
     bool settingsDirty = false;
-    bool importedSettings = false;
     if (!smokeTest)
     {
         if (options.settingsFile) settingsPath = *options.settingsFile;
         else
         {
+            // Keep the existing settings location so upgrades retain preferences and layout.
             const std::unique_ptr<char, decltype(&SDL_free)> directory(SDL_GetPrefPath("UKNCBTL", "SDL Preview"), SDL_free);
             if (directory)
             {
@@ -181,11 +178,11 @@ int Run(const preview_options::Options& options)
                 settingsPath = std::filesystem::path(utf8) / "settings.ini";
             }
         }
-        if (!settingsPath) startupError = "Could not locate preview settings. Changes will not be saved.";
+        if (!settingsPath) startupError = "Could not locate application settings. Changes will not be saved.";
     }
-    else { settings.keyboard = true; settings.spriteViewer = true; settings.tapeVisible = true; settings.mediaVisible = true; } // Exercise preview windows in the smoke test.
+    else { settings.keyboard = true; settings.spriteViewer = true; settings.tapeVisible = true; settings.mediaVisible = true; } // Exercise tool windows in the smoke test.
 #ifdef UKNCBTL_TEST_HOOKS
-    if (testSettingsImportPath || testStartupSettings)
+    if (testStartupSettings)
     {
         if (!options.settingsFile) return 1;
         settingsPath = *options.settingsFile;
@@ -212,7 +209,7 @@ int Run(const preview_options::Options& options)
     }
 
     const std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)> window(
-        SDL_CreateWindow("UKNCBTL - SDL preview", settings.windowWidth, settings.windowHeight,
+        SDL_CreateWindow("UKNCBTL", settings.windowWidth, settings.windowHeight,
             SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN), SDL_DestroyWindow);
     if (!window) { SDL_Log("Window creation failed: %s", SDL_GetError()); return 1; }
     const auto showWindow = [&] {
@@ -238,7 +235,7 @@ int Run(const preview_options::Options& options)
         sdl_display::WaitForCompletion(completionWake, [&](auto timeout) { return work.WaitFor(timeout); },
             observeStartupEvents);
         observeStartupEvents();
-        (void)SDL_SetWindowTitle(window.get(), "UKNCBTL - SDL preview");
+        (void)SDL_SetWindowTitle(window.get(), "UKNCBTL");
         return true;
     };
     ProcessorRuntime processor;
@@ -248,7 +245,7 @@ int Run(const preview_options::Options& options)
     preview_printer::Session printer(board);
     preview_tape::Session tape(board);
     const auto isSettingsFile = [&](const std::filesystem::path& path) {
-        return preview_settings::SameFile(path, protectedPath);
+        return path_identity::SameFile(path, protectedPath);
     };
     const auto loadStartupMedia = [&]() -> std::expected<preview_media_restore::StartupMedia, std::string> {
 #ifdef UKNCBTL_TEST_HOOKS
@@ -274,10 +271,10 @@ int Run(const preview_options::Options& options)
             else
             {
 #ifdef UKNCBTL_TEST_HOOKS
-                if (testSettingsImportPath || testStartupSettings) return false;
+                if (testStartupSettings) return false;
 #endif
                 settingsPath.reset();
-                startupError = "Could not load preview settings. Changes will not be saved.";
+                startupError = "Could not load application settings. Changes will not be saved.";
             }
         }
 #ifdef UKNCBTL_TEST_HOOKS
@@ -471,7 +468,6 @@ int Run(const preview_options::Options& options)
     subtitles::AsyncLoad subtitleLoad(notifyUi);
     preview_tape::AsyncPrepare tapePrepare(notifyUi);
     media_slots::AsyncDiskMount diskMount(notifyUi);
-    preview_settings::AsyncImport settingsImport(notifyUi);
     bool screenshotErrorUnacknowledged = false;
     bool snapshotErrorUnacknowledged = false;
     bool traceErrorUnacknowledged = false;
@@ -479,12 +475,6 @@ int Run(const preview_options::Options& options)
     bool exportErrorUnacknowledged = false;
     bool printerErrorUnacknowledged = false;
     bool tapeCreateErrorUnacknowledged = false;
-    bool settingsImportErrorUnacknowledged = false;
-    constexpr std::string_view settingsImportError = "Could not import settings. Check the source, encoding and settings file.";
-    const auto reportSettingsImportError = [&] {
-        settingsImportErrorUnacknowledged = true;
-        reportActionError(settingsImportError);
-    };
     constexpr std::string_view tapeCreateError = "Could not create the WAV file.";
     constexpr std::string_view printerError = "Printer output failed and was stopped.";
     const auto reportPrinterError = [&] {
@@ -492,11 +482,11 @@ int Run(const preview_options::Options& options)
         reportActionError(printerError);
     };
     const auto reservesPath = [](const auto& operation, const std::filesystem::path& path) {
-        return operation.Pending() && preview_settings::SameFile(path, operation.Path());
+        return operation.Pending() && path_identity::SameFile(path, operation.Path());
     };
     const auto conflictsWithOutputOrPendingFile = [&](const std::filesystem::path& path) {
         const auto reserved = [&](const auto&... operations) { return (reservesPath(operations, path) || ...); };
-        return reserved(screenshotSave, snapshotSave, snapshotLoad, diskCreate, debuggerExport, subtitleLoad, romLoad, tapePrepare, diskMount, settingsImport) ||
+        return reserved(screenshotSave, snapshotSave, snapshotLoad, diskCreate, debuggerExport, subtitleLoad, romLoad, tapePrepare, diskMount) ||
             isSettingsFile(path) || printer.Conflicts(path) || tape.Conflicts(path) || debugger.TraceConflicts(path);
     };
     const auto conflicts = [&](const std::filesystem::path& path) {
@@ -661,7 +651,6 @@ int Run(const preview_options::Options& options)
     bool verifiedRomLoad = false;
     bool verifiedTapeOpen = false;
     bool verifiedDiskMount = false;
-    bool verifiedSettingsImport = false;
     bool verifiedTraceRecovery = false;
     unsigned framesAfterTraceRecovery = 0;
     bool injectedSlowFrame = false, pumpedDuringSlowFrame = false;
@@ -744,12 +733,6 @@ int Run(const preview_options::Options& options)
         const auto kind = testFloppyMountPath ? media_slots::Kind::floppy : media_slots::Kind::hardDisk;
         fileDialog->Complete({kind, 0, sdl_file_dialog::Status::selected,
             testDiskMountPath, sdl_file_dialog::Purpose::disk, -1, 0, 0, true});
-    }
-    if (testSettingsImportPath)
-    {
-        if (!fileDialog->Begin()) return 1;
-        fileDialog->Complete({media_slots::Kind::floppy, 0, sdl_file_dialog::Status::selected,
-            testSettingsImportPath, sdl_file_dialog::Purpose::legacySettings});
     }
 #else
     constexpr bool testAudioOverlap = false;
@@ -1174,28 +1157,6 @@ int Run(const preview_options::Options& options)
             showFloppyQuit = true;
         }
         if (!collectClipboard()) return 1;
-        if (auto imported = settingsImport.Poll())
-        {
-#ifdef UKNCBTL_TEST_HOOKS
-            if (testSettingsImportPath)
-            {
-                if (imported->has_value() == testSettingsImportFailure) return 1;
-                verifiedSettingsImport = true;
-            }
-#endif
-            if (!*imported) reportSettingsImportError();
-            else
-            {
-                importedSettings = true;
-#ifdef UKNCBTL_TEST_HOOKS
-                if (!testSettingsImportPath)
-#endif
-                    (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Settings imported",
-                        "Settings were imported. The emulator will close; start it again to apply them.", window.get());
-                done = true;
-                continue;
-            }
-        }
         const int diskSlot = diskMount.Slot();
         const auto diskKind = diskMount.DiskKind();
         if (diskMount.Ready())
@@ -1469,9 +1430,7 @@ int Run(const preview_options::Options& options)
                     { actionError = "Drop one file at a time."; showActionError = true; }
                     else if (path)
                     {
-                        if (settingsImport.Pending())
-                            reportActionError("Wait for the settings import to finish before dropping another file.");
-                        else if (fileDialog->Pending() || droppedFile)
+                        if (fileDialog->Pending() || droppedFile)
                         { actionError = "Finish the current file selection before dropping another file."; showActionError = true; }
                         else { droppedFile = std::move(path); dropReadOnly = false; showDropChooser = true; }
                     }
@@ -1569,38 +1528,7 @@ int Run(const preview_options::Options& options)
             else if (result->status == sdl_file_dialog::Status::selected)
             {
                 const std::u8string path(reinterpret_cast<const char8_t*>(result->path.data()), result->path.size());
-                if (result->purpose == sdl_file_dialog::Purpose::legacySettings)
-                {
-                    const auto source = std::filesystem::path(path);
-                    if (settingsImport.Pending() || !settingsPath || conflicts(source))
-                    {
-                        reportActionError("Could not import settings. Check the source and settings file.");
-                        continue;
-                    }
-                    auto current = settings;
-                    const bool layoutCaptured = captureUiLayout(current);
-                    current.cpuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::cpu).PermanentAddresses();
-                    current.ppuBreakpoints = debugger.Breakpoints(preview_debugger::Processor::ppu).PermanentAddresses();
-                    current.debuggerVisible = showDebugger;
-                    current.consoleVisible = showConsole;
-                    current.debuggerPpu = debugProcessor == preview_debugger::Processor::ppu;
-                    int width = 0, height = 0;
-                    const auto flags = SDL_GetWindowFlags(window.get());
-                    if (!(flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) &&
-                        SDL_GetWindowSize(window.get(), &width, &height) && preview_settings::ValidWindowSize(width, height))
-                    { current.windowWidth = width; current.windowHeight = height; }
-                    if (!layoutCaptured || !flushFloppy() || !settingsImport.Start(source, *settingsPath,
-                        static_cast<preview_settings::ImportEncoding>(result->slot % 3), std::move(current), result->slot >= 3))
-                        reportActionError(settingsImportError);
-#ifdef UKNCBTL_TEST_HOOKS
-                    else if (testSettingsImportPath)
-                    {
-                        if (!conflicts(source.parent_path() / "." / source.filename())) return 1;
-                        if (testSettingsImportExit) done = true;
-                    }
-#endif
-                }
-                else if (result->purpose == sdl_file_dialog::Purpose::trace)
+                if (result->purpose == sdl_file_dialog::Purpose::trace)
                 {
                     auto target = std::filesystem::path(path);
                     if (!target.has_extension()) target += ".log";
@@ -1839,7 +1767,7 @@ int Run(const preview_options::Options& options)
         for (const auto shortcut : shortcuts)
         {
             if (!sdl_shortcuts::Allowed(shortcut, running, focusLost || ImGui::GetIO().WantCaptureKeyboard,
-                fileDialog->Pending() || settingsImport.Pending() || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))) continue;
+                fileDialog->Pending() || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))) continue;
             switch (shortcut)
             {
             case sdl_shortcuts::Action::fullscreen: toggleFullscreen = true; break;
@@ -1934,21 +1862,6 @@ int Run(const preview_options::Options& options)
                             { settings.hardDisks[slot] = *path; settings.hardDiskReadOnly[slot] = media.RequestedReadOnly(media_slots::Kind::hardDisk, slot); }
                         }
                     }
-                }
-                if (ImGui::BeginMenu("Import legacy settings and exit",
-                    settingsPath.has_value() && !fileDialog->Pending() && !settingsImport.Pending()))
-                {
-                    constexpr std::array labels{"UTF-8 or UTF-16LE...", "Windows-1251...", "Windows-1252..."};
-                    for (int media = 0; media < 2; ++media)
-                        if (ImGui::BeginMenu(media ? "Settings and media paths" : "Settings only"))
-                        {
-                            if (media) ImGui::TextDisabled("Media will be restored on the next launch.");
-                            for (int index = 0; index < static_cast<int>(labels.size()); ++index)
-                                if (ImGui::MenuItem(labels[index]) && !sdl_file_dialog::OpenLegacySettings(fileDialog, *window, index + media * 3))
-                                { actionError = "Could not open the file dialog."; showActionError = true; }
-                            ImGui::EndMenu();
-                        }
-                    ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Network station"))
                 {
@@ -2541,7 +2454,7 @@ int Run(const preview_options::Options& options)
                 ImGui::SameLine();
                 if (ImGui::Button("Step over")) stepMachine(true, started);
                 ImGui::EndDisabled();
-                ImGui::TextDisabled("Step advances both processors, as in the legacy debugger.");
+                ImGui::TextDisabled("Step advances both processors.");
                 ImGui::BeginDisabled(running);
                 if (ImGui::Button("Capture comparison baseline")) (void)captureComparison();
                 ImGui::EndDisabled();
@@ -3204,15 +3117,7 @@ int Run(const preview_options::Options& options)
             if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
-        if (settingsImport.Pending() && !ImGui::IsPopupOpen("Importing settings"))
-            ImGui::OpenPopup("Importing settings");
-        if (ImGui::BeginPopupModal("Importing settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            if (settingsImport.Pending()) ImGui::TextUnformatted("Importing settings...");
-            else ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
-        if (showActionError && !settingsImport.Pending())
+        if (showActionError)
         {
             constexpr std::string_view screenshotError = "Could not save the screenshot image.";
             constexpr std::string_view snapshotError = "Could not save the state image.";
@@ -3254,11 +3159,6 @@ int Run(const preview_options::Options& options)
                 if (!actionError.empty()) actionError += "\n";
                 actionError += tapeCreateError;
             }
-            if (settingsImportErrorUnacknowledged && actionError.find(settingsImportError) == std::string::npos)
-            {
-                if (!actionError.empty()) actionError += "\n";
-                actionError += settingsImportError;
-            }
 #ifdef UKNCBTL_TEST_HOOKS
             if (testScreenshotErrorMerge && screenshotErrorUnacknowledged)
             {
@@ -3289,8 +3189,6 @@ int Run(const preview_options::Options& options)
                     printerErrorUnacknowledged = false;
                 if (actionError.find(tapeCreateError) != std::string::npos)
                     tapeCreateErrorUnacknowledged = false;
-                if (actionError.find(settingsImportError) != std::string::npos)
-                    settingsImportErrorUnacknowledged = false;
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
@@ -3617,7 +3515,6 @@ int Run(const preview_options::Options& options)
             && (!testSubtitlePath || verifiedSubtitleLoad)
             && (!testRomPath || verifiedRomLoad)
             && (!testTapePath || verifiedTapeOpen)
-            && (!testSettingsImportPath || verifiedSettingsImport)
             && !testPrinterFailureExit
             && (!testCopyScreenshot || verifiedTestClipboard)
             && (!testDiskMountPath || verifiedDiskMount)
@@ -3669,7 +3566,7 @@ int Run(const preview_options::Options& options)
     }
     // The last frame has returned the board. Capture everything that still
     // needs the window or ImGui before handing the board to shutdown.
-    if (settingsPath && !importedSettings)
+    if (settingsPath)
     {
         auto currentLayout = settings;
         if (captureUiLayout(currentLayout))
@@ -3719,7 +3616,6 @@ int Run(const preview_options::Options& options)
         bool tapeFailed = false;
         bool printerFailed = false;
         std::optional<bool> tapeCreated;
-        bool importFailed = false;
         bool settingsFailed = false;
     };
     const auto finishShutdown = [&] {
@@ -3750,13 +3646,7 @@ int Run(const preview_options::Options& options)
         result.tapeFailed = !tape.Close();
         result.printerFailed = !printer.Stop();
 
-        bool savedByImport = importedSettings;
-        if (const auto imported = settingsImport.Finish())
-        {
-            savedByImport = imported->has_value();
-            result.importFailed = !savedByImport;
-        }
-        if (settingsPath && settingsDirty && !savedByImport)
+        if (settingsPath && settingsDirty)
             result.settingsFailed = !preview_settings::Save(*settingsPath, settings);
 
         // Readers may finish after quit. Release their results without
@@ -3893,18 +3783,10 @@ int Run(const preview_options::Options& options)
 #endif
         (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Printer", "Could not finish the printer output file.", window.get());
     }
-    if (settingsImportErrorUnacknowledged || shutdown.importFailed)
-    {
-        SDL_Log("Could not import settings. Check the source, encoding and settings file.");
-#ifdef UKNCBTL_TEST_HOOKS
-        if (!testSettingsImportPath)
-#endif
-            (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Settings", settingsImportError.data(), window.get());
-    }
     if (shutdown.settingsFailed)
     {
-        SDL_Log("Could not save preview settings.");
-        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Settings", "Could not save preview settings.", window.get());
+        SDL_Log("Could not save application settings.");
+        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Settings", "Could not save application settings.", window.get());
     }
     return 0;
 }
@@ -3918,7 +3800,7 @@ int main(int argc, char** argv)
     if (!options) { std::fprintf(stderr, "%s\nUse --help for usage.\n", options.error().c_str()); return 2; }
     if (options->help)
     {
-        std::printf("Usage: ukncbtl-sdl [--run|--paused] [--sound|--no-sound] [--fullscreen|--windowed]\n"
+        std::printf("Usage: ukncbtl [--run|--paused] [--sound|--no-sound] [--fullscreen|--windowed]\n"
                     "  [--rom PATH] [--floppy 0..3 PATH] [--cartridge 1..2 PATH]\n"
                     "  [--floppy-read-only 0..3 PATH] [--hard-disk 1..2 PATH]\n"
                     "  [--hard-disk-read-only 1..2 PATH] [--tape PATH] [--state PATH]\n"

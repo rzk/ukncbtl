@@ -19,11 +19,10 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 //   - WAIT stops the processor until an interrupt; the trace trap does not wake it up;
 //   - RESET initializes the I/O devices and cancels the pending line clock request.
 
-#include "stdafx.h"
-#include <CppUnitTest.h>
+#include <gtest/gtest.h>
+#include <cwchar>
+#include <iterator>
 #include "TestHelpers.h"
-
-using namespace Microsoft::VisualStudio::CppUnitTestFramework;
 
 namespace
 {
@@ -58,330 +57,326 @@ void SetTraceVector(TestBoard& tb)
 
 }
 
-TEST_CLASS(ProcessorSystemTests)
+// T-bit
+
+TEST(ProcessorSystemTests, Processor_Tbit_TrapsAfterTheInstruction)
 {
-public:
-    // T-bit
+    TestBoard tb;
+    const uint16_t program[] = { OP_INC_R0, OP_INC_R0 };
+    Prepare(tb, program, 2);
+    SetTraceVector(tb);
+    tb.CPU()->SetPSW(TBIT);
 
-    TEST_METHOD(Processor_Tbit_TrapsAfterTheInstruction)
+    tb.Run();
+    ASSERT_EQ(1, tb.CPU()->GetReg(0)) << L"the traced instruction is executed";
+    ASSERT_TRUE(tb.TakeInterrupt()) << L"trace trap";
+
+    ASSERT_EQ(HANDLER, tb.CPU()->GetPC()) << L"PC = handler";
+    ASSERT_EQ(0, tb.CPU()->GetPSW()) << L"PSW from the vector: T-bit is cleared";
+    ASSERT_EQ(STACK - 4, tb.CPU()->GetSP()) << L"SP";
+    ASSERT_EQ(PROG + 2, tb.GetWord(STACK - 4)) << L"the pushed PC is the next instruction";
+    ASSERT_EQ(TBIT, tb.GetWord(STACK - 2)) << L"the pushed PSW has the T-bit";
+    ASSERT_EQ(1, tb.CPU()->GetReg(0)) << L"the next instruction is not executed yet";
+}
+
+TEST(ProcessorSystemTests, Processor_Tbit_NoTrapWithoutTheBit)
+{
+    TestBoard tb;
+    const uint16_t program[] = { OP_INC_R0 };
+    Prepare(tb, program, 1);
+    SetTraceVector(tb);
+
+    tb.Run();
+    ASSERT_FALSE(tb.TakeInterrupt()) << L"no trap";
+    ASSERT_EQ(PROG + 2, tb.CPU()->GetPC()) << L"PC";
+}
+
+TEST(ProcessorSystemTests, Processor_Tbit_TrapsAfterEveryInstruction)
+{
+    // The handler returns with RTT, which lets one instruction run: INC, trap, RTT, INC, trap, ...
+    TestBoard tb;
+    const uint16_t program[] = { OP_INC_R0, OP_INC_R0, OP_INC_R0 };
+    Prepare(tb, program, 3);
+    SetTraceVector(tb);
+    tb.SetWord(HANDLER, OP_RTT);
+    tb.CPU()->SetPSW(TBIT);
+
+    for (int n = 1; n <= 3; n++)
     {
-        TestBoard tb;
-        const uint16_t program[] = { OP_INC_R0, OP_INC_R0 };
-        Prepare(tb, program, 2);
-        SetTraceVector(tb);
-        tb.CPU()->SetPSW(TBIT);
-
-        tb.Run();
-        Eq(1, tb.CPU()->GetReg(0), _T("the traced instruction is executed"));
-        Assert::IsTrue(tb.TakeInterrupt(), _T("trace trap"));
-
-        Eq(HANDLER, tb.CPU()->GetPC(), _T("PC = handler"));
-        Eq(0, tb.CPU()->GetPSW(), _T("PSW from the vector: T-bit is cleared"));
-        Eq(STACK - 4, tb.CPU()->GetSP(), _T("SP"));
-        Eq(PROG + 2, tb.GetWord(STACK - 4), _T("the pushed PC is the next instruction"));
-        Eq(TBIT, tb.GetWord(STACK - 2), _T("the pushed PSW has the T-bit"));
-        Eq(1, tb.CPU()->GetReg(0), _T("the next instruction is not executed yet"));
-    }
-
-    TEST_METHOD(Processor_Tbit_NoTrapWithoutTheBit)
-    {
-        TestBoard tb;
-        const uint16_t program[] = { OP_INC_R0 };
-        Prepare(tb, program, 1);
-        SetTraceVector(tb);
-
-        tb.Run();
-        Assert::IsFalse(tb.TakeInterrupt(), _T("no trap"));
-        Eq(PROG + 2, tb.CPU()->GetPC(), _T("PC"));
-    }
-
-    TEST_METHOD(Processor_Tbit_TrapsAfterEveryInstruction)
-    {
-        // The handler returns with RTT, which lets one instruction run: INC, trap, RTT, INC, trap, ...
-        TestBoard tb;
-        const uint16_t program[] = { OP_INC_R0, OP_INC_R0, OP_INC_R0 };
-        Prepare(tb, program, 3);
-        SetTraceVector(tb);
-        tb.SetWord(HANDLER, OP_RTT);
-        tb.CPU()->SetPSW(TBIT);
-
-        for (int n = 1; n <= 3; n++)
-        {
-            tb.Run();  // the traced instruction
-            Eq(n, tb.CPU()->GetReg(0), _T("R0"));
-            Assert::IsTrue(tb.TakeInterrupt(), _T("trace trap after the instruction"));
-            Eq(PROG + n * 2, tb.GetWord(STACK - 4), _T("the pushed PC"));
-            Eq(HANDLER, tb.CPU()->GetPC(), _T("PC = handler"));
-
-            tb.Run();  // RTT
-            Eq(PROG + n * 2, tb.CPU()->GetPC(), _T("back to the program"));
-            Eq(TBIT, tb.CPU()->GetPSW(), _T("the T-bit is restored"));
-            Eq(STACK, tb.CPU()->GetSP(), _T("SP"));
-            Assert::IsFalse(tb.TakeInterrupt(), _T("RTT inhibits the trap before the next instruction"));
-        }
-    }
-
-    TEST_METHOD(Processor_Tbit_RtiTrapsBeforeTheNextInstruction)
-    {
-        // RTI restores the PSW with the T-bit set and the trace trap occurs at once
-        TestBoard tb;
-        const uint16_t program[] = { OP_INC_R0, OP_INC_R0 };
-        Prepare(tb, program, 2);
-        SetTraceVector(tb);
-        tb.SetWord(HANDLER, OP_RTI);
-        tb.CPU()->SetSP(STACK - 4);
-        tb.SetWord(STACK - 4, PROG);   // the return address
-        tb.SetWord(STACK - 2, TBIT);  // the PSW to restore
-        tb.CPU()->SetPC(HANDLER);
-
-        tb.Run();  // RTI
-        Eq(PROG, tb.CPU()->GetPC(), _T("PC after RTI"));
-        Eq(TBIT, tb.CPU()->GetPSW(), _T("the T-bit is restored"));
-        Assert::IsTrue(tb.TakeInterrupt(), _T("trace trap before the instruction at PROG"));
-
-        Eq(0, tb.CPU()->GetReg(0), _T("the instruction at PROG is not executed"));
-        Eq(PROG, tb.GetWord(STACK - 4), _T("the pushed PC is the return address"));
-        Eq(HANDLER, tb.CPU()->GetPC(), _T("PC = handler"));
-    }
-
-    TEST_METHOD(Processor_Tbit_RttRunsOneInstructionFirst)
-    {
-        // RTT restores the same PSW, but the trap waits until the next instruction is executed
-        TestBoard tb;
-        const uint16_t program[] = { OP_INC_R0, OP_INC_R0 };
-        Prepare(tb, program, 2);
-        SetTraceVector(tb);
-        tb.SetWord(HANDLER, OP_RTT);
-        tb.CPU()->SetSP(STACK - 4);
-        tb.SetWord(STACK - 4, PROG);
-        tb.SetWord(STACK - 2, TBIT);
-        tb.CPU()->SetPC(HANDLER);
+        tb.Run();  // the traced instruction
+        ASSERT_EQ(n, tb.CPU()->GetReg(0)) << L"R0";
+        ASSERT_TRUE(tb.TakeInterrupt()) << L"trace trap after the instruction";
+        ASSERT_EQ(PROG + n * 2, tb.GetWord(STACK - 4)) << L"the pushed PC";
+        ASSERT_EQ(HANDLER, tb.CPU()->GetPC()) << L"PC = handler";
 
         tb.Run();  // RTT
-        Eq(PROG, tb.CPU()->GetPC(), _T("PC after RTT"));
-        Eq(TBIT, tb.CPU()->GetPSW(), _T("the T-bit is restored"));
-        Assert::IsFalse(tb.TakeInterrupt(), _T("no trap right after RTT"));
-
-        tb.Run();  // the instruction at PROG
-        Eq(1, tb.CPU()->GetReg(0), _T("the instruction at PROG is executed"));
-        Assert::IsTrue(tb.TakeInterrupt(), _T("trace trap after it"));
-        Eq(PROG + 2, tb.GetWord(STACK - 4), _T("the pushed PC is the next instruction"));
+        ASSERT_EQ(PROG + n * 2, tb.CPU()->GetPC()) << L"back to the program";
+        ASSERT_EQ(TBIT, tb.CPU()->GetPSW()) << L"the T-bit is restored";
+        ASSERT_EQ(STACK, tb.CPU()->GetSP()) << L"SP";
+        ASSERT_FALSE(tb.TakeInterrupt()) << L"RTT inhibits the trap before the next instruction";
     }
+}
 
-    TEST_METHOD(Processor_Tbit_ReturnWithoutTheBitDoesNotTrap)
-    {
-        // RTI and RTT with the PSW without the T-bit: no trap after them
-        static const uint16_t opcodes[] = { OP_RTI, OP_RTT };
-        for (size_t i = 0; i < 2; i++)
-        {
-            TestBoard tb;
-            const uint16_t program[] = { OP_INC_R0 };
-            Prepare(tb, program, 1);
-            SetTraceVector(tb);
-            tb.SetWord(HANDLER, opcodes[i]);
-            tb.CPU()->SetSP(STACK - 4);
-            tb.SetWord(STACK - 4, PROG);
-            tb.SetWord(STACK - 2, 0);
-            tb.CPU()->SetPC(HANDLER);
+TEST(ProcessorSystemTests, Processor_Tbit_RtiTrapsBeforeTheNextInstruction)
+{
+    // RTI restores the PSW with the T-bit set and the trace trap occurs at once
+    TestBoard tb;
+    const uint16_t program[] = { OP_INC_R0, OP_INC_R0 };
+    Prepare(tb, program, 2);
+    SetTraceVector(tb);
+    tb.SetWord(HANDLER, OP_RTI);
+    tb.CPU()->SetSP(STACK - 4);
+    tb.SetWord(STACK - 4, PROG);   // the return address
+    tb.SetWord(STACK - 2, TBIT);  // the PSW to restore
+    tb.CPU()->SetPC(HANDLER);
 
-            tb.Run();
-            Eq(PROG, tb.CPU()->GetPC(), _T("PC after the return"));
-            Assert::IsFalse(tb.TakeInterrupt(), _T("no trap"));
-        }
-    }
+    tb.Run();  // RTI
+    ASSERT_EQ(PROG, tb.CPU()->GetPC()) << L"PC after RTI";
+    ASSERT_EQ(TBIT, tb.CPU()->GetPSW()) << L"the T-bit is restored";
+    ASSERT_TRUE(tb.TakeInterrupt()) << L"trace trap before the instruction at PROG";
 
-    TEST_METHOD(Processor_Tbit_FlagsAreKeptInThePushedPsw)
+    ASSERT_EQ(0, tb.CPU()->GetReg(0)) << L"the instruction at PROG is not executed";
+    ASSERT_EQ(PROG, tb.GetWord(STACK - 4)) << L"the pushed PC is the return address";
+    ASSERT_EQ(HANDLER, tb.CPU()->GetPC()) << L"PC = handler";
+}
+
+TEST(ProcessorSystemTests, Processor_Tbit_RttRunsOneInstructionFirst)
+{
+    // RTT restores the same PSW, but the trap waits until the next instruction is executed
+    TestBoard tb;
+    const uint16_t program[] = { OP_INC_R0, OP_INC_R0 };
+    Prepare(tb, program, 2);
+    SetTraceVector(tb);
+    tb.SetWord(HANDLER, OP_RTT);
+    tb.CPU()->SetSP(STACK - 4);
+    tb.SetWord(STACK - 4, PROG);
+    tb.SetWord(STACK - 2, TBIT);
+    tb.CPU()->SetPC(HANDLER);
+
+    tb.Run();  // RTT
+    ASSERT_EQ(PROG, tb.CPU()->GetPC()) << L"PC after RTT";
+    ASSERT_EQ(TBIT, tb.CPU()->GetPSW()) << L"the T-bit is restored";
+    ASSERT_FALSE(tb.TakeInterrupt()) << L"no trap right after RTT";
+
+    tb.Run();  // the instruction at PROG
+    ASSERT_EQ(1, tb.CPU()->GetReg(0)) << L"the instruction at PROG is executed";
+    ASSERT_TRUE(tb.TakeInterrupt()) << L"trace trap after it";
+    ASSERT_EQ(PROG + 2, tb.GetWord(STACK - 4)) << L"the pushed PC is the next instruction";
+}
+
+TEST(ProcessorSystemTests, Processor_Tbit_ReturnWithoutTheBitDoesNotTrap)
+{
+    // RTI and RTT with the PSW without the T-bit: no trap after them
+    static const uint16_t opcodes[] = { OP_RTI, OP_RTT };
+    for (size_t i = 0; i < 2; i++)
     {
         TestBoard tb;
         const uint16_t program[] = { OP_INC_R0 };
         Prepare(tb, program, 1);
         SetTraceVector(tb);
-        tb.CPU()->SetPSW(TBIT | TF_C);  // C is not changed by INC
+        tb.SetWord(HANDLER, opcodes[i]);
+        tb.CPU()->SetSP(STACK - 4);
+        tb.SetWord(STACK - 4, PROG);
+        tb.SetWord(STACK - 2, 0);
+        tb.CPU()->SetPC(HANDLER);
 
         tb.Run();
-        Assert::IsTrue(tb.TakeInterrupt());
-        Eq(TBIT | TF_C, tb.GetWord(STACK - 2), _T("T and C in the pushed PSW"));
+        ASSERT_EQ(PROG, tb.CPU()->GetPC()) << L"PC after the return";
+        ASSERT_FALSE(tb.TakeInterrupt()) << L"no trap";
     }
+}
 
-    TEST_METHOD(Processor_Tbit_TrapInstructionGoesThroughItsOwnVector)
-    {
-        // EMT with the T-bit: the EMT trap has the priority, vector 030; the pushed PSW has the T-bit
-        TestBoard tb;
-        const uint16_t program[] = { 0104001 };  // EMT 1
-        Prepare(tb, program, 1);
-        SetTraceVector(tb);
-        tb.SetWord(030, 03000);
-        tb.SetWord(032, 0);
-        tb.CPU()->SetPSW(TBIT);
+TEST(ProcessorSystemTests, Processor_Tbit_FlagsAreKeptInThePushedPsw)
+{
+    TestBoard tb;
+    const uint16_t program[] = { OP_INC_R0 };
+    Prepare(tb, program, 1);
+    SetTraceVector(tb);
+    tb.CPU()->SetPSW(TBIT | TF_C);  // C is not changed by INC
 
-        tb.Run();
-        Eq(03000, tb.CPU()->GetPC(), _T("PC = EMT handler"));
-        Eq(TBIT, tb.GetWord(STACK - 2), _T("the pushed PSW"));
-    }
+    tb.Run();
+    ASSERT_TRUE(tb.TakeInterrupt());
+    ASSERT_EQ(TBIT | TF_C, tb.GetWord(STACK - 2)) << L"T and C in the pushed PSW";
+}
 
-    // WAIT
+TEST(ProcessorSystemTests, Processor_Tbit_TrapInstructionGoesThroughItsOwnVector)
+{
+    // EMT with the T-bit: the EMT trap has the priority, vector 030; the pushed PSW has the T-bit
+    TestBoard tb;
+    const uint16_t program[] = { 0104001 };  // EMT 1
+    Prepare(tb, program, 1);
+    SetTraceVector(tb);
+    tb.SetWord(030, 03000);
+    tb.SetWord(032, 0);
+    tb.CPU()->SetPSW(TBIT);
 
-    TEST_METHOD(Processor_Wait_StopsTheInstructionFlow)
-    {
-        TestBoard tb;
-        const uint16_t program[] = { OP_WAIT, OP_INC_R0 };
-        Prepare(tb, program, 2);
+    tb.Run();
+    ASSERT_EQ(03000, tb.CPU()->GetPC()) << L"PC = EMT handler";
+    ASSERT_EQ(TBIT, tb.GetWord(STACK - 2)) << L"the pushed PSW";
+}
 
-        tb.Run();
-        Eq(PROG + 2, tb.CPU()->GetPC(), _T("PC after WAIT"));
-        tb.Run(5);
-        Eq(PROG + 2, tb.CPU()->GetPC(), _T("PC does not move"));
-        Eq(0, tb.CPU()->GetReg(0), _T("the next instruction is not executed"));
-        Assert::IsFalse(tb.TakeInterrupt(), _T("nothing wakes the processor up"));
-    }
+// WAIT
 
-    TEST_METHOD(Processor_Wait_InterruptWakesTheProcessorUp)
-    {
-        TestBoard tb;
-        tb.StartCPU();
-        const uint16_t program[] = { OP_WAIT, OP_INC_R0 };
-        Prepare(tb, program, 2);
-        tb.SetWord(060, HANDLER);
-        tb.SetWord(062, 0);
-        tb.SetWord(HANDLER, OP_RTI);
+TEST(ProcessorSystemTests, Processor_Wait_StopsTheInstructionFlow)
+{
+    TestBoard tb;
+    const uint16_t program[] = { OP_WAIT, OP_INC_R0 };
+    Prepare(tb, program, 2);
 
-        tb.Run();
-        tb.Run(3);
-        Eq(0, tb.CPU()->GetReg(0), _T("waiting"));
+    tb.Run();
+    ASSERT_EQ(PROG + 2, tb.CPU()->GetPC()) << L"PC after WAIT";
+    tb.Run(5);
+    ASSERT_EQ(PROG + 2, tb.CPU()->GetPC()) << L"PC does not move";
+    ASSERT_EQ(0, tb.CPU()->GetReg(0)) << L"the next instruction is not executed";
+    ASSERT_FALSE(tb.TakeInterrupt()) << L"nothing wakes the processor up";
+}
 
-        tb.CPU()->InterruptVIRQ(1, 060);
-        Assert::IsTrue(tb.TakeInterrupt(), _T("the interrupt is taken"));
-        Eq(HANDLER, tb.CPU()->GetPC(), _T("PC = handler"));
-        Eq(PROG + 2, tb.GetWord(STACK - 4), _T("the pushed PC is the address after WAIT"));
+TEST(ProcessorSystemTests, Processor_Wait_InterruptWakesTheProcessorUp)
+{
+    TestBoard tb;
+    tb.StartCPU();
+    const uint16_t program[] = { OP_WAIT, OP_INC_R0 };
+    Prepare(tb, program, 2);
+    tb.SetWord(060, HANDLER);
+    tb.SetWord(062, 0);
+    tb.SetWord(HANDLER, OP_RTI);
 
-        tb.Run();  // RTI of the handler
-        Eq(PROG + 2, tb.CPU()->GetPC(), _T("back after WAIT"));
-        tb.Run();  // INC R0: the processor runs again
-        Eq(1, tb.CPU()->GetReg(0), _T("the instruction after WAIT is executed"));
-    }
+    tb.Run();
+    tb.Run(3);
+    ASSERT_EQ(0, tb.CPU()->GetReg(0)) << L"waiting";
 
-    TEST_METHOD(Processor_Wait_BlockedInterruptDoesNotWakeTheProcessorUp)
-    {
-        // The bit 7 of the PSW blocks the interrupts of the devices
-        TestBoard tb;
-        tb.StartCPU();
-        const uint16_t program[] = { OP_WAIT, OP_INC_R0 };
-        Prepare(tb, program, 2);
-        tb.SetWord(060, HANDLER);
-        tb.SetWord(062, 0);
-        tb.CPU()->SetPSW(PRIORITY_BIT);
+    tb.CPU()->InterruptVIRQ(1, 060);
+    ASSERT_TRUE(tb.TakeInterrupt()) << L"the interrupt is taken";
+    ASSERT_EQ(HANDLER, tb.CPU()->GetPC()) << L"PC = handler";
+    ASSERT_EQ(PROG + 2, tb.GetWord(STACK - 4)) << L"the pushed PC is the address after WAIT";
 
-        tb.Run();
-        tb.CPU()->InterruptVIRQ(1, 060);
-        Assert::IsFalse(tb.TakeInterrupt(), _T("the interrupt is blocked"));
-        tb.Run(3);
-        Eq(PROG + 2, tb.CPU()->GetPC(), _T("still waiting"));
-        Eq(0, tb.CPU()->GetReg(0), _T("the next instruction is not executed"));
-    }
+    tb.Run();  // RTI of the handler
+    ASSERT_EQ(PROG + 2, tb.CPU()->GetPC()) << L"back after WAIT";
+    tb.Run();  // INC R0: the processor runs again
+    ASSERT_EQ(1, tb.CPU()->GetReg(0)) << L"the instruction after WAIT is executed";
+}
 
-    TEST_METHOD(Processor_Wait_TraceTrapDoesNotWakeTheProcessorUp)
-    {
-        TestBoard tb;
-        const uint16_t program[] = { OP_WAIT, OP_INC_R0 };
-        Prepare(tb, program, 2);
-        SetTraceVector(tb);
-        tb.CPU()->SetPSW(TBIT);
+TEST(ProcessorSystemTests, Processor_Wait_BlockedInterruptDoesNotWakeTheProcessorUp)
+{
+    // The bit 7 of the PSW blocks the interrupts of the devices
+    TestBoard tb;
+    tb.StartCPU();
+    const uint16_t program[] = { OP_WAIT, OP_INC_R0 };
+    Prepare(tb, program, 2);
+    tb.SetWord(060, HANDLER);
+    tb.SetWord(062, 0);
+    tb.CPU()->SetPSW(PRIORITY_BIT);
 
-        tb.Run();
-        Assert::IsFalse(tb.TakeInterrupt(), _T("no trace trap while waiting"));
-        tb.Run(3);
-        Assert::IsFalse(tb.TakeInterrupt(), _T("and after more cycles"));
-        Eq(0, tb.CPU()->GetReg(0), _T("the next instruction is not executed"));
-    }
+    tb.Run();
+    tb.CPU()->InterruptVIRQ(1, 060);
+    ASSERT_FALSE(tb.TakeInterrupt()) << L"the interrupt is blocked";
+    tb.Run(3);
+    ASSERT_EQ(PROG + 2, tb.CPU()->GetPC()) << L"still waiting";
+    ASSERT_EQ(0, tb.CPU()->GetReg(0)) << L"the next instruction is not executed";
+}
 
-    // RESET
+TEST(ProcessorSystemTests, Processor_Wait_TraceTrapDoesNotWakeTheProcessorUp)
+{
+    TestBoard tb;
+    const uint16_t program[] = { OP_WAIT, OP_INC_R0 };
+    Prepare(tb, program, 2);
+    SetTraceVector(tb);
+    tb.CPU()->SetPSW(TBIT);
 
-    TEST_METHOD(Processor_Reset_TakesItsTime)
-    {
-        // The KM1801VM2 technical description: RESET takes 105 + 968 ticks
-        TestBoard tb;
-        const uint16_t program[] = { OP_RESET };
-        Prepare(tb, program, 1);
-        tb.Run();
-        Eq(PROG + 2, tb.CPU()->GetPC(), _T("PC"));
-        Eq(105 + 968, tb.CPU()->GetInternalTick(), _T("execution time"));
-    }
+    tb.Run();
+    ASSERT_FALSE(tb.TakeInterrupt()) << L"no trace trap while waiting";
+    tb.Run(3);
+    ASSERT_FALSE(tb.TakeInterrupt()) << L"and after more cycles";
+    ASSERT_EQ(0, tb.CPU()->GetReg(0)) << L"the next instruction is not executed";
+}
 
-    TEST_METHOD(Processor_Reset_InitializesTheChannels)
-    {
-        TestBoard tb;
-        CMotherboard* pBoard = tb.Board();
-        const uint16_t program[] = { OP_RESET };
-        Prepare(tb, program, 1);
+// RESET
 
-        // a byte for the PPU is in the channel, the CPU transmitter is busy
-        pBoard->ChanResetByCPU();
-        pBoard->ChanResetByPPU();
-        pBoard->ChanWriteByCPU(0, 0x55);
-        Eq(0, pBoard->ChanTxStateGetCPU(0), _T("CPU transmitter is busy before RESET"));
+TEST(ProcessorSystemTests, Processor_Reset_TakesItsTime)
+{
+    // The KM1801VM2 technical description: RESET takes 105 + 968 ticks
+    TestBoard tb;
+    const uint16_t program[] = { OP_RESET };
+    Prepare(tb, program, 1);
+    tb.Run();
+    ASSERT_EQ(PROG + 2, tb.CPU()->GetPC()) << L"PC";
+    ASSERT_EQ(105 + 968, tb.CPU()->GetInternalTick()) << L"execution time";
+}
 
-        tb.Run();
+TEST(ProcessorSystemTests, Processor_Reset_InitializesTheChannels)
+{
+    TestBoard tb;
+    CMotherboard* pBoard = tb.Board();
+    const uint16_t program[] = { OP_RESET };
+    Prepare(tb, program, 1);
 
-        for (int ch = 0; ch < 3; ch++)
-            Eq(0200, pBoard->ChanTxStateGetCPU(ch), _T("CPU transmitter is ready"));
-        for (int ch = 0; ch < 2; ch++)
-            Eq(0, pBoard->ChanRxStateGetCPU(ch), _T("CPU receiver is empty"));
-    }
+    // a byte for the PPU is in the channel, the CPU transmitter is busy
+    pBoard->ChanResetByCPU();
+    pBoard->ChanResetByPPU();
+    pBoard->ChanWriteByCPU(0, 0x55);
+    ASSERT_EQ(0, pBoard->ChanTxStateGetCPU(0)) << L"CPU transmitter is busy before RESET";
 
-    TEST_METHOD(Processor_Reset_InitializesTheSerialPorts)
-    {
-        TestBoard tb;
-        CMemoryController* pCtl = tb.Board()->GetCPUMemoryController();
-        const uint16_t program[] = { OP_RESET };
-        Prepare(tb, program, 1);
+    tb.Run();
 
-        pCtl->SetWord(0176570, false, 0100);     // receiver interrupt enable
-        tb.CpuMem()->SerialInput(0x41);          // a byte is received
-        pCtl->SetWord(0176576, false, 'A');      // a byte is sent, the transmitter is busy
-        Assert::IsTrue((pCtl->GetWord(0176570, false, false) & 0200) != 0, _T("receiver is ready before RESET"));
-        Eq(0, pCtl->GetWord(0176574, false, false) & 0200, _T("transmitter is busy before RESET"));
+    for (int ch = 0; ch < 3; ch++)
+        ASSERT_EQ(0200, pBoard->ChanTxStateGetCPU(ch)) << L"CPU transmitter is ready";
+    for (int ch = 0; ch < 2; ch++)
+        ASSERT_EQ(0, pBoard->ChanRxStateGetCPU(ch)) << L"CPU receiver is empty";
+}
 
-        tb.Run();
+TEST(ProcessorSystemTests, Processor_Reset_InitializesTheSerialPorts)
+{
+    TestBoard tb;
+    CMemoryController* pCtl = tb.Board()->GetCPUMemoryController();
+    const uint16_t program[] = { OP_RESET };
+    Prepare(tb, program, 1);
 
-        Eq(0, pCtl->GetWord(0176570, false, false), _T("receiver status is cleared"));
-        Eq(0200, pCtl->GetWord(0176574, false, false), _T("transmitter is ready"));
-    }
+    pCtl->SetWord(0176570, false, 0100);     // receiver interrupt enable
+    tb.CpuMem()->SerialInput(0x41);          // a byte is received
+    pCtl->SetWord(0176576, false, 'A');      // a byte is sent, the transmitter is busy
+    ASSERT_TRUE((pCtl->GetWord(0176570, false, false) & 0200) != 0) << L"receiver is ready before RESET";
+    ASSERT_EQ(0, pCtl->GetWord(0176574, false, false) & 0200) << L"transmitter is busy before RESET";
 
-    TEST_METHOD(Processor_Reset_CancelsThePendingLineClockRequest)
-    {
-        TestBoard tb;
-        tb.StartCPU();
-        tb.SetPpuWord(0177054, 01);  // unmask the 50 Hz event
-        const uint16_t program[] = { OP_RESET };
-        Prepare(tb, program, 1);
-        tb.SetWord(0100, HANDLER);
-        tb.SetWord(0102, 0);
-        tb.CPU()->SetPSW(PRIORITY_BIT);  // the request waits, the priority blocks it
+    tb.Run();
 
-        tb.Board()->Tick50();
-        tb.Run();  // RESET
-        tb.CPU()->SetPSW(0);
+    ASSERT_EQ(0, pCtl->GetWord(0176570, false, false)) << L"receiver status is cleared";
+    ASSERT_EQ(0200, pCtl->GetWord(0176574, false, false)) << L"transmitter is ready";
+}
 
-        Assert::IsFalse(tb.TakeInterrupt(), _T("the line clock request is gone"));
-    }
+TEST(ProcessorSystemTests, Processor_Reset_CancelsThePendingLineClockRequest)
+{
+    TestBoard tb;
+    tb.StartCPU();
+    tb.SetPpuWord(0177054, 01);  // unmask the 50 Hz event
+    const uint16_t program[] = { OP_RESET };
+    Prepare(tb, program, 1);
+    tb.SetWord(0100, HANDLER);
+    tb.SetWord(0102, 0);
+    tb.CPU()->SetPSW(PRIORITY_BIT);  // the request waits, the priority blocks it
 
-    TEST_METHOD(Processor_Reset_LineClockRequestStaysPendingWithoutReset)
-    {
-        // The control for the previous test: without RESET the request is taken as soon as the priority allows
-        TestBoard tb;
-        tb.StartCPU();
-        tb.SetPpuWord(0177054, 01);
-        const uint16_t program[] = { OP_INC_R0 };
-        Prepare(tb, program, 1);
-        tb.SetWord(0100, HANDLER);
-        tb.SetWord(0102, 0);
-        tb.CPU()->SetPSW(PRIORITY_BIT);
+    tb.Board()->Tick50();
+    tb.Run();  // RESET
+    tb.CPU()->SetPSW(0);
 
-        tb.Board()->Tick50();
-        tb.Run();
-        tb.CPU()->SetPSW(0);
+    ASSERT_FALSE(tb.TakeInterrupt()) << L"the line clock request is gone";
+}
 
-        Assert::IsTrue(tb.TakeInterrupt(), _T("the line clock request is taken"));
-        Eq(HANDLER, tb.CPU()->GetPC(), _T("PC = handler"));
-    }
-};
+TEST(ProcessorSystemTests, Processor_Reset_LineClockRequestStaysPendingWithoutReset)
+{
+    // The control for the previous test: without RESET the request is taken as soon as the priority allows
+    TestBoard tb;
+    tb.StartCPU();
+    tb.SetPpuWord(0177054, 01);
+    const uint16_t program[] = { OP_INC_R0 };
+    Prepare(tb, program, 1);
+    tb.SetWord(0100, HANDLER);
+    tb.SetWord(0102, 0);
+    tb.CPU()->SetPSW(PRIORITY_BIT);
+
+    tb.Board()->Tick50();
+    tb.Run();
+    tb.CPU()->SetPSW(0);
+
+    ASSERT_TRUE(tb.TakeInterrupt()) << L"the line clock request is taken";
+    ASSERT_EQ(HANDLER, tb.CPU()->GetPC()) << L"PC = handler";
+}

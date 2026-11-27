@@ -1,5 +1,4 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
-#include "stdafx.h"
 #include <gtest/gtest.h>
 #include "emubase/Emubase.h"
 #include <memory>
@@ -13,11 +12,6 @@ TEST(ProcessorNames, EmptyAndLongNamesAreTerminated)
     EXPECT_STREQ(CProcessor(L"LONGER").GetName(), L"LONG");
 }
 
-void DebugLog(LPCTSTR) {}
-const TCHAR* REGISTER_NAME[] = {L"R0",L"R1",L"R2",L"R3",L"R4",L"R5",L"SP",L"PC"};
-#ifdef _DEBUG
-int AssertFailedLine(const char*, int) { std::abort(); }
-#endif
 
 namespace {
 // Use the real memory-access path with controlled mapping and bus faults.
@@ -44,9 +38,9 @@ protected:
 };
 struct Event { const CProcessor* cpu; uint16_t address, code, pc, psw, r0; };
 std::vector<Event> instructions, interrupts;
-void CALLBACK Instruction(const CProcessor* cpu,uint16_t address,uint16_t opcode)
+void Instruction(const CProcessor* cpu,uint16_t address,uint16_t opcode)
 { instructions.push_back({cpu,address,opcode,cpu->GetPC(),cpu->GetPSW(),cpu->GetReg(0)}); }
-void CALLBACK Interrupt(const CProcessor* cpu,uint16_t address,uint16_t vector)
+void Interrupt(const CProcessor* cpu,uint16_t address,uint16_t vector)
 { interrupts.push_back({cpu,address,vector,cpu->GetPC(),cpu->GetPSW(),cpu->GetReg(0)}); }
 }
 class ProcessorEdges : public testing::Test

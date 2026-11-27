@@ -14,7 +14,7 @@
 namespace sdl_file_dialog
 {
 enum class Status { selected, canceled, failed };
-enum class Purpose { disk, screenshot, snapshotLoad, snapshotSave, systemRom, cartridge, createDisk, printer, tapeOpen, tapeCreate, subtitles, memoryDump, displayListDump, consoleLog, legacySettings, trace };
+enum class Purpose { disk, screenshot, snapshotLoad, snapshotSave, systemRom, cartridge, createDisk, printer, tapeOpen, tapeCreate, subtitles, memoryDump, displayListDump, consoleLog, trace };
 struct Result
 {
     media_slots::Kind kind;
@@ -75,6 +75,5 @@ private:
 [[nodiscard]] bool SaveDisplayList(const std::shared_ptr<State>& state, SDL_Window& window);
 [[nodiscard]] bool SaveConsoleLog(const std::shared_ptr<State>& state, SDL_Window& window);
 // 0..2 select text encoding; 3..5 also request saved media paths.
-[[nodiscard]] bool OpenLegacySettings(const std::shared_ptr<State>& state, SDL_Window& window, int encoding);
 [[nodiscard]] bool SaveTrace(const std::shared_ptr<State>& state, SDL_Window& window, std::uint16_t mask);
 }

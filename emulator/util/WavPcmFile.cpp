@@ -45,12 +45,6 @@ WavPcmFile::~WavPcmFile()
     (void)Close();
 }
 
-std::expected<WavPcmFile, WavError> WavPcmFile::Create(const wchar_t* filename, int sampleRate)
-{
-    if (!filename) return std::unexpected(WavError::invalid_argument);
-    return Create(std::filesystem::path(filename), sampleRate);
-}
-
 std::expected<WavPcmFile, WavError> WavPcmFile::Create(const std::filesystem::path& filename, int sampleRate)
 {
     if (filename.empty() || sampleRate <= 0) return std::unexpected(WavError::invalid_argument);
@@ -78,12 +72,6 @@ std::expected<WavPcmFile, WavError> WavPcmFile::Create(const std::filesystem::pa
 
     return WavPcmFile(std::move(file), sampleRate, bits, alignment,
                       static_cast<uint32_t>(header.size()), 0, true);
-}
-
-std::expected<WavPcmFile, WavError> WavPcmFile::Open(const wchar_t* filename)
-{
-    if (!filename) return std::unexpected(WavError::invalid_argument);
-    return Open(std::filesystem::path(filename));
 }
 
 std::expected<WavPcmFile, WavError> WavPcmFile::Open(const std::filesystem::path& filename)

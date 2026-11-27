@@ -10,29 +10,21 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 
 // TestHelpers.cpp : fixtures shared by the tests
 
-#include "stdafx.h"
-#include <CppUnitTest.h>
+#include <gtest/gtest.h>
+#include <stdexcept>
 #include "TestHelpers.h"
 
-using namespace Microsoft::VisualStudio::CppUnitTestFramework;
-
-// The processor builds its instruction table once per process
-TEST_MODULE_INITIALIZE(TestModuleInitialize)
+namespace
 {
-    CProcessor::Init();
+staged_file::File MakeTempDirectory()
+{
+    auto file = staged_file::File::Create(std::filesystem::temp_directory_path() / "ukncbtl-test");
+    if (!file) throw std::runtime_error("Could not create a temporary test directory");
+    return std::move(*file);
+}
 }
 
-TEST_MODULE_CLEANUP(TestModuleCleanup)
-{
-    CProcessor::Done();
-}
-
-void Eq(unsigned int expected, unsigned int actual, const TCHAR* msg)
-{
-    Assert::AreEqual(expected, actual, msg);
-}
-
-void FlagsText(uint16_t flags, TCHAR* buf)
+void FlagsText(uint16_t flags, wchar_t* buf)
 {
     buf[0] = (flags & TF_N) ? 'N' : 'n';
     buf[1] = (flags & TF_Z) ? 'Z' : 'z';
@@ -43,7 +35,7 @@ void FlagsText(uint16_t flags, TCHAR* buf)
 
 TestBoard::TestBoard()
 {
-    m_pBoard = new CMotherboard();
+    m_pBoard = std::make_unique<CMotherboard>();
     m_pBoard->Reset();
 
     // The CPU stays in the state we set: USER mode, no flags, all registers zero
@@ -59,10 +51,7 @@ TestBoard::TestBoard()
         PPU()->SetReg(r, 0);
 }
 
-TestBoard::~TestBoard()
-{
-    delete m_pBoard;
-}
+TestBoard::~TestBoard() = default;
 
 void TestBoard::SetWord(uint16_t address, uint16_t word)
 {
@@ -140,46 +129,44 @@ bool TestBoard::TakeInterrupt()
     return CPU()->InterruptProcessing();
 }
 
-TempFile::TempFile(const TCHAR* extension)
+TempFile::TempFile(const wchar_t* extension)
+    : m_directory(MakeTempDirectory()), m_path(m_directory.Path())
 {
-    static unsigned int counter = 0;
-    TCHAR dir[MAX_PATH];
-    ::GetTempPath(MAX_PATH, dir);
-    _stprintf_s(m_path, _T("%sukncbtl-test-%u-%u%s"), dir, (unsigned int) ::GetCurrentProcessId(), counter++, extension);
-    ::DeleteFile(m_path);
+    m_path += extension;
 }
 
 TempFile::~TempFile()
 {
-    ::SetFileAttributes(m_path, FILE_ATTRIBUTE_NORMAL);
-    ::DeleteFile(m_path);
+    std::error_code error;
+    std::filesystem::permissions(m_path, std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::add, error);
+    std::filesystem::remove(m_path, error);
 }
 
 void TempFile::Write(const std::vector<uint8_t>& content)
 {
-    FILE* fp = ::_tfopen(m_path, _T("wb"));
-    Assert::IsTrue(fp != nullptr, _T("temp file is created"));
+    std::ofstream file(m_path, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(file);
     if (!content.empty())
-        ::fwrite(&content[0], 1, content.size(), fp);
-    ::fclose(fp);
+        file.write(reinterpret_cast<const char*>(content.data()), content.size());
+    file.close();
+    ASSERT_TRUE(file);
 }
 
 std::vector<uint8_t> TempFile::Read() const
 {
-    std::vector<uint8_t> content;
-    FILE* fp = ::_tfopen(m_path, _T("rb"));
-    Assert::IsTrue(fp != nullptr, _T("temp file is opened"));
-    ::fseek(fp, 0, SEEK_END);
-    long size = ::ftell(fp);
-    ::fseek(fp, 0, SEEK_SET);
-    content.resize((size_t) size);
-    if (size > 0)
-        ::fread(&content[0], 1, (size_t) size, fp);
-    ::fclose(fp);
-    return content;
+    std::ifstream file(m_path, std::ios::binary);
+    if (!file)
+    {
+        ADD_FAILURE() << "Could not read temporary file " << m_path;
+        return {};
+    }
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 
 void TempFile::SetReadOnly(bool readOnly)
 {
-    ::SetFileAttributes(m_path, readOnly ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL);
+    using namespace std::filesystem;
+    permissions(m_path, perms::owner_write | perms::group_write | perms::others_write,
+        readOnly ? perm_options::remove : perm_options::add);
 }

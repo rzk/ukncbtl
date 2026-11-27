@@ -7,26 +7,6 @@
 
 using namespace ini_encoding;
 
-TEST(IniEncoding, ExplicitlyDecodesLegacyWindowsCodePages)
-{
-    const std::vector<std::uint8_t> russian{'P','a','t','h','=',0xcf,0xf0,0xe8,0xe2,0xe5,0xf2,0xb8};
-    EXPECT_EQ(DecodeLegacy(russian, LegacyEncoding::windows_1251).value(), L"Path=\u041f\u0440\u0438\u0432\u0435\u0442\u0451");
-    const std::vector<std::uint8_t> western{'P','a','t','h','=',0x80,0xe9,0x9f};
-    EXPECT_EQ(DecodeLegacy(western, LegacyEncoding::windows_1252).value(), L"Path=\u20ac\u00e9\u0178");
-    EXPECT_EQ(DecodeLegacy(russian, static_cast<LegacyEncoding>(99)).error(), Error::unsupported_encoding);
-}
-
-TEST(IniEncoding, LegacyImportRejectsUnicodeBomsAndEmbeddedNuls)
-{
-    for (const auto& bytes : std::vector<std::vector<std::uint8_t>>{
-             {0xef,0xbb,0xbf,0x61}, {0xff,0xfe,0x61,0}, {0xfe,0xff,0,0x61}, {'a',0,'b'}})
-    {
-        const auto decoded = DecodeLegacy(bytes, LegacyEncoding::windows_1251);
-        ASSERT_FALSE(decoded);
-        EXPECT_EQ(decoded.error(), Error::invalid_text);
-    }
-}
-
 TEST(IniEncoding, DecodesKnownUtf8AndUtf16AndPreservesEncoding)
 {
     const std::vector<std::uint8_t> utf8{0x41, 0xc3, 0xa9, 0xe6, 0x97, 0xa5, 0xf0, 0x9f, 0x98, 0x80};

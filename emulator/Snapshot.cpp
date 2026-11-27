@@ -39,11 +39,6 @@ bool Save(const std::filesystem::path& path, CMotherboard& board, uint32_t uptim
     return Write(path, Capture(board, uptime));
 }
 
-bool Save(const wchar_t* path, CMotherboard& board, uint32_t uptime)
-{
-    return path && Save(std::filesystem::path(path), board, uptime);
-}
-
 std::optional<std::vector<uint8_t>> Read(const std::filesystem::path& path)
 {
     if (path.empty()) return std::nullopt;
@@ -82,11 +77,5 @@ bool Load(const std::filesystem::path& path, CMotherboard& board, uint32_t& upti
 {
     const auto bytes = Read(path);
     return bytes && Restore(*bytes, board, uptime, history, stop);
-}
-
-bool Load(const wchar_t* path, CMotherboard& board, uint32_t& uptime,
-          InstructionHistory& history, const std::function<void()>& stop)
-{
-    return path && Load(std::filesystem::path(path), board, uptime, history, stop);
 }
 }

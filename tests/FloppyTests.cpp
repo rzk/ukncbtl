@@ -15,14 +15,13 @@ UKNCBTL. If not, see <http://www.gnu.org/licenses/>. */
 // data record (A1 A1 A1 FB, 512 bytes). The tests read the tracks with the controller commands
 // and ports the way a disk driver does it: search sync, then read the words of the record.
 
-#include "stdafx.h"
-#include <CppUnitTest.h>
+#include <gtest/gtest.h>
+#include <cwchar>
+#include <iterator>
 #include <algorithm>
 #include <span>
 #include <vector>
 #include "TestHelpers.h"
-
-using namespace Microsoft::VisualStudio::CppUnitTestFramework;
 
 namespace
 {
@@ -161,501 +160,497 @@ int CurrentTrack(CFloppyController& f, uint16_t cmd)
 
 }
 
-TEST_CLASS(FloppyTests)
+TEST(FloppyTests, Floppy_AttachAndDetach)
 {
-public:
-    TEST_METHOD(Floppy_AttachAndDetach)
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(2));
+    CFloppyController f;
+    for (int drive = 0; drive < 4; drive++)
+        ASSERT_FALSE(f.IsAttached(drive)) << L"nothing is attached at the start";
+
+    ASSERT_TRUE(f.AttachImage(1, file.Path())) << L"attach";
+    ASSERT_TRUE(f.IsAttached(1)) << L"attached";
+    ASSERT_FALSE(f.IsAttached(0)) << L"other drives are not affected";
+    ASSERT_FALSE(f.IsReadOnly(1)) << L"writable";
+
+    f.DetachImage(1);
+    ASSERT_FALSE(f.IsAttached(1)) << L"detached";
+}
+
+TEST(FloppyTests, Floppy_AttachMissingFileFails)
+{
+    TempFile file(L".dsk");  // the file is not created
+    CFloppyController f;
+    ASSERT_FALSE(f.AttachImage(0, file.Path()));
+    ASSERT_FALSE(f.IsAttached(0));
+}
+
+TEST(FloppyTests, Floppy_ReadOnlyFile)
+{
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(1));
+    file.SetReadOnly(true);
+    CFloppyController f;
+    ASSERT_TRUE(f.AttachImage(0, file.Path())) << L"attach";
+    ASSERT_TRUE(f.IsReadOnly(0)) << L"read-only";
+    ASSERT_TRUE((f.GetState() & FLOPPY_STATUS_WRITEPROTECT) != 0) << L"write protect flag";
+}
+
+TEST(FloppyTests, Floppy_WritableFileHasNoWriteProtect)
+{
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(1));
+    CFloppyController f;
+    ASSERT_TRUE(f.AttachImage(0, file.Path()));
+    ASSERT_FALSE((f.GetState() & FLOPPY_STATUS_WRITEPROTECT) != 0) << L"no write protect flag";
+}
+
+TEST(FloppyTests, Floppy_StatusWithoutDisk)
+{
+    CFloppyController f;
+    uint16_t state = f.GetState();
+    ASSERT_TRUE((state & FLOPPY_STATUS_TRACK0) != 0) << L"track 0";
+    ASSERT_TRUE((state & FLOPPY_STATUS_WRITEPROTECT) != 0) << L"an empty drive is write protected";
+    ASSERT_FALSE(f.IsEngineOn()) << L"the engine is off";
+}
+
+TEST(FloppyTests, Floppy_EngineFlag)
+{
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(1));
+    CFloppyController f;
+    f.AttachImage(0, file.Path());
+    f.SetCommand(Cmd(0, 0));
+    ASSERT_TRUE(f.IsEngineOn()) << L"engine on";
+    f.SetCommand(02000 | 3);  // without the engine bit
+    ASSERT_FALSE(f.IsEngineOn()) << L"engine off";
+}
+
+TEST(FloppyTests, Floppy_TrackFormat)
+{
+    // Every track side holds ten sectors 1..10 with the right cylinder, head and 512 byte data
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(4));
+    CFloppyController f;
+    ASSERT_TRUE(f.AttachImage(0, file.Path()));
+
+    for (int side = 0; side < 2; side++)
     {
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(2));
-        CFloppyController f;
-        for (int drive = 0; drive < 4; drive++)
-            Assert::IsFalse(f.IsAttached(drive), _T("nothing is attached at the start"));
-
-        Assert::IsTrue(f.AttachImage(1, file.Path()), _T("attach"));
-        Assert::IsTrue(f.IsAttached(1), _T("attached"));
-        Assert::IsFalse(f.IsAttached(0), _T("other drives are not affected"));
-        Assert::IsFalse(f.IsReadOnly(1), _T("writable"));
-
-        f.DetachImage(1);
-        Assert::IsFalse(f.IsAttached(1), _T("detached"));
-    }
-
-    TEST_METHOD(Floppy_AttachMissingFileFails)
-    {
-        TempFile file(_T(".dsk"));  // the file is not created
-        CFloppyController f;
-        Assert::IsFalse(f.AttachImage(0, file.Path()));
-        Assert::IsFalse(f.IsAttached(0));
-    }
-
-    TEST_METHOD(Floppy_ReadOnlyFile)
-    {
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(1));
-        file.SetReadOnly(true);
-        CFloppyController f;
-        Assert::IsTrue(f.AttachImage(0, file.Path()), _T("attach"));
-        Assert::IsTrue(f.IsReadOnly(0), _T("read-only"));
-        Assert::IsTrue((f.GetState() & FLOPPY_STATUS_WRITEPROTECT) != 0, _T("write protect flag"));
-    }
-
-    TEST_METHOD(Floppy_WritableFileHasNoWriteProtect)
-    {
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(1));
-        CFloppyController f;
-        Assert::IsTrue(f.AttachImage(0, file.Path()));
-        Assert::IsFalse((f.GetState() & FLOPPY_STATUS_WRITEPROTECT) != 0, _T("no write protect flag"));
-    }
-
-    TEST_METHOD(Floppy_StatusWithoutDisk)
-    {
-        CFloppyController f;
-        uint16_t state = f.GetState();
-        Assert::IsTrue((state & FLOPPY_STATUS_TRACK0) != 0, _T("track 0"));
-        Assert::IsTrue((state & FLOPPY_STATUS_WRITEPROTECT) != 0, _T("an empty drive is write protected"));
-        Assert::IsFalse(f.IsEngineOn(), _T("the engine is off"));
-    }
-
-    TEST_METHOD(Floppy_EngineFlag)
-    {
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(1));
-        CFloppyController f;
-        f.AttachImage(0, file.Path());
-        f.SetCommand(Cmd(0, 0));
-        Assert::IsTrue(f.IsEngineOn(), _T("engine on"));
-        f.SetCommand(02000 | 3);  // without the engine bit
-        Assert::IsFalse(f.IsEngineOn(), _T("engine off"));
-    }
-
-    TEST_METHOD(Floppy_TrackFormat)
-    {
-        // Every track side holds ten sectors 1..10 with the right cylinder, head and 512 byte data
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(4));
-        CFloppyController f;
-        Assert::IsTrue(f.AttachImage(0, file.Path()));
-
-        for (int side = 0; side < 2; side++)
+        uint16_t cmd = Cmd(0, side);
+        f.SetCommand(cmd);
+        bool seen[SECTORS + 1] = { false };
+        int dataRecords = 0;
+        int lastSector = -1;
+        for (int rec = 0; rec < 30 && dataRecords < SECTORS; rec++)
         {
-            uint16_t cmd = Cmd(0, side);
-            f.SetCommand(cmd);
-            bool seen[SECTORS + 1] = { false };
-            int dataRecords = 0;
-            int lastSector = -1;
-            for (int rec = 0; rec < 30 && dataRecords < SECTORS; rec++)
+            ASSERT_TRUE(SearchSync(f, cmd)) << L"sync marker is found";
+            ASSERT_EQ(0xA1A1, f.GetData()) << L"sync word";
+            uint16_t second = NextWord(f);
+            if (second == 0xA1FE)  // ID record
             {
-                Assert::IsTrue(SearchSync(f, cmd), _T("sync marker is found"));
-                Eq(0xA1A1, f.GetData(), _T("sync word"));
-                uint16_t second = NextWord(f);
-                if (second == 0xA1FE)  // ID record
-                {
-                    uint16_t cylhead = NextWord(f);
-                    uint16_t secsize = NextWord(f);
-                    NextWord(f);
-                    Eq(0 * 256 + side, cylhead, _T("cylinder and head"));
-                    Eq(2, secsize & 0xFF, _T("size code 2 = 512 bytes"));
-                    lastSector = secsize >> 8;
-                    Assert::IsTrue(lastSector >= 1 && lastSector <= SECTORS, _T("sector number"));
-                }
-                else
-                {
-                    Eq(0xA1FB, second, _T("data marker"));
-                    Assert::IsTrue(lastSector >= 1, _T("data follows an ID record"));
-                    std::vector<uint8_t> data;
-                    for (int i = 0; i < SECTOR_SIZE / 2; i++)
-                    {
-                        uint16_t w = NextWord(f);
-                        data.push_back((uint8_t) (w >> 8));
-                        data.push_back((uint8_t) (w & 0xFF));
-                    }
-                    Assert::IsTrue(SectorMatches(data, 1, 0, side, lastSector), _T("sector data"));
-                    Assert::IsFalse(seen[lastSector], _T("each sector once"));
-                    seen[lastSector] = true;
-                    dataRecords++;
-                }
+                uint16_t cylhead = NextWord(f);
+                uint16_t secsize = NextWord(f);
+                NextWord(f);
+                ASSERT_EQ(0 * 256 + side, cylhead) << L"cylinder and head";
+                ASSERT_EQ(2, secsize & 0xFF) << L"size code 2 = 512 bytes";
+                lastSector = secsize >> 8;
+                ASSERT_TRUE(lastSector >= 1 && lastSector <= SECTORS) << L"sector number";
             }
-            Eq(SECTORS, dataRecords, _T("ten sectors"));
+            else
+            {
+                ASSERT_EQ(0xA1FB, second) << L"data marker";
+                ASSERT_TRUE(lastSector >= 1) << L"data follows an ID record";
+                std::vector<uint8_t> data;
+                for (int i = 0; i < SECTOR_SIZE / 2; i++)
+                {
+                    uint16_t w = NextWord(f);
+                    data.push_back((uint8_t) (w >> 8));
+                    data.push_back((uint8_t) (w & 0xFF));
+                }
+                ASSERT_TRUE(SectorMatches(data, 1, 0, side, lastSector)) << L"sector data";
+                ASSERT_FALSE(seen[lastSector]) << L"each sector once";
+                seen[lastSector] = true;
+                dataRecords++;
+            }
         }
+        ASSERT_EQ(SECTORS, dataRecords) << L"ten sectors";
     }
+}
 
-    TEST_METHOD(Floppy_ReadSectorsOfOtherTracks)
-    {
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(4));
-        CFloppyController f;
-        f.AttachImage(0, file.Path());
+TEST(FloppyTests, Floppy_ReadSectorsOfOtherTracks)
+{
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(4));
+    CFloppyController f;
+    f.AttachImage(0, file.Path());
 
+    f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP | FLOPPY_CMD_DIR));
+    f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP | FLOPPY_CMD_DIR));
+    f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP | FLOPPY_CMD_DIR));  // track 3
+    std::vector<uint8_t> data;
+    uint16_t cmd = Cmd(0, 1);
+    f.SetCommand(cmd);  // side 1
+    ASSERT_TRUE(ReadSector(f, cmd, 7, &data)) << L"read the sector 7";
+    ASSERT_TRUE(SectorMatches(data, 1, 3, 1, 7)) << L"track 3, side 1, sector 7";
+    ASSERT_TRUE(ReadSector(f, cmd, 1, &data)) << L"read the sector 1";
+    ASSERT_TRUE(SectorMatches(data, 1, 3, 1, 1)) << L"track 3, side 1, sector 1";
+}
+
+TEST(FloppyTests, Floppy_StepMovesTheHead)
+{
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(4));
+    CFloppyController f;
+    f.AttachImage(0, file.Path());
+    uint16_t cmd = Cmd(0, 0);
+    f.SetCommand(cmd);
+    ASSERT_TRUE((f.GetState() & FLOPPY_STATUS_TRACK0) != 0) << L"track 0 at the start";
+    ASSERT_EQ(0, CurrentTrack(f, cmd)) << L"start track";
+
+    for (int i = 0; i < 3; i++)
+        f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP | FLOPPY_CMD_DIR));  // away from track 0
+    ASSERT_FALSE((f.GetState() & FLOPPY_STATUS_TRACK0) != 0) << L"not track 0";
+    ASSERT_EQ(3, CurrentTrack(f, cmd)) << L"after 3 steps in";
+
+    f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP));  // towards track 0
+    ASSERT_EQ(2, CurrentTrack(f, cmd)) << L"after 1 step out";
+
+    for (int i = 0; i < 5; i++)
+        f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP));
+    ASSERT_TRUE((f.GetState() & FLOPPY_STATUS_TRACK0) != 0) << L"track 0 again";
+    ASSERT_EQ(0, CurrentTrack(f, cmd)) << L"the head stops at track 0";
+}
+
+TEST(FloppyTests, Floppy_StepStopsAtTrack79)
+{
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(2));
+    CFloppyController f;
+    f.AttachImage(0, file.Path());
+    uint16_t cmd = Cmd(0, 0);
+    for (int i = 0; i < 100; i++)
         f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP | FLOPPY_CMD_DIR));
-        f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP | FLOPPY_CMD_DIR));
-        f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP | FLOPPY_CMD_DIR));  // track 3
-        std::vector<uint8_t> data;
-        uint16_t cmd = Cmd(0, 1);
-        f.SetCommand(cmd);  // side 1
-        Assert::IsTrue(ReadSector(f, cmd, 7, &data), _T("read the sector 7"));
-        Assert::IsTrue(SectorMatches(data, 1, 3, 1, 7), _T("track 3, side 1, sector 7"));
-        Assert::IsTrue(ReadSector(f, cmd, 1, &data), _T("read the sector 1"));
-        Assert::IsTrue(SectorMatches(data, 1, 3, 1, 1), _T("track 3, side 1, sector 1"));
-    }
+    ASSERT_EQ(79, CurrentTrack(f, cmd)) << L"the last track of the 80 track disk";
+}
 
-    TEST_METHOD(Floppy_StepMovesTheHead)
+TEST(FloppyTests, Floppy_IndexMarkOncePerRevolution)
+{
+    // The index mark is set at the beginning of the track; the disk turns once in 3125 periodic calls
+    // of 64 us = 200 ms = 300 rpm
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(1));
+    CFloppyController f;
+    f.AttachImage(0, file.Path());
+    f.SetCommand(Cmd(0, 0));
+
+    ASSERT_TRUE((f.GetState() & FLOPPY_STATUS_INDEXMARK) != 0) << L"index mark at the start";
+    int risesAt[3];
+    int rises = 0;
+    bool prev = true;
+    for (int tick = 1; tick <= 3 * 3125 && rises < 3; tick++)
     {
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(4));
-        CFloppyController f;
-        f.AttachImage(0, file.Path());
-        uint16_t cmd = Cmd(0, 0);
-        f.SetCommand(cmd);
-        Assert::IsTrue((f.GetState() & FLOPPY_STATUS_TRACK0) != 0, _T("track 0 at the start"));
-        Eq(0, CurrentTrack(f, cmd), _T("start track"));
-
-        for (int i = 0; i < 3; i++)
-            f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP | FLOPPY_CMD_DIR));  // away from track 0
-        Assert::IsFalse((f.GetState() & FLOPPY_STATUS_TRACK0) != 0, _T("not track 0"));
-        Eq(3, CurrentTrack(f, cmd), _T("after 3 steps in"));
-
-        f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP));  // towards track 0
-        Eq(2, CurrentTrack(f, cmd), _T("after 1 step out"));
-
-        for (int i = 0; i < 5; i++)
-            f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP));
-        Assert::IsTrue((f.GetState() & FLOPPY_STATUS_TRACK0) != 0, _T("track 0 again"));
-        Eq(0, CurrentTrack(f, cmd), _T("the head stops at track 0"));
+        f.Periodic();
+        bool now = (f.GetState() & FLOPPY_STATUS_INDEXMARK) != 0;
+        if (now && !prev) risesAt[rises++] = tick;
+        prev = now;
     }
+    ASSERT_EQ(3, rises) << L"three index pulses";
+    ASSERT_EQ(3125, risesAt[0]) << L"first revolution";
+    ASSERT_EQ(3125 * 2, risesAt[1]) << L"second revolution";
+    ASSERT_EQ(3125 * 3, risesAt[2]) << L"third revolution";
+}
 
-    TEST_METHOD(Floppy_StepStopsAtTrack79)
-    {
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(2));
-        CFloppyController f;
-        f.AttachImage(0, file.Path());
-        uint16_t cmd = Cmd(0, 0);
-        for (int i = 0; i < 100; i++)
-            f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP | FLOPPY_CMD_DIR));
-        Eq(79, CurrentTrack(f, cmd), _T("the last track of the 80 track disk"));
-    }
+TEST(FloppyTests, Floppy_DriveSelectReadsTheOtherDisk)
+{
+    TempFile fileA(L".dsk"), fileB(L".dsk");
+    fileA.Write(MakeDiskImage(2, 1));
+    fileB.Write(MakeDiskImage(2, 2));
+    CFloppyController f;
+    ASSERT_TRUE(f.AttachImage(0, fileA.Path()));
+    ASSERT_TRUE(f.AttachImage(1, fileB.Path()));
 
-    TEST_METHOD(Floppy_IndexMarkOncePerRevolution)
+    std::vector<uint8_t> data;
+    uint16_t cmd0 = Cmd(0, 0), cmd1 = Cmd(1, 0);
+    f.SetCommand(cmd0);
+    ASSERT_TRUE(ReadSector(f, cmd0, 4, &data));
+    ASSERT_TRUE(SectorMatches(data, 1, 0, 0, 4)) << L"drive 0";
+
+    f.SetCommand(cmd1);
+    ASSERT_TRUE(ReadSector(f, cmd1, 4, &data));
+    ASSERT_TRUE(SectorMatches(data, 2, 0, 0, 4)) << L"drive 1";
+
+    f.SetCommand(cmd0);
+    ASSERT_TRUE(ReadSector(f, cmd0, 4, &data));
+    ASSERT_TRUE(SectorMatches(data, 1, 0, 0, 4)) << L"drive 0 again";
+}
+
+TEST(FloppyTests, Floppy_EmptyDriveReportsMoreData)
+{
+    // A drive without disk: the "more data" flag is always set, nothing can be read
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(1));
+    CFloppyController f;
+    f.AttachImage(0, file.Path());
+    f.SetCommand(Cmd(2, 0));  // the drive 2 is empty
+    ASSERT_TRUE((f.GetState() & FLOPPY_STATUS_MOREDATA) != 0);
+}
+
+TEST(FloppyTests, Floppy_RtdImageHasA256ByteHeader)
+{
+    TempFile file(L".rtd");
+    file.Write(MakeDiskImage(2, 3, true));
+    CFloppyController f;
+    ASSERT_TRUE(f.AttachImage(0, file.Path()));
+
+    std::vector<uint8_t> data;
+    uint16_t cmd = Cmd(0, 1);
+    f.SetCommand(cmd);
+    ASSERT_TRUE(ReadSector(f, cmd, 2, &data));
+    ASSERT_TRUE(SectorMatches(data, 3, 0, 1, 2)) << L"the header is skipped";
+}
+
+TEST(FloppyTests, Floppy_ImageShorterThanTheTrackReadsZeros)
+{
+    // The image has only one track; the second track side is read as zeros
+    TempFile file(L".dsk");
+    std::vector<uint8_t> image = MakeDiskImage(1);
+    image.resize(TRACK_SIZE);  // the side 0 of the track 0 only
+    file.Write(image);
+    CFloppyController f;
+    f.AttachImage(0, file.Path());
+
+    std::vector<uint8_t> data;
+    uint16_t cmd = Cmd(0, 1);
+    f.SetCommand(cmd);
+    ASSERT_TRUE(ReadSector(f, cmd, 1, &data));
+    for (size_t i = 0; i < data.size(); i++)
+        ASSERT_EQ(0, (int) data[i]) << L"zero byte";
+}
+
+TEST(FloppyTests, Floppy_WriteSectorDataAndFlush)
+{
+    TempFile file(L".dsk");
+    std::vector<uint8_t> original = MakeDiskImage(2);
+    file.Write(original);
     {
-        // The index mark is set at the beginning of the track; the disk turns once in 3125 periodic calls
-        // of 64 us = 200 ms = 300 rpm
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(1));
         CFloppyController f;
-        f.AttachImage(0, file.Path());
+        ASSERT_TRUE(f.AttachImage(0, file.Path()));
         f.SetCommand(Cmd(0, 0));
 
-        Assert::IsTrue((f.GetState() & FLOPPY_STATUS_INDEXMARK) != 0, _T("index mark at the start"));
-        int risesAt[3];
-        int rises = 0;
-        bool prev = true;
-        for (int tick = 1; tick <= 3 * 3125 && rises < 3; tick++)
-        {
-            f.Periodic();
-            bool now = (f.GetState() & FLOPPY_STATUS_INDEXMARK) != 0;
-            if (now && !prev) risesAt[rises++] = tick;
-            prev = now;
-        }
-        Eq(3, rises, _T("three index pulses"));
-        Eq(3125, risesAt[0], _T("first revolution"));
-        Eq(3125 * 2, risesAt[1], _T("second revolution"));
-        Eq(3125 * 3, risesAt[2], _T("third revolution"));
-    }
-
-    TEST_METHOD(Floppy_DriveSelectReadsTheOtherDisk)
-    {
-        TempFile fileA(_T(".dsk")), fileB(_T(".dsk"));
-        fileA.Write(MakeDiskImage(2, 1));
-        fileB.Write(MakeDiskImage(2, 2));
-        CFloppyController f;
-        Assert::IsTrue(f.AttachImage(0, fileA.Path()));
-        Assert::IsTrue(f.AttachImage(1, fileB.Path()));
-
-        std::vector<uint8_t> data;
-        uint16_t cmd0 = Cmd(0, 0), cmd1 = Cmd(1, 0);
-        f.SetCommand(cmd0);
-        Assert::IsTrue(ReadSector(f, cmd0, 4, &data));
-        Assert::IsTrue(SectorMatches(data, 1, 0, 0, 4), _T("drive 0"));
-
-        f.SetCommand(cmd1);
-        Assert::IsTrue(ReadSector(f, cmd1, 4, &data));
-        Assert::IsTrue(SectorMatches(data, 2, 0, 0, 4), _T("drive 1"));
-
-        f.SetCommand(cmd0);
-        Assert::IsTrue(ReadSector(f, cmd0, 4, &data));
-        Assert::IsTrue(SectorMatches(data, 1, 0, 0, 4), _T("drive 0 again"));
-    }
-
-    TEST_METHOD(Floppy_EmptyDriveReportsMoreData)
-    {
-        // A drive without disk: the "more data" flag is always set, nothing can be read
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(1));
-        CFloppyController f;
-        f.AttachImage(0, file.Path());
-        f.SetCommand(Cmd(2, 0));  // the drive 2 is empty
-        Assert::IsTrue((f.GetState() & FLOPPY_STATUS_MOREDATA) != 0);
-    }
-
-    TEST_METHOD(Floppy_RtdImageHasA256ByteHeader)
-    {
-        TempFile file(_T(".rtd"));
-        file.Write(MakeDiskImage(2, 3, true));
-        CFloppyController f;
-        Assert::IsTrue(f.AttachImage(0, file.Path()));
-
-        std::vector<uint8_t> data;
-        uint16_t cmd = Cmd(0, 1);
-        f.SetCommand(cmd);
-        Assert::IsTrue(ReadSector(f, cmd, 2, &data));
-        Assert::IsTrue(SectorMatches(data, 3, 0, 1, 2), _T("the header is skipped"));
-    }
-
-    TEST_METHOD(Floppy_ImageShorterThanTheTrackReadsZeros)
-    {
-        // The image has only one track; the second track side is read as zeros
-        TempFile file(_T(".dsk"));
-        std::vector<uint8_t> image = MakeDiskImage(1);
-        image.resize(TRACK_SIZE);  // the side 0 of the track 0 only
-        file.Write(image);
-        CFloppyController f;
-        f.AttachImage(0, file.Path());
-
-        std::vector<uint8_t> data;
-        uint16_t cmd = Cmd(0, 1);
-        f.SetCommand(cmd);
-        Assert::IsTrue(ReadSector(f, cmd, 1, &data));
-        for (size_t i = 0; i < data.size(); i++)
-            Assert::AreEqual(0, (int) data[i], _T("zero byte"));
-    }
-
-    TEST_METHOD(Floppy_WriteSectorDataAndFlush)
-    {
-        TempFile file(_T(".dsk"));
-        std::vector<uint8_t> original = MakeDiskImage(2);
-        file.Write(original);
-        {
-            CFloppyController f;
-            Assert::IsTrue(f.AttachImage(0, file.Path()));
-            f.SetCommand(Cmd(0, 0));
-
-            // The data of the sector 1 starts at the byte 96 of the raw track, see the track format.
-            // The first Periodic() after the two writes puts the first word at the next position of the head.
-            for (int i = 0; i < 47; i++)
-                f.Periodic();
-            uint16_t words[SECTOR_SIZE / 2];
-            for (int i = 0; i < SECTOR_SIZE / 2; i++)
-                words[i] = (uint16_t) (0x1000 + i * 7);
-            f.WriteData(words[0]);
-            f.WriteData(words[1]);
-            for (int i = 0; i < SECTOR_SIZE / 2; i++)
-            {
-                f.Periodic();
-                if (i + 2 < SECTOR_SIZE / 2)
-                    f.WriteData(words[i + 2]);
-            }
-            f.DetachImage(0);  // saves the changed track
-        }
-
-        std::vector<uint8_t> result = file.Read();
-        Eq(original.size(), result.size(), _T("file size"));
-        for (int i = 0; i < SECTOR_SIZE / 2; i++)
-        {
-            uint16_t w = (uint16_t) (0x1000 + i * 7);
-            Eq(w & 0xFF, result[i * 2], _T("low byte of the written word"));
-            Eq(w >> 8, result[i * 2 + 1], _T("high byte of the written word"));
-        }
-        // everything after the sector 1 is unchanged
-        bool same = true;
-        for (size_t i = SECTOR_SIZE; i < original.size(); i++)
-            if (result[i] != original[i]) { same = false; break; }
-        Assert::IsTrue(same, _T("the other sectors are unchanged"));
-    }
-
-    TEST_METHOD(Floppy_FlushUsesSectorNumbersInsteadOfPhysicalOrder)
-    {
-        TempFile file(_T(".dsk"));
-        const auto original = MakeDiskImage(1);
-        file.Write(original);
-        InspectableFloppyController f;
-        Assert::IsTrue(f.AttachImage(0, file.Path()));
-        auto track = f.RawTrack();
-        // Sector number fields in the first two encoded ID records.
-        Assert::AreEqual(1, static_cast<int>(track[52]));
-        Assert::AreEqual(2, static_cast<int>(track[666]));
-        std::swap(track[52], track[666]);
-        f.MarkTrackChanged();
-        f.DetachImage(0);
-        Assert::IsFalse(f.IsAttached(0));
-
-        const auto result = file.Read();
-        Assert::AreEqual(original.size(), result.size());
-        Assert::IsTrue(std::equal(result.begin(), result.begin() + SECTOR_SIZE, original.begin() + SECTOR_SIZE));
-        Assert::IsTrue(std::equal(result.begin() + SECTOR_SIZE, result.begin() + 2 * SECTOR_SIZE, original.begin()));
-        Assert::IsTrue(std::equal(result.begin() + 2 * SECTOR_SIZE, result.end(), original.begin() + 2 * SECTOR_SIZE));
-    }
-
-    TEST_METHOD(Floppy_InvalidSectorHeadersRetainChangesWithoutWritingImage)
-    {
-        TempFile file(_T(".dsk"));
-        const auto original = MakeDiskImage(1);
-        file.Write(original);
-        InspectableFloppyController f;
-        Assert::IsTrue(f.AttachImage(0, file.Path()));
-        auto track = f.RawTrack();
-        f.MarkTrackChanged();
-
-        for (const uint8_t invalidSector : {uint8_t{0}, uint8_t{1}, uint8_t{11}})
-        {
-            track[666] = invalidSector;
-            f.DetachImage(0);
-            Assert::IsTrue(f.IsAttached(0), _T("invalid sector number retains the changed track"));
-            Assert::IsTrue(file.Read() == original, _T("invalid sector number does not change the image"));
-        }
-        track[666] = 2;
-        for (const uint8_t invalidSize : {uint8_t{1}, uint8_t{3}})
-        {
-            track[667] = invalidSize;
-            f.DetachImage(0);
-            Assert::IsTrue(f.IsAttached(0), _T("unsupported sector size retains the changed track"));
-            Assert::IsTrue(file.Read() == original, _T("unsupported sector size does not change the image"));
-        }
-        track[667] = 2;
-        f.DetachImage(0);
-        Assert::IsFalse(f.IsAttached(0), _T("a repaired track can be flushed"));
-        Assert::IsTrue(file.Read() == original);
-    }
-
-    TEST_METHOD(Floppy_WrittenSectorIsReadBack)
-    {
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(2));
-        CFloppyController f;
-        f.AttachImage(0, file.Path());
-        uint16_t cmd = Cmd(0, 0);
-        f.SetCommand(cmd);
-
+        // The data of the sector 1 starts at the byte 96 of the raw track, see the track format.
+        // The first Periodic() after the two writes puts the first word at the next position of the head.
         for (int i = 0; i < 47; i++)
             f.Periodic();
-        f.WriteData(0xABCD);
-        f.WriteData(0x1234);
+        uint16_t words[SECTOR_SIZE / 2];
+        for (int i = 0; i < SECTOR_SIZE / 2; i++)
+            words[i] = (uint16_t) (0x1000 + i * 7);
+        f.WriteData(words[0]);
+        f.WriteData(words[1]);
         for (int i = 0; i < SECTOR_SIZE / 2; i++)
         {
             f.Periodic();
             if (i + 2 < SECTOR_SIZE / 2)
-                f.WriteData((uint16_t) (0x4000 + i));
+                f.WriteData(words[i + 2]);
         }
-        f.GetData();  // back to the read mode
-
-        std::vector<uint8_t> data;
-        Assert::IsTrue(ReadSector(f, cmd, 1, &data));
-        // the first word is written as the low byte first
-        Eq(0xCD, data[0], _T("first byte"));
-        Eq(0xAB, data[1], _T("second byte"));
-        Eq(0x34, data[2], _T("third byte"));
-        Eq(0x12, data[3], _T("fourth byte"));
+        f.DetachImage(0);  // saves the changed track
     }
 
-    TEST_METHOD(Floppy_ReadOnlyFileIsNotChanged)
+    std::vector<uint8_t> result = file.Read();
+    ASSERT_EQ(original.size(), result.size()) << L"file size";
+    for (int i = 0; i < SECTOR_SIZE / 2; i++)
     {
-        TempFile file(_T(".dsk"));
-        std::vector<uint8_t> original = MakeDiskImage(1);
-        file.Write(original);
-        file.SetReadOnly(true);
-        {
-            CFloppyController f;
-            Assert::IsTrue(f.AttachImage(0, file.Path()));
-            f.SetCommand(Cmd(0, 0));
-            for (int i = 0; i < 47; i++)
-                f.Periodic();
-            f.WriteData(0xDEAD);
-            f.WriteData(0xBEEF);
-            for (int i = 0; i < 4; i++)
-            {
-                f.Periodic();
-                f.WriteData(0x5555);
-            }
-            f.GetData();
-            std::vector<uint8_t> data;
-            Assert::IsTrue(ReadSector(f, Cmd(0, 0), 1, &data));
-            Assert::IsTrue(SectorMatches(data, 1, 0, 0, 1), _T("the in-memory track is unchanged"));
-            f.DetachImage(0);
-            Assert::IsFalse(f.IsAttached(0), _T("write-protected tracks do not become dirty"));
-        }
-        Assert::IsTrue(file.Read() == original, _T("the file is the same"));
+        uint16_t w = (uint16_t) (0x1000 + i * 7);
+        ASSERT_EQ(w & 0xFF, result[i * 2]) << L"low byte of the written word";
+        ASSERT_EQ(w >> 8, result[i * 2 + 1]) << L"high byte of the written word";
     }
+    // everything after the sector 1 is unchanged
+    bool same = true;
+    for (size_t i = SECTOR_SIZE; i < original.size(); i++)
+        if (result[i] != original[i]) { same = false; break; }
+    ASSERT_TRUE(same) << L"the other sectors are unchanged";
+}
 
-    TEST_METHOD(Floppy_WriteBeyondTheEndExtendsTheFile)
+TEST(FloppyTests, Floppy_FlushUsesSectorNumbersInsteadOfPhysicalOrder)
+{
+    TempFile file(L".dsk");
+    const auto original = MakeDiskImage(1);
+    file.Write(original);
+    InspectableFloppyController f;
+    ASSERT_TRUE(f.AttachImage(0, file.Path()));
+    auto track = f.RawTrack();
+    // Sector number fields in the first two encoded ID records.
+    ASSERT_EQ(1, static_cast<int>(track[52]));
+    ASSERT_EQ(2, static_cast<int>(track[666]));
+    std::swap(track[52], track[666]);
+    f.MarkTrackChanged();
+    f.DetachImage(0);
+    ASSERT_FALSE(f.IsAttached(0));
+
+    const auto result = file.Read();
+    ASSERT_EQ(original.size(), result.size());
+    ASSERT_TRUE(std::equal(result.begin(), result.begin() + SECTOR_SIZE, original.begin() + SECTOR_SIZE));
+    ASSERT_TRUE(std::equal(result.begin() + SECTOR_SIZE, result.begin() + 2 * SECTOR_SIZE, original.begin()));
+    ASSERT_TRUE(std::equal(result.begin() + 2 * SECTOR_SIZE, result.end(), original.begin() + 2 * SECTOR_SIZE));
+}
+
+TEST(FloppyTests, Floppy_InvalidSectorHeadersRetainChangesWithoutWritingImage)
+{
+    TempFile file(L".dsk");
+    const auto original = MakeDiskImage(1);
+    file.Write(original);
+    InspectableFloppyController f;
+    ASSERT_TRUE(f.AttachImage(0, file.Path()));
+    auto track = f.RawTrack();
+    f.MarkTrackChanged();
+
+    for (const uint8_t invalidSector : {uint8_t{0}, uint8_t{1}, uint8_t{11}})
     {
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(1));  // two track sides
-        {
-            CFloppyController f;
-            f.AttachImage(0, file.Path());
-            f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP | FLOPPY_CMD_DIR));  // track 1: not in the file
-            f.SetCommand(Cmd(0, 0));
-            for (int i = 0; i < 47; i++)
-                f.Periodic();
-            f.WriteData(0x0102);
-            f.WriteData(0x0304);
-            f.Periodic();
-            f.Periodic();
-            f.DetachImage(0);
-        }
-        std::vector<uint8_t> result = file.Read();
-        Assert::IsTrue(result.size() >= (size_t) (3 * TRACK_SIZE), _T("the file covers the track 1 side 0"));
-        Eq(0x02, result[2 * TRACK_SIZE], _T("first byte of the new sector"));
-        Eq(0x01, result[2 * TRACK_SIZE + 1], _T("second byte"));
+        track[666] = invalidSector;
+        f.DetachImage(0);
+        ASSERT_TRUE(f.IsAttached(0)) << L"invalid sector number retains the changed track";
+        ASSERT_TRUE(file.Read() == original) << L"invalid sector number does not change the image";
     }
-
-    TEST_METHOD(Floppy_WriteProtectFollowsTheSelectedDrive)
+    track[666] = 2;
+    for (const uint8_t invalidSize : {uint8_t{1}, uint8_t{3}})
     {
-        TempFile writable(_T(".dsk")), protectedFile(_T(".dsk"));
-        writable.Write(MakeDiskImage(1));
-        protectedFile.Write(MakeDiskImage(1));
-        protectedFile.SetReadOnly(true);
+        track[667] = invalidSize;
+        f.DetachImage(0);
+        ASSERT_TRUE(f.IsAttached(0)) << L"unsupported sector size retains the changed track";
+        ASSERT_TRUE(file.Read() == original) << L"unsupported sector size does not change the image";
+    }
+    track[667] = 2;
+    f.DetachImage(0);
+    ASSERT_FALSE(f.IsAttached(0)) << L"a repaired track can be flushed";
+    ASSERT_TRUE(file.Read() == original);
+}
+
+TEST(FloppyTests, Floppy_WrittenSectorIsReadBack)
+{
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(2));
+    CFloppyController f;
+    f.AttachImage(0, file.Path());
+    uint16_t cmd = Cmd(0, 0);
+    f.SetCommand(cmd);
+
+    for (int i = 0; i < 47; i++)
+        f.Periodic();
+    f.WriteData(0xABCD);
+    f.WriteData(0x1234);
+    for (int i = 0; i < SECTOR_SIZE / 2; i++)
+    {
+        f.Periodic();
+        if (i + 2 < SECTOR_SIZE / 2)
+            f.WriteData((uint16_t) (0x4000 + i));
+    }
+    f.GetData();  // back to the read mode
+
+    std::vector<uint8_t> data;
+    ASSERT_TRUE(ReadSector(f, cmd, 1, &data));
+    // the first word is written as the low byte first
+    ASSERT_EQ(0xCD, data[0]) << L"first byte";
+    ASSERT_EQ(0xAB, data[1]) << L"second byte";
+    ASSERT_EQ(0x34, data[2]) << L"third byte";
+    ASSERT_EQ(0x12, data[3]) << L"fourth byte";
+}
+
+TEST(FloppyTests, Floppy_ReadOnlyFileIsNotChanged)
+{
+    TempFile file(L".dsk");
+    std::vector<uint8_t> original = MakeDiskImage(1);
+    file.Write(original);
+    file.SetReadOnly(true);
+    {
         CFloppyController f;
-        Assert::IsTrue(f.AttachImage(0, writable.Path()));
-        Assert::IsTrue(f.AttachImage(1, protectedFile.Path()));
-        Assert::IsTrue(f.IsReadOnly(1));
-
-        f.SetCommand(Cmd(1, 0));
-        Assert::IsTrue((f.GetState() & FLOPPY_STATUS_WRITEPROTECT) != 0, _T("drive 1 is write protected"));
+        ASSERT_TRUE(f.AttachImage(0, file.Path()));
         f.SetCommand(Cmd(0, 0));
-        Assert::IsFalse((f.GetState() & FLOPPY_STATUS_WRITEPROTECT) != 0, _T("drive 0 is writable"));
+        for (int i = 0; i < 47; i++)
+            f.Periodic();
+        f.WriteData(0xDEAD);
+        f.WriteData(0xBEEF);
+        for (int i = 0; i < 4; i++)
+        {
+            f.Periodic();
+            f.WriteData(0x5555);
+        }
+        f.GetData();
+        std::vector<uint8_t> data;
+        ASSERT_TRUE(ReadSector(f, Cmd(0, 0), 1, &data));
+        ASSERT_TRUE(SectorMatches(data, 1, 0, 0, 1)) << L"the in-memory track is unchanged";
+        f.DetachImage(0);
+        ASSERT_FALSE(f.IsAttached(0)) << L"write-protected tracks do not become dirty";
     }
+    ASSERT_TRUE(file.Read() == original) << L"the file is the same";
+}
 
-    // The motherboard
-
-    TEST_METHOD(Floppy_BoardAttachAndPorts)
+TEST(FloppyTests, Floppy_WriteBeyondTheEndExtendsTheFile)
+{
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(1));  // two track sides
     {
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(1));
-        TestBoard tb;
-        Assert::IsFalse(tb.Board()->IsFloppyImageAttached(0));
-        Assert::IsTrue(tb.Board()->AttachFloppyImage(0, file.Path()));
-        Assert::IsTrue(tb.Board()->IsFloppyImageAttached(0));
-        Assert::IsFalse(tb.Board()->IsFloppyReadOnly(0));
-
-        // The ports 177130 (state, command) and 177132 (data) of the PPU
-        CMemoryController* pCtl = tb.Board()->GetPPUMemoryController();
-        pCtl->SetWord(0177130, false, Cmd(0, 0));
-        Assert::IsTrue(tb.Board()->IsFloppyEngineOn(), _T("the command reaches the controller"));
-        Eq(FLOPPY_STATUS_TRACK0, pCtl->GetWord(0177130, false, false) & FLOPPY_STATUS_TRACK0, _T("state port"));
-
-        tb.Board()->DetachFloppyImage(0);
-        Assert::IsFalse(tb.Board()->IsFloppyImageAttached(0));
+        CFloppyController f;
+        f.AttachImage(0, file.Path());
+        f.SetCommand(Cmd(0, 0, FLOPPY_CMD_STEP | FLOPPY_CMD_DIR));  // track 1: not in the file
+        f.SetCommand(Cmd(0, 0));
+        for (int i = 0; i < 47; i++)
+            f.Periodic();
+        f.WriteData(0x0102);
+        f.WriteData(0x0304);
+        f.Periodic();
+        f.Periodic();
+        f.DetachImage(0);
     }
+    std::vector<uint8_t> result = file.Read();
+    ASSERT_TRUE(result.size() >= (size_t) (3 * TRACK_SIZE)) << L"the file covers the track 1 side 0";
+    ASSERT_EQ(0x02, result[2 * TRACK_SIZE]) << L"first byte of the new sector";
+    ASSERT_EQ(0x01, result[2 * TRACK_SIZE + 1]) << L"second byte";
+}
 
-    TEST_METHOD(Floppy_BoardReadOnlyImage)
-    {
-        TempFile file(_T(".dsk"));
-        file.Write(MakeDiskImage(1));
-        file.SetReadOnly(true);
-        TestBoard tb;
-        Assert::IsTrue(tb.Board()->AttachFloppyImage(2, file.Path()));
-        Assert::IsTrue(tb.Board()->IsFloppyReadOnly(2));
-    }
-};
+TEST(FloppyTests, Floppy_WriteProtectFollowsTheSelectedDrive)
+{
+    TempFile writable(L".dsk"), protectedFile(L".dsk");
+    writable.Write(MakeDiskImage(1));
+    protectedFile.Write(MakeDiskImage(1));
+    protectedFile.SetReadOnly(true);
+    CFloppyController f;
+    ASSERT_TRUE(f.AttachImage(0, writable.Path()));
+    ASSERT_TRUE(f.AttachImage(1, protectedFile.Path()));
+    ASSERT_TRUE(f.IsReadOnly(1));
+
+    f.SetCommand(Cmd(1, 0));
+    ASSERT_TRUE((f.GetState() & FLOPPY_STATUS_WRITEPROTECT) != 0) << L"drive 1 is write protected";
+    f.SetCommand(Cmd(0, 0));
+    ASSERT_FALSE((f.GetState() & FLOPPY_STATUS_WRITEPROTECT) != 0) << L"drive 0 is writable";
+}
+
+// The motherboard
+
+TEST(FloppyTests, Floppy_BoardAttachAndPorts)
+{
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(1));
+    TestBoard tb;
+    ASSERT_FALSE(tb.Board()->IsFloppyImageAttached(0));
+    ASSERT_TRUE(tb.Board()->AttachFloppyImage(0, file.Path()));
+    ASSERT_TRUE(tb.Board()->IsFloppyImageAttached(0));
+    ASSERT_FALSE(tb.Board()->IsFloppyReadOnly(0));
+
+    // The ports 177130 (state, command) and 177132 (data) of the PPU
+    CMemoryController* pCtl = tb.Board()->GetPPUMemoryController();
+    pCtl->SetWord(0177130, false, Cmd(0, 0));
+    ASSERT_TRUE(tb.Board()->IsFloppyEngineOn()) << L"the command reaches the controller";
+    ASSERT_EQ(FLOPPY_STATUS_TRACK0, pCtl->GetWord(0177130, false, false) & FLOPPY_STATUS_TRACK0) << L"state port";
+
+    tb.Board()->DetachFloppyImage(0);
+    ASSERT_FALSE(tb.Board()->IsFloppyImageAttached(0));
+}
+
+TEST(FloppyTests, Floppy_BoardReadOnlyImage)
+{
+    TempFile file(L".dsk");
+    file.Write(MakeDiskImage(1));
+    file.SetReadOnly(true);
+    TestBoard tb;
+    ASSERT_TRUE(tb.Board()->AttachFloppyImage(2, file.Path()));
+    ASSERT_TRUE(tb.Board()->IsFloppyReadOnly(2));
+}
