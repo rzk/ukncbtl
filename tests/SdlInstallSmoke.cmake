@@ -13,8 +13,12 @@ if(NOT result EQUAL 0)
   message(FATAL_ERROR "Installation failed: ${output}\n${error}")
 endif()
 
-foreach(file IN ITEMS "bin/${EXE_NAME}" licenses/UKNCBTL-LICENSE licenses/SDL3-LICENSE
-    licenses/IMGUI-LICENSE licenses/NOTICE-DroidSans licenses/LICENSE-Apache-2.0 licenses/NOTICE-RenderVfw)
+set(required_files "bin/${EXE_NAME}" licenses/UKNCBTL-LICENSE licenses/IMGUI-LICENSE
+    licenses/NOTICE-DroidSans licenses/LICENSE-Apache-2.0 licenses/NOTICE-RenderVfw)
+if(EXPECT_SDL3_LICENSE)
+  list(APPEND required_files licenses/SDL3-LICENSE)
+endif()
+foreach(file IN LISTS required_files)
   if(NOT EXISTS "${install_dir}/${file}")
     message(FATAL_ERROR "Installed file is missing: ${file}")
   endif()

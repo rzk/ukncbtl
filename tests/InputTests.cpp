@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include "Input.h"
-#include <limits>
+#include <climits>
 
 TEST(InputQueue, EmptyAndZeroSentinel)
 {

@@ -3,6 +3,7 @@
 #include "emubase/Emubase.h"
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <memory>
 #include <vector>
 

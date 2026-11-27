@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "SpriteDecoder.h"
+#include <climits>
 #include <vector>
 
 class SpriteModes : public testing::TestWithParam<int> {};

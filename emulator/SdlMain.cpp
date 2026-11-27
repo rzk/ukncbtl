@@ -3305,11 +3305,20 @@ int Run(const preview_options::Options& options)
         }
         else finalizeGui();
 #ifdef UKNCBTL_TEST_HOOKS
+        // A reset queued after SDL's poll sentinel may be delivered on the following iteration.
+        const bool staticVideoResetPending = testStaticVideo && staticVideoPhase == 5 &&
+            !screenNeedsUpload && SDL_HasEvent(SDL_EVENT_RENDER_DEVICE_RESET);
         if (testStaticVideo && staticVideoPhase < 6)
         {
             const bool expectPreparation = staticVideoPhase != 1 && staticVideoPhase != 5;
-            if (frameStarted || prepareVideo != expectPreparation || screenNeedsUpload != (staticVideoPhase != 1) ||
-                destination.w <= 0 || destination.h <= 0) return 1;
+            const bool expectUpload = staticVideoPhase != 1 && !staticVideoResetPending;
+            if (frameStarted || prepareVideo != expectPreparation || screenNeedsUpload != expectUpload ||
+                destination.w <= 0 || destination.h <= 0)
+            {
+                SDL_Log("Static video phase %u: frame started=%d, prepared video=%d, needs upload=%d, viewport=%gx%g",
+                    staticVideoPhase, frameStarted, prepareVideo, screenNeedsUpload, destination.w, destination.h);
+                return 1;
+            }
         }
 #endif
         if (copyScreenshot || screenshotPath)
@@ -3377,7 +3386,7 @@ int Run(const preview_options::Options& options)
         }
         }
 #ifdef UKNCBTL_TEST_HOOKS
-        if (testStaticVideo && staticVideoPhase < 6)
+        if (testStaticVideo && staticVideoPhase < 6 && !staticVideoResetPending)
         {
             if (++staticVideoPhase == 5)
             {

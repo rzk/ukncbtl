@@ -1642,7 +1642,7 @@ void CProcessor::ExecuteMFPS()  // MFPS - move from PS
         if (m_RPLYrq) return;
     }
     else
-        SetReg(m_regdest, (uint16_t)(signed short)(char)psw); //sign extend
+        SetReg(m_regdest, static_cast<uint16_t>(static_cast<int8_t>(psw))); // Sign extend.
 
     if (psw & 0200) new_psw |= PSW_N;
     if (psw == 0) new_psw |= PSW_Z;
@@ -1652,7 +1652,7 @@ void CProcessor::ExecuteMFPS()  // MFPS - move from PS
 
 void CProcessor::ExecuteBR()
 {
-    SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+    SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     m_internalTick = BR_TIMING;
 }
 
@@ -1662,7 +1662,7 @@ void CProcessor::ExecuteBNE()
         m_internalTick = BRANCH_FALSE_TIMING;
     else
     {
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
         m_internalTick = BRANCH_TRUE_TIMING;
     }
 }
@@ -1674,7 +1674,7 @@ void CProcessor::ExecuteBEQ()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1685,7 +1685,7 @@ void CProcessor::ExecuteBGE()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1696,7 +1696,7 @@ void CProcessor::ExecuteBLT()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1707,7 +1707,7 @@ void CProcessor::ExecuteBGT()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1718,7 +1718,7 @@ void CProcessor::ExecuteBLE()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1729,7 +1729,7 @@ void CProcessor::ExecuteBPL()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1740,7 +1740,7 @@ void CProcessor::ExecuteBMI()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1751,7 +1751,7 @@ void CProcessor::ExecuteBHI()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1762,7 +1762,7 @@ void CProcessor::ExecuteBLOS()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1773,7 +1773,7 @@ void CProcessor::ExecuteBVC()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1784,7 +1784,7 @@ void CProcessor::ExecuteBVS()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1795,7 +1795,7 @@ void CProcessor::ExecuteBHIS()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -1806,7 +1806,7 @@ void CProcessor::ExecuteBLO()
     else
     {
         m_internalTick = BRANCH_TRUE_TIMING;
-        SetPC(GetPC() + ((short)(char)(uint8_t)(m_instruction & 0xff)) * 2 );
+        SetPC(GetPC() + 2 * static_cast<int8_t>(m_instruction));
     }
 }
 
@@ -2073,7 +2073,7 @@ void CProcessor::ExecuteMOVB()  // MOVB - move byte
         if (m_RPLYrq) return;
     }
     else
-        SetReg(m_regdest, (uint16_t)(signed short)(char)dst);
+        SetReg(m_regdest, static_cast<uint16_t>(static_cast<int8_t>(dst)));
 
     if (dst & 0200) new_psw |= PSW_N;
     if (dst == 0) new_psw |= PSW_Z;

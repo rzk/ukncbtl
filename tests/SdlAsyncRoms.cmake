@@ -1,9 +1,9 @@
 file(MAKE_DIRECTORY "${TEST_DIR}")
 set(system "${TEST_DIR}/system-日本.bin")
 set(cartridge "${TEST_DIR}/cartridge-日本.bin")
-string(REPEAT "A" 32256 system_data)
 string(REPEAT "B" 24576 cartridge_data)
-file(WRITE "${system}" "${system_data}")
+configure_file("${ROM_FILE}" "${system}" COPYONLY)
+file(SHA256 "${system}" original_hash)
 file(WRITE "${cartridge}" "${cartridge_data}")
 execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
   "UKNCBTL_TEST_ROM_PATH=${system}" "UKNCBTL_TEST_SCREENSHOT_PATH=${system}"
@@ -12,8 +12,8 @@ execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDI
 if(NOT result EQUAL 0)
   message(FATAL_ERROR "SDL system ROM load failed (${result}): ${error}")
 endif()
-file(SIZE "${system}" size)
-if(NOT size EQUAL 32256)
+file(SHA256 "${system}" current_hash)
+if(NOT current_hash STREQUAL original_hash)
   message(FATAL_ERROR "Conflicting output changed the system ROM")
 endif()
 execute_process(COMMAND "${CMAKE_COMMAND}" -E env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
