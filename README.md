@@ -8,9 +8,23 @@ The build uses CMake 3.20 or newer, Ninja, and Clang with a C++23 standard libra
 
 ### Linux
 
-Put Clang, CMake, Ninja, Git, and `pkg-config` on PATH. With libstdc++, use Clang 19 or newer and libstdc++ 13 or newer for `std::expected` and `std::format`. Install the SDL development dependencies for your desktop backends. If SDL reports a missing optional X11 extension, its configure error names the option you can disable. [SDL Linux build guide](https://wiki.libsdl.org/SDL3/README-linux)
+The Linux presets pick up `clang` and `clang++` from `PATH`. With libstdc++, use Clang 19 or newer and libstdc++ 13 or newer for `std::expected` and `std::format`. Install CMake, Ninja, Git, `pkg-config`, and the SDL development dependencies for your desktop backends. If SDL reports a missing optional X11 extension, its configure error names the option you can disable. [SDL Linux build guide](https://wiki.libsdl.org/SDL3/README-linux)
 
-On Ubuntu 24.04, install the build tools and SDL desktop development libraries.
+Build and install from the repository root.
+
+```sh
+cmake --preset linux-clang
+cmake --build --preset linux-clang
+ctest --preset linux-clang
+cmake --install build/linux-clang --prefix build/install-linux
+./build/install-linux/bin/ukncbtl
+```
+
+Use `linux-clang-debug` for a Debug build or configure with `-DBUILD_TESTING=OFF` for an application-only build. The install includes the emulator and license notices.
+
+#### Ubuntu 24.04 example
+
+Install the build tools and SDL desktop development libraries.
 
 ```sh
 sudo apt-get update
@@ -20,17 +34,11 @@ sudo apt-get install clang-19 libstdc++-13-dev cmake ninja-build git pkg-config 
   libgl-dev libegl-dev libasound2-dev libpulse-dev libdbus-1-dev
 ```
 
-Build and install from the repository root. Use `cmake --preset linux-clang` for the first command if `clang` and `clang++` on PATH already meet the requirements above.
+If you installed the versioned `clang-19` package, point CMake at `clang-19` and `clang++-19` on the first configure, then continue with the build and install commands above.
 
 ```sh
 cmake --preset linux-clang -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19
-cmake --build --preset linux-clang
-ctest --preset linux-clang
-cmake --install build/linux-clang --prefix build/install-linux
-./build/install-linux/bin/ukncbtl
 ```
-
-Use `linux-clang-debug` for a Debug build or configure with `-DBUILD_TESTING=OFF` for an application-only build. The install includes the emulator and license notices.
 
 ### Windows
 
