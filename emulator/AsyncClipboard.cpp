@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "AsyncClipboard.h"
+#include "util/SdlThreadCleanup.h"
 #include <SDL3/SDL_clipboard.h>
 #include <chrono>
 #include <utility>
@@ -32,6 +33,7 @@ std::expected<screenshot_clipboard::Prepared, screenshot_clipboard::Error> Encod
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 #endif
+    thread_local const SdlThreadCleanup cleanup;
     return screenshot_clipboard::Encode(image);
 }
 }

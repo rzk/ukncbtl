@@ -5,13 +5,9 @@
 #include <utility>
 
 FrameWorker::FrameWorker(std::function<bool()> task, std::function<void()> notify)
-    : task_(std::move(task)), notify_(std::move(notify)), worker_(&FrameWorker::Run, this) {}
-FrameWorker::~FrameWorker()
-{
-    { const std::lock_guard lock(mutex_); stopping_ = true; }
-    changed_.notify_one();
-    worker_.join();
-}
+    : task_(std::move(task)), notify_(std::move(notify)),
+      worker_([this](std::stop_token stop) { Run(stop); }) {}
+FrameWorker::~FrameWorker() = default;
 bool FrameWorker::Start()
 {
     return Request({});
@@ -22,8 +18,8 @@ bool FrameWorker::Start(std::function<bool()> operation)
 }
 bool FrameWorker::Request(std::function<bool()> operation)
 {
-    const std::lock_guard lock(mutex_);
-    if (outstanding_ || stopping_) return false;
+    const std::scoped_lock lock(mutex_);
+    if (outstanding_) return false;
     operation_ = std::move(operation);
     outstanding_ = requested_ = true;
     completed_ = false;
@@ -51,30 +47,29 @@ FrameWorker::Outcome FrameWorker::WaitOutcome() noexcept
     try { return Wait() ? Outcome::completed : Outcome::stopped; }
     catch (...) { return Outcome::failed; }
 }
-void FrameWorker::Run()
+void FrameWorker::Run(std::stop_token stop)
 {
-    std::unique_lock lock(mutex_);
     for (;;)
     {
-        changed_.wait(lock, [this] { return requested_ || stopping_; });
-        if (!requested_ && stopping_) return;
-        requested_ = false;
-        auto operation = std::exchange(operation_, {});
-        lock.unlock();
+        std::function<bool()> operation;
+        {
+            std::unique_lock lock(mutex_);
+            // The predicate still wins over a stop request, so queued work is drained.
+            if (!changed_.wait(lock, stop, [this] { return requested_; })) return;
+            requested_ = false;
+            operation = std::exchange(operation_, {});
+        }
         bool result = false;
-        std::exception_ptr error;
+        std::exception_ptr error{};
         try { result = operation ? operation() : task_(); } catch (...) { error = std::current_exception(); }
         operation = {};
-        lock.lock();
-        result_ = result;
-        error_ = error;
-        completed_ = true;
-        changed_.notify_all();
-        if (notify_)
         {
-            lock.unlock();
-            background::Signal(notify_);
-            lock.lock();
+            const std::scoped_lock lock(mutex_);
+            result_ = result;
+            error_ = error;
+            completed_ = true;
         }
+        changed_.notify_all();
+        background::Signal(notify_);
     }
 }

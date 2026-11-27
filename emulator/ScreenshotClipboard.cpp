@@ -2,6 +2,7 @@
 #include "ScreenshotClipboard.h"
 #include "util/BmpFile.h"
 #include <SDL3/SDL.h>
+#include <array>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -27,7 +28,8 @@ const void* SDLCALL ClipboardData(void* userdata, const char* mimeType, std::siz
 
 void SDLCALL CleanupClipboard(void* userdata)
 {
-    delete static_cast<screenshot_clipboard::Prepared*>(userdata);
+    const std::unique_ptr<screenshot_clipboard::Prepared> images(
+        static_cast<screenshot_clipboard::Prepared*>(userdata));
 }
 }
 
@@ -59,11 +61,11 @@ std::expected<void, screenshot_clipboard::Error> screenshot_clipboard::SetPrepar
 {
     if (!(SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO)) return std::unexpected(Error::video_not_initialized);
     if (images.bmp.empty() || images.png.empty()) return std::unexpected(Error::invalid_image);
-    const char* mimeTypes[]{bmpMimeType, pngMimeType};
+    constexpr std::array mimeTypes{bmpMimeType, pngMimeType};
     // SDL 3.4.16 takes ownership after validating these arguments, including
     // on backend failure; cleanup may run synchronously inside this call.
     auto* ownedImages = std::make_unique<Prepared>(std::move(images)).release();
-    if (!SDL_SetClipboardData(ClipboardData, CleanupClipboard, ownedImages, mimeTypes, 2))
+    if (!SDL_SetClipboardData(ClipboardData, CleanupClipboard, ownedImages, mimeTypes.data(), mimeTypes.size()))
         return std::unexpected(Error::clipboard_failed);
     return {};
 }

@@ -43,7 +43,8 @@ public:
     static void Done();  ///< Release memory used for static tables
 protected:  // Statics
     using ExecuteMethodRef = void (CProcessor::*)();
-    static std::unique_ptr<ExecuteMethodRef[]> m_pExecuteMethodMap;
+    using ExecuteMethodMap = std::array<ExecuteMethodRef, 1u << 16>;
+    static std::unique_ptr<ExecuteMethodMap> m_pExecuteMethodMap;
 
 protected:  // Processor state
     std::array<wchar_t, 5> m_name{};        ///< Processor name (DO NOT use it inside the processor code!!!)
@@ -103,13 +104,13 @@ public:
 public:  // Register control
     uint16_t    GetPSW() const { return m_psw; }  ///< Get the processor status word register value
     uint16_t    GetCPSW() const { return m_savepsw; }
-    uint8_t     GetLPSW() const { return (uint8_t)(m_psw & 0xff); }  ///< Get PSW lower byte
+    uint8_t     GetLPSW() const { return static_cast<uint8_t>(m_psw & 0xff); }  ///< Get PSW lower byte
     void        SetPSW(uint16_t word);  ///< Set the processor status word register value
     void        SetCPSW(uint16_t word) { m_savepsw = word; }
     void        SetLPSW(uint8_t byte);
     uint16_t    GetReg(int regno) const { return m_R[regno]; }  ///< Get register value, regno=0..7
     void        SetReg(int regno, uint16_t word);  ///< Set register value
-    uint8_t     GetLReg(int regno) const { return (uint8_t)(m_R[regno] & 0xff); }
+    uint8_t     GetLReg(int regno) const { return static_cast<uint8_t>(m_R[regno] & 0xff); }
     void        SetLReg(int regno, uint8_t byte);
     uint16_t    GetSP() const { return m_R[6]; }
     void        SetSP(uint16_t word) { m_R[6] = word; }
@@ -303,7 +304,7 @@ inline void CProcessor::SetPSW(uint16_t word)
 }
 inline void CProcessor::SetLPSW(uint8_t byte)
 {
-    m_psw = (m_psw & 0xFF00) | (uint16_t)byte;
+    m_psw = (m_psw & 0xFF00) | static_cast<uint16_t>(byte);
     if ((m_psw & 0600) != 0600) m_savepsw = m_psw;
 }
 inline void CProcessor::SetReg(int regno, uint16_t word)
@@ -313,7 +314,7 @@ inline void CProcessor::SetReg(int regno, uint16_t word)
 }
 inline void CProcessor::SetLReg(int regno, uint8_t byte)
 {
-    m_R[regno] = (m_R[regno] & 0xFF00) | (uint16_t)byte;
+    m_R[regno] = (m_R[regno] & 0xFF00) | static_cast<uint16_t>(byte);
     if ((regno == 7) && ((m_psw & 0600) != 0600)) m_savepc = m_R[7];
 }
 inline void CProcessor::SetPC(uint16_t word)
@@ -381,23 +382,23 @@ inline bool CProcessor::CheckSubForOverflow(uint8_t a, uint8_t b) { return cpu_o
 inline bool CProcessor::CheckSubForOverflow(uint16_t a, uint16_t b) { return cpu_overflow::Subtract(a, b); }
 inline bool CProcessor::CheckAddForCarry (uint8_t a, uint8_t b)
 {
-    uint16_t sum = (uint16_t)a + (uint16_t)b;
-    return (uint8_t)((sum >> 8) & 0xff) != 0;
+    uint16_t sum = static_cast<uint16_t>(a) + static_cast<uint16_t>(b);
+    return static_cast<uint8_t>((sum >> 8) & 0xff) != 0;
 }
 inline bool CProcessor::CheckAddForCarry (uint16_t a, uint16_t b)
 {
-    uint32_t sum = (uint32_t)a + (uint32_t)b;
-    return (uint16_t)((sum >> 16) & 0xffff) != 0;
+    uint32_t sum = static_cast<uint32_t>(a) + static_cast<uint32_t>(b);
+    return static_cast<uint16_t>((sum >> 16) & 0xffff) != 0;
 }
 inline bool CProcessor::CheckSubForCarry (uint8_t a, uint8_t b)
 {
-    uint16_t sum = (uint16_t)a - (uint16_t)b;
-    return (uint8_t)((sum >> 8) & 0xff) != 0;
+    uint16_t sum = static_cast<uint16_t>(a) - static_cast<uint16_t>(b);
+    return static_cast<uint8_t>((sum >> 8) & 0xff) != 0;
 }
 inline bool CProcessor::CheckSubForCarry (uint16_t a, uint16_t b)
 {
-    uint32_t sum = (uint32_t)a - (uint32_t)b;
-    return (uint16_t)((sum >> 16) & 0xffff) != 0;
+    uint32_t sum = static_cast<uint32_t>(a) - static_cast<uint32_t>(b);
+    return static_cast<uint16_t>((sum >> 16) & 0xffff) != 0;
 }
 
 

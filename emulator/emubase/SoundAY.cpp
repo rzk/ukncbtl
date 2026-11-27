@@ -483,7 +483,7 @@ void CSoundAY::RenderChunk(std::span<uint8_t> stream)
         }
 
         vol = (vola * this->VolA + volb * this->VolB + volc * this->VolC) / (3 * STEP);
-        if (--length & 1) *(buf1++) = (uint8_t)(vol >> 8);
+        if (--length & 1) *(buf1++) = static_cast<uint8_t>(vol >> 8);
     }
 }
 
@@ -496,7 +496,7 @@ void CSoundAY::BuildMixerTable()
     double out = MAX_OUTPUT;
     for (int i = 31; i > 0; i--)
     {
-        VolTable[i] = (unsigned)(out + 0.5);    /* round to nearest */
+        VolTable[i] = static_cast<unsigned>(out + 0.5);    /* round to nearest */
         out /= 1.188502227; /* = 10 ^ (1.5/20) = 1.5dB */
     }
     VolTable[0] = 0;

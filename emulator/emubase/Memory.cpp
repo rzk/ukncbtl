@@ -190,8 +190,8 @@ void CMemoryController::SetWord(uint16_t address, bool okHaltMode, uint16_t word
         m_pBoard->SetRAMWord(2, offset, word);
         return;
     case ADDRTYPE_RAM12:
-        m_pBoard->SetRAMByte(1, offset / 2, (uint8_t)(word & 0xff));
-        m_pBoard->SetRAMByte(2, offset / 2, (uint8_t)((word >> 8) & 0xff));
+        m_pBoard->SetRAMByte(1, offset / 2, static_cast<uint8_t>(word & 0xff));
+        m_pBoard->SetRAMByte(2, offset / 2, static_cast<uint8_t>((word >> 8) & 0xff));
         return;
     case ADDRTYPE_IO:
         SetPortWord(address, word);
@@ -331,7 +331,7 @@ int CFirstMemoryController::TranslateAddress(uint16_t address, bool okHaltMode, 
 uint8_t CFirstMemoryController::GetPortByte(uint16_t address)
 {
     uint16_t word = GetPortWord(address);
-    return (uint8_t) (address & 1) ? (uint8_t)((word >> 8) & 0xff) : (uint8_t)(word & 0xff);
+    return static_cast<uint8_t>(address & 1) ? static_cast<uint8_t>((word >> 8) & 0xff) : static_cast<uint8_t>(word & 0xff);
 }
 
 uint16_t CFirstMemoryController::GetPortWord(uint16_t address)
@@ -441,7 +441,7 @@ uint16_t CFirstMemoryController::GetPortView(uint16_t address) const
 
 void CFirstMemoryController::SetPortByte(uint16_t address, uint8_t byte)
 {
-    uint16_t word = (address & 1) ? ((uint16_t)byte) << 8 : (uint16_t)byte;
+    uint16_t word = (address & 1) ? (static_cast<uint16_t>(byte)) << 8 : static_cast<uint16_t>(byte);
     switch (address)
     {
     case 0176640:  // Plane address register
@@ -451,12 +451,12 @@ void CFirstMemoryController::SetPortByte(uint16_t address, uint8_t byte)
     case 0176642:  // Plane 1 & 2 data register
         m_Port176642 &= 0xFF00;
         m_Port176642 |= word;
-        m_pBoard->SetRAMByte(1, m_Port176640, (uint8_t)(word & 0xff));
+        m_pBoard->SetRAMByte(1, m_Port176640, static_cast<uint8_t>(word & 0xff));
         break;
     case 0176643:
         m_Port176642 &= 0xFF;
         m_Port176642 |= word;
-        m_pBoard->SetRAMByte(2, m_Port176640, (uint8_t)((word >> 8) & 0xff));
+        m_pBoard->SetRAMByte(2, m_Port176640, static_cast<uint8_t>((word >> 8) & 0xff));
         break;
 
     case 0176644: case 0176645:
@@ -467,7 +467,7 @@ void CFirstMemoryController::SetPortByte(uint16_t address, uint8_t byte)
         break;
 
     case 0177560:
-        m_pBoard->ChanRxStateSetCPU(0, (uint8_t) word);
+        m_pBoard->ChanRxStateSetCPU(0, static_cast<uint8_t>(word));
         break;
     case 0177561:
         m_pBoard->ChanRxStateSetCPU(0, 0);
@@ -476,19 +476,19 @@ void CFirstMemoryController::SetPortByte(uint16_t address, uint8_t byte)
     case 0177563:
         break;
     case 0177564:
-        m_pBoard->ChanTxStateSetCPU(0, (uint8_t) word);
+        m_pBoard->ChanTxStateSetCPU(0, static_cast<uint8_t>(word));
         break;
     case 0177565:
         m_pBoard->ChanTxStateSetCPU(0, 0);
         break;
     case 0177566:  // TX data, channel 0
-        m_pBoard->ChanWriteByCPU(0, (uint8_t) word);
+        m_pBoard->ChanWriteByCPU(0, static_cast<uint8_t>(word));
         break;
     case 0177567:
         m_pBoard->ChanWriteByCPU(0, 0);
         break;
     case 0176660:
-        m_pBoard->ChanRxStateSetCPU(1, (uint8_t) word);
+        m_pBoard->ChanRxStateSetCPU(1, static_cast<uint8_t>(word));
         break;
     case 0176661:
         m_pBoard->ChanRxStateSetCPU(1, 0);
@@ -497,25 +497,25 @@ void CFirstMemoryController::SetPortByte(uint16_t address, uint8_t byte)
     case 0176663:
         break ;
     case 0176664:
-        m_pBoard->ChanTxStateSetCPU(1, (uint8_t) word);
+        m_pBoard->ChanTxStateSetCPU(1, static_cast<uint8_t>(word));
         break;
     case 0176665:
         m_pBoard->ChanTxStateSetCPU(1, 0);
         break;
     case 0176666:  // TX data, channel 1
-        m_pBoard->ChanWriteByCPU(1, (uint8_t) word);
+        m_pBoard->ChanWriteByCPU(1, static_cast<uint8_t>(word));
         break;
     case 0176667:
         m_pBoard->ChanWriteByCPU(1, 0);
         break;
     case 0176674:
-        m_pBoard->ChanTxStateSetCPU(2, (uint8_t) word);
+        m_pBoard->ChanTxStateSetCPU(2, static_cast<uint8_t>(word));
         break;
     case 0176675:
         m_pBoard->ChanTxStateSetCPU(2, 0);
         break;
     case 0176676:  // TX data, channel 2
-        m_pBoard->ChanWriteByCPU(2, (uint8_t) word);
+        m_pBoard->ChanWriteByCPU(2, static_cast<uint8_t>(word));
         break;
     case 0176677:
         m_pBoard->ChanWriteByCPU(2, 0);
@@ -580,8 +580,8 @@ void CFirstMemoryController::SetPortWord(uint16_t address, uint16_t word)
     case 0176642:  // Plane 1 & 2 data register
     case 0176643:
         m_Port176642 = word;
-        m_pBoard->SetRAMByte(1, m_Port176640, (uint8_t)(word & 0xff));
-        m_pBoard->SetRAMByte(2, m_Port176640, (uint8_t)((word >> 8) & 0xff));
+        m_pBoard->SetRAMByte(1, m_Port176640, static_cast<uint8_t>(word & 0xff));
+        m_pBoard->SetRAMByte(2, m_Port176640, static_cast<uint8_t>((word >> 8) & 0xff));
         break;
 
     case 0176644: case 0176645:
@@ -603,7 +603,7 @@ void CFirstMemoryController::SetPortWord(uint16_t address, uint16_t word)
 
     case 0177560:
     case 0177561:
-        m_pBoard->ChanRxStateSetCPU(0, (uint8_t) word);
+        m_pBoard->ChanRxStateSetCPU(0, static_cast<uint8_t>(word));
         break;
     case 0177562:
     case 0177563:
@@ -611,34 +611,34 @@ void CFirstMemoryController::SetPortWord(uint16_t address, uint16_t word)
 
     case 0177564:
     case 0177565:
-        m_pBoard->ChanTxStateSetCPU(0, (uint8_t) word);
+        m_pBoard->ChanTxStateSetCPU(0, static_cast<uint8_t>(word));
         break;
     case 0177566:  // TX data, channel 0
     case 0177567:
-        m_pBoard->ChanWriteByCPU(0, (uint8_t) word);
+        m_pBoard->ChanWriteByCPU(0, static_cast<uint8_t>(word));
         break;
     case 0176660:
     case 0176661:
-        m_pBoard->ChanRxStateSetCPU(1, (uint8_t) word);
+        m_pBoard->ChanRxStateSetCPU(1, static_cast<uint8_t>(word));
         break;
     case 0176662:
     case 0176663:
         break ;
     case 0176664:
     case 0176665:
-        m_pBoard->ChanTxStateSetCPU(1, (uint8_t) word);
+        m_pBoard->ChanTxStateSetCPU(1, static_cast<uint8_t>(word));
         break;
     case 0176666:  // TX data, channel 1
     case 0176667:
-        m_pBoard->ChanWriteByCPU(1, (uint8_t) word);
+        m_pBoard->ChanWriteByCPU(1, static_cast<uint8_t>(word));
         break;
     case 0176674:
     case 0176675:
-        m_pBoard->ChanTxStateSetCPU(2, (uint8_t) word);
+        m_pBoard->ChanTxStateSetCPU(2, static_cast<uint8_t>(word));
         break;
     case 0176676:  // TX data, channel 2
     case 0176677:
-        m_pBoard->ChanWriteByCPU(2, (uint8_t) word);
+        m_pBoard->ChanWriteByCPU(2, static_cast<uint8_t>(word));
         break;
     case 0176670:
     case 0176671:
@@ -701,7 +701,7 @@ bool CFirstMemoryController::SerialInput(uint8_t inputByte)
         m_Port176570 |= 010000;  // Set Overflow flag
     else
     {
-        m_Port176572 = (uint16_t)inputByte;
+        m_Port176572 = static_cast<uint16_t>(inputByte);
         m_Port176570 |= 0200;  // Set Ready flag
         if (m_Port176570 & 0100)  // Interrupt?
             return true;
@@ -716,7 +716,7 @@ bool CFirstMemoryController::NetworkInput(uint8_t inputByte)
         m_Port176560 |= 010000;  // Set Overflow flag
     else
     {
-        m_Port176562 = (uint16_t)inputByte;
+        m_Port176562 = static_cast<uint16_t>(inputByte);
         m_Port176560 |= 0200;  // Set Ready flag
         if (m_Port176560 & 0100)  // Interrupt?
             return true;
@@ -816,8 +816,9 @@ void CSecondMemoryController::UpdateMemoryMap()
         std::ranges::fill(mapping.subspan<0100000, 020000>(), ADDRTYPE_ROM);
     else if ((m_Port177054 & 14) != 0)  // ROM cartridge selected
     {
-        int slot = ((m_Port177054 & 8) == 0) ? 1 : 2;
-        filler = (slot == 1) ? ADDRTYPE_ROMCART1 : ADDRTYPE_ROMCART2;
+        const int slot = (m_Port177054 & 8) == 0 ? 1 : 2;
+        const bool validBank = (m_Port177054 & 6) != 0;
+        filler = validBank ? (slot == 1 ? ADDRTYPE_ROMCART1 : ADDRTYPE_ROMCART2) : ADDRTYPE_DENY;
         std::ranges::fill(mapping.subspan<0100000, 010000>(), filler);
         if (!m_pBoard->IsHardImageAttached(slot))
             std::ranges::fill(mapping.subspan<0110000, 010000>(), filler);
@@ -870,10 +871,11 @@ int CSecondMemoryController::TranslateAddress(uint16_t address, bool /*okHaltMod
                     *pOffset = address;
                     return ADDRTYPE_IO;  // 110000-117777 - HDD ports
                 }
-                if (m_pBoard->IsROMCartridgeLoaded(slot))
+                const int bank = (m_Port177054 & 6) >> 1;
+                // Bit 3 selects the slot independently of the bank and IDE ports.
+                if (bank != 0 && m_pBoard->IsROMCartridgeLoaded(slot))
                 {
-                    int bank = (m_Port177054 & 6) >> 1;
-                    *pOffset = address - 0100000 + (uint16_t)((bank - 1) << 13);
+                    *pOffset = address - 0100000 + static_cast<uint16_t>((bank - 1) << 13);
                     return (slot == 1) ? ADDRTYPE_ROMCART1 : ADDRTYPE_ROMCART2;
                 }
                 return ADDRTYPE_DENY;
@@ -1054,7 +1056,7 @@ uint16_t CSecondMemoryController::GetPortWord(uint16_t address)
             if (dy < -63) dy = -63;
             if (dy > 63) dy = 63;
             m_mousedy -= dy;
-            uint16_t word = (uint16_t)( ((((uint16_t)dy) & 127) << 9) | ((((uint16_t)dx) & 127) << 1) | (m_mouseflags & 0x0101) );
+            uint16_t word = static_cast<uint16_t>( (((static_cast<uint16_t>(dy)) & 127) << 9) | (((static_cast<uint16_t>(dx)) & 127) << 1) | (m_mouseflags & 0x0101) );
             return word;
         }
 
@@ -1120,12 +1122,12 @@ uint16_t CSecondMemoryController::GetPortWord(uint16_t address)
 uint8_t CSecondMemoryController::GetPortByte(uint16_t address)
 {
     uint16_t word = GetPortWord(address);
-    return (uint8_t) (address & 1) ? (uint8_t)((word >> 8) & 0xff) : (uint8_t)(word & 0xff);
+    return static_cast<uint8_t>(address & 1) ? static_cast<uint8_t>((word >> 8) & 0xff) : static_cast<uint8_t>(word & 0xff);
 }
 
 void CSecondMemoryController::SetPortByte(uint16_t address, uint8_t byte)
 {
-    uint16_t word = (address & 1) ? ((uint16_t)byte) << 8 : (uint16_t)byte;
+    uint16_t word = (address & 1) ? (static_cast<uint16_t>(byte)) << 8 : static_cast<uint16_t>(byte);
     if ((address >= 0110000) && (address < 0120000))
         address &= 0110016;
     switch (address)
@@ -1141,12 +1143,12 @@ void CSecondMemoryController::SetPortByte(uint16_t address, uint8_t byte)
     case 0177014:
         m_Port177014 &= 0xFF00;
         m_Port177014 |= word;
-        m_pBoard->SetRAMByte(1, m_Port177010, (uint8_t)(word & 0xff));
+        m_pBoard->SetRAMByte(1, m_Port177010, static_cast<uint8_t>(word & 0xff));
         break;
     case 0177015:
         m_Port177014 &= 0xFF;
         m_Port177014 |= word;
-        m_pBoard->SetRAMByte(2, m_Port177010, (uint8_t)((word >> 8) & 0xff));
+        m_pBoard->SetRAMByte(2, m_Port177010, static_cast<uint8_t>((word >> 8) & 0xff));
         break;
     case 0177016:
     case 0177017:
@@ -1181,19 +1183,19 @@ void CSecondMemoryController::SetPortByte(uint16_t address, uint8_t byte)
     case 0177065:
         break;
     case 0177066:  // RX status, channels 0,1,2
-        m_pBoard->ChanRxStateSetPPU((uint8_t) word);
+        m_pBoard->ChanRxStateSetPPU(static_cast<uint8_t>(word));
         break;
     case 0177067:
         m_pBoard->ChanRxStateSetPPU(0);
         break;
     case 0177070:  // TX data, channel 0
-        m_pBoard->ChanWriteByPPU(0, (uint8_t) word);
+        m_pBoard->ChanWriteByPPU(0, static_cast<uint8_t>(word));
         break;
     case 0177071:
         m_pBoard->ChanWriteByPPU(0, 0);
         break;
     case 0177072:  // TX data, channel 1
-        m_pBoard->ChanWriteByPPU(1, (uint8_t) word);
+        m_pBoard->ChanWriteByPPU(1, static_cast<uint8_t>(word));
         break;
     case 0177073:
         m_pBoard->ChanWriteByPPU(1, 0);
@@ -1202,19 +1204,19 @@ void CSecondMemoryController::SetPortByte(uint16_t address, uint8_t byte)
     case 0177075:
         break;
     case 0177076:  // TX status, channels 0,1
-        m_pBoard->ChanTxStateSetPPU((uint8_t) word);
+        m_pBoard->ChanTxStateSetPPU(static_cast<uint8_t>(word));
         break;
     case 0177077:
         m_pBoard->ChanTxStateSetPPU(0);
         break;
 
     case 0177100:  // i8255 port A -- Parallel port output data
-        m_Port177100 = (uint8_t)(word & 0xff);
+        m_Port177100 = static_cast<uint8_t>(word & 0xff);
         break;
     case 0177101:  // i8255 port B
         break;
     case 0177102:  // i8255 port C
-        m_Port177102 = (uint8_t)((m_Port177102 & 0x0f) | (word & 0xf0));
+        m_Port177102 = static_cast<uint8_t>((m_Port177102 & 0x0f) | (word & 0xf0));
         break;
     case 0177103:  // i8255 control byte
         break;
@@ -1303,13 +1305,13 @@ void CSecondMemoryController::SetPortWord(uint16_t address, uint16_t word)
     case 0177012:  // Plane 0 data register
     case 0177013:
         m_Port177012 = word & 0xFF;
-        m_pBoard->SetRAMByte(0, m_Port177010, (uint8_t)(word & 0xff));
+        m_pBoard->SetRAMByte(0, m_Port177010, static_cast<uint8_t>(word & 0xff));
         break;
     case 0177014:  // Plane 1 & 2 data register
     case 0177015:
         m_Port177014 = word;
-        m_pBoard->SetRAMByte(1, m_Port177010, (uint8_t)(word & 0xff));
-        m_pBoard->SetRAMByte(2, m_Port177010, (uint8_t)((word >> 8) & 0xff));
+        m_pBoard->SetRAMByte(1, m_Port177010, static_cast<uint8_t>(word & 0xff));
+        m_pBoard->SetRAMByte(2, m_Port177010, static_cast<uint8_t>((word >> 8) & 0xff));
         break;
 
     case 0177016:  // Sprite Color
@@ -1398,26 +1400,26 @@ void CSecondMemoryController::SetPortWord(uint16_t address, uint16_t word)
         break;
     case 0177066:  // RX status, channels 0,1,2
     case 0177067:
-        m_pBoard->ChanRxStateSetPPU((uint8_t)word);
+        m_pBoard->ChanRxStateSetPPU(static_cast<uint8_t>(word));
         break;
     case 0177070:  // TX data, channel 0
     case 0177071:
-        m_pBoard->ChanWriteByPPU(0, (uint8_t)word);
+        m_pBoard->ChanWriteByPPU(0, static_cast<uint8_t>(word));
         break;
     case 0177072:  // TX data, channel 1
     case 0177073:
-        m_pBoard->ChanWriteByPPU(1, (uint8_t)word);
+        m_pBoard->ChanWriteByPPU(1, static_cast<uint8_t>(word));
         break;
     case 0177074:
     case 0177075:
         break;
     case 0177076:  // TX status, channels 0,1
     case 0177077:
-        m_pBoard->ChanTxStateSetPPU((uint8_t)word);
+        m_pBoard->ChanTxStateSetPPU(static_cast<uint8_t>(word));
         break;
 
     case 0177100:  // i8255 port A -- Parallel port output data
-        m_Port177100 = (uint8_t)(word & 0xff);
+        m_Port177100 = static_cast<uint8_t>(word & 0xff);
         break;
     case 0177101:  // i8255 port B
         break;

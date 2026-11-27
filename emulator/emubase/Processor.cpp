@@ -60,7 +60,8 @@ static constexpr std::array<uint16_t, 8> CLR_TIMING =
     0x000B, 0x001C, 0x0023, 0x002F, 0x0023, 0x002F, 0x002F, 0x003F
 };
 
-static constexpr std::array<uint16_t, 8> CLRB_TIMING =
+// The current CLRB handler uses CLR_TIMING.
+[[maybe_unused]] static constexpr std::array<uint16_t, 8> CLRB_TIMING =
 {
     0x000B, 0x0021, 0x0027, 0x0033, 0x0027, 0x0033, 0x0037, 0x0043
 };
@@ -128,24 +129,24 @@ static constexpr uint16_t RESET_TIMING = 105 + 968;  // Technical description of
 //////////////////////////////////////////////////////////////////////
 
 
-std::unique_ptr<CProcessor::ExecuteMethodRef[]> CProcessor::m_pExecuteMethodMap;
+std::unique_ptr<CProcessor::ExecuteMethodMap> CProcessor::m_pExecuteMethodMap;
 
 void CProcessor::Init()
 {
     assert(m_pExecuteMethodMap == nullptr);
-    m_pExecuteMethodMap = std::make_unique<ExecuteMethodRef[]>(65536);
-    const auto RegisterMethodOpc = [](uint16_t opcode, ExecuteMethodRef method)
+    m_pExecuteMethodMap = std::make_unique<ExecuteMethodMap>();
+    auto& methods = *m_pExecuteMethodMap;
+    const auto RegisterMethodOpc = [&methods](uint16_t opcode, ExecuteMethodRef method)
     {
-        m_pExecuteMethodMap[opcode] = method;
+        methods[opcode] = method;
     };
-    const auto RegisterMethodRef = [](uint16_t first, uint16_t last, ExecuteMethodRef method)
+    const auto RegisterMethodRef = [&methods](uint16_t first, uint16_t last, ExecuteMethodRef method)
     {
-        std::ranges::fill(std::span{m_pExecuteMethodMap.get(), std::size_t{65536}}.subspan(
-            first, static_cast<size_t>(last) - first + 1), method);
+        std::ranges::fill(std::span{methods}.subspan(first, static_cast<size_t>(last) - first + 1), method);
     };
 
     // First fill the table with references to the ExecuteUNKNOWN method, which executes TRAP 10
-    RegisterMethodRef( 0000000, 0177777, &CProcessor::ExecuteUNKNOWN );
+    methods.fill(&CProcessor::ExecuteUNKNOWN);
 
     RegisterMethodOpc( 0000000, &CProcessor::ExecuteHALT );
     RegisterMethodOpc( 0000001, &CProcessor::ExecuteWAIT );
@@ -456,7 +457,7 @@ bool CProcessor::InterruptProcessing ()
                         new_psw = GetWord(intrVector + 2);
                         if (!m_RPLYrq)
                         {
-                            SetLPSW((uint8_t)(new_psw & 0xff));
+                            SetLPSW(static_cast<uint8_t>(new_psw & 0xff));
                             SetPC(new_pc);
                         }
                     }
@@ -574,7 +575,7 @@ void CProcessor::TranslateInstruction()
     m_methsrc  = GetDigit(m_instruction, 3);
 
     // Find command implementation using the command map
-    ExecuteMethodRef methodref = m_pExecuteMethodMap[m_instruction];
+    ExecuteMethodRef methodref = (*m_pExecuteMethodMap)[m_instruction];
     (this->*methodref)();  // Call command implementation method
 }
 
@@ -640,7 +641,7 @@ void CProcessor::Execute000030()  // Unknown command
     while ((GetReg(0) & 0200) == 0 && (GetReg(2) & 0200) == 0)
     {
         SetReg(1, GetReg(1) << 1);
-        SetReg(2, (((uint16_t)GetLReg(2)) << 1) | (GetC() ? 1 : 0));
+        SetReg(2, ((static_cast<uint16_t>(GetLReg(2))) << 1) | (GetC() ? 1 : 0));
         SetReg(2, ((GetReg(2) & 0200) ? 0xff00 : 0) | GetLReg(2));
         SetReg(3, (GetReg(3) << 1) | (GetC() ? 1 : 0));
         SetReg(0, GetReg(0) + 1);
@@ -763,7 +764,7 @@ void CProcessor::ExecuteRTI()  // RTI - Return from Interrupt
     SetSP( GetSP() + 2 );
     if (m_RPLYrq) return;
     if (GetPC() < 0160000)
-        SetLPSW((uint8_t)(word & 0xff));
+        SetLPSW(static_cast<uint8_t>(word & 0xff));
     else
         SetPSW(word); //load new mode
     m_internalTick = RTI_TIMING;
@@ -780,7 +781,7 @@ void CProcessor::ExecuteRTT ()  // RTT - Return from Trace Trap
     SetSP( GetSP() + 2 );
     if (m_RPLYrq) return;
     if (GetPC() < 0160000)
-        SetLPSW((uint8_t)(word & 0xff));
+        SetLPSW(static_cast<uint8_t>(word & 0xff));
     else
         SetPSW(word); //load new mode
 
@@ -822,12 +823,12 @@ void CProcessor::ExecuteRTS ()  // RTS - return from subroutine
 
 void CProcessor::ExecuteCCC ()
 {
-    SetLPSW(GetLPSW() &  ~((uint8_t)(m_instruction & 0xff) & 017));
+    SetLPSW(GetLPSW() &  ~(static_cast<uint8_t>(m_instruction & 0xff) & 017));
     m_internalTick = NOP_TIMING;
 }
 void CProcessor::ExecuteSCC ()
 {
-    SetLPSW(GetLPSW() |  ((uint8_t)(m_instruction & 0xff) & 017));
+    SetLPSW(GetLPSW() |  (static_cast<uint8_t>(m_instruction & 0xff) & 017));
     m_internalTick = NOP_TIMING;
 }
 
@@ -874,7 +875,7 @@ void CProcessor::ExecuteSWAB ()
     if (m_RPLYrq) return;
 
     if ((dst & 0200) != 0) new_psw |= PSW_N;
-    if ((uint8_t)(dst & 0xff) == 0) new_psw |= PSW_Z;
+    if (static_cast<uint8_t>(dst & 0xff) == 0) new_psw |= PSW_Z;
     SetLPSW(new_psw);
     m_internalTick = MOV_TIMING[m_methdest][m_methdest];
 }
@@ -1407,7 +1408,7 @@ void CProcessor::ExecuteROL()  // ROL
 
     if (m_methdest)
     {
-        ea = GetWordAddr((uint8_t)m_methdest, (uint8_t)m_regdest);
+        ea = GetWordAddr(static_cast<uint8_t>(m_methdest), static_cast<uint8_t>(m_regdest));
         if (m_RPLYrq) return;
         src = GetWord(ea);
         if (m_RPLYrq) return;
@@ -1852,10 +1853,10 @@ void CProcessor::ExecuteMUL()  // MUL - multiply
     src = m_methdest ? GetWord(ea) : GetReg(m_regdest);
     if (m_RPLYrq) return;
 
-    res = (signed short)dst * (signed short)src;
+    res = static_cast<signed short>(dst) * static_cast<signed short>(src);
 
-    SetReg(m_regsrc, (uint16_t)((res >> 16) & 0xffff));
-    SetReg(m_regsrc | 1, (uint16_t)(res & 0xffff));
+    SetReg(m_regsrc, static_cast<uint16_t>((res >> 16) & 0xffff));
+    SetReg(m_regsrc | 1, static_cast<uint16_t>(res & 0xffff));
 
     if (res < 0) new_psw |= PSW_N;
     if (res == 0) new_psw |= PSW_Z;
@@ -1873,10 +1874,10 @@ void CProcessor::ExecuteDIV()  // DIV - divide
 
     if (m_methdest) ea = GetWordAddr(m_methdest, m_regdest);
     if (m_RPLYrq) return;
-    src2 = (int)(signed short)(m_methdest ? GetWord(ea) : GetReg(m_regdest));
+    src2 = static_cast<int>(static_cast<signed short>(m_methdest ? GetWord(ea) : GetReg(m_regdest)));
     if (m_RPLYrq) return;
 
-    longsrc = (int32_t)(((uint32_t)GetReg(m_regsrc | 1)) | ((uint32_t)GetReg(m_regsrc) << 16));
+    longsrc = static_cast<int32_t>((static_cast<uint32_t>(GetReg(m_regsrc | 1))) | (static_cast<uint32_t>(GetReg(m_regsrc)) << 16));
 
     m_internalTick = DIV_TIMING[m_methdest];
 
@@ -1886,7 +1887,7 @@ void CProcessor::ExecuteDIV()  // DIV - divide
         SetLPSW(new_psw);
         return;
     }
-    if ((longsrc == (int32_t)020000000000) && (src2 == -1))
+    if ((longsrc == static_cast<int32_t>(020000000000)) && (src2 == -1))
     {
         new_psw |= PSW_V; // overflow
         SetLPSW(new_psw);
@@ -1920,11 +1921,11 @@ void CProcessor::ExecuteASH()  // ASH - arithmetic shift
 
     if (m_methdest) ea = GetWordAddr(m_methdest, m_regdest);
     if (m_RPLYrq) return;
-    src = (short)(m_methdest ? GetWord(ea) : GetReg(m_regdest));
+    src = static_cast<short>(m_methdest ? GetWord(ea) : GetReg(m_regdest));
     if (m_RPLYrq) return;
     src &= 0x3F;
     src |= (src & 040) ? 0177700 : 0;
-    dst = (short)GetReg(m_regsrc);
+    dst = static_cast<short>(GetReg(m_regsrc));
 
     m_internalTick = ASH_TIMING[m_methdest];
 
@@ -1964,17 +1965,17 @@ void CProcessor::ExecuteASHC()  // ASHC - arithmetic shift combined
 
     if (m_methdest) ea = GetWordAddr(m_methdest, m_regdest);
     if (m_RPLYrq) return;
-    src = (int16_t)(m_methdest ? GetWord(ea) : GetReg(m_regdest));
+    src = static_cast<int16_t>(m_methdest ? GetWord(ea) : GetReg(m_regdest));
     if (m_RPLYrq) return;
     src &= 0x3F;
     src |= (src & 040) ? 0177700 : 0;
-    dst = ((uint32_t)GetReg(m_regsrc | 1)) | ((uint32_t)GetReg(m_regsrc) << 16);
+    dst = (static_cast<uint32_t>(GetReg(m_regsrc | 1))) | (static_cast<uint32_t>(GetReg(m_regsrc)) << 16);
     m_internalTick = ASHC_TIMING[m_methdest];
     if (src >= 0)
     {
         while (src--)
         {
-            if (dst & (int32_t)0x80000000L) new_psw |= PSW_C; else new_psw &= ~PSW_C;
+            if (dst & static_cast<int32_t>(0x80000000L)) new_psw |= PSW_C; else new_psw &= ~PSW_C;
             dst <<= 1;
             if ((dst < 0) != ((new_psw & PSW_C) != 0)) new_psw |= PSW_V;
             m_internalTick = m_internalTick + ASHC_S_TIMING;
@@ -1990,8 +1991,8 @@ void CProcessor::ExecuteASHC()  // ASHC - arithmetic shift combined
         }
     }
 
-    SetReg(m_regsrc, (uint16_t)((dst >> 16) & 0xffff));
-    SetReg(m_regsrc | 1, (uint16_t)(dst & 0xffff));
+    SetReg(m_regsrc, static_cast<uint16_t>((dst >> 16) & 0xffff));
+    SetReg(m_regsrc | 1, static_cast<uint16_t>(dst & 0xffff));
 
     SetN(dst < 0);
     SetZ(dst == 0);
@@ -2011,7 +2012,7 @@ void CProcessor::ExecuteSOB()  // SOB - subtract one: R = R - 1 ; if R != 0 : PC
     if (dst)
     {
         m_internalTick = SOB_TIMING;
-        SetPC(GetPC() - (m_instruction & (uint16_t)077) * 2 );
+        SetPC(GetPC() - (m_instruction & static_cast<uint16_t>(077)) * 2 );
     }
 }
 

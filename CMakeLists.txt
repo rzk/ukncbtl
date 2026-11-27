@@ -14,6 +14,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  include(CheckPIESupported)
+  check_pie_supported(LANGUAGES CXX)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
   include(CheckCXXSourceCompiles)
   check_cxx_source_compiles([=[
     #include <expected>
@@ -28,6 +31,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR "UKNCBTL requires a C++23 standard library with std::expected and std::format. "
       "For libstdc++, use Clang 19 or newer with libstdc++ 13 or newer.")
   endif()
+  # Keep header-level checks consistent across the emulator and its C++ dependencies.
+  add_compile_definitions(
+    "$<$<COMPILE_LANGUAGE:CXX>:_GLIBCXX_ASSERTIONS;_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST>")
 endif()
 
 if(MSVC)
@@ -38,6 +44,21 @@ option(UKNCBTL_BUILD_BENCHMARKS "Build headless Google Benchmark workloads" OFF)
 option(UKNCBTL_BUILD_FRAME_BENCHMARK "Build portable frame, trace, and tape benchmarks" OFF)
 option(UKNCBTL_ENABLE_TRACY "Instrument the emulator with Tracy" OFF)
 option(UKNCBTL_ENABLE_ASAN "Instrument C++ targets and dependencies with AddressSanitizer" OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  option(UKNCBTL_ENABLE_UBSAN "Instrument targets and dependencies with UndefinedBehaviorSanitizer" OFF)
+  option(UKNCBTL_ENABLE_TSAN "Instrument targets and dependencies with ThreadSanitizer" OFF)
+  if(UKNCBTL_ENABLE_UBSAN)
+    add_compile_options(-fsanitize=undefined -fno-sanitize-recover=undefined)
+    add_link_options(-fsanitize=undefined)
+  endif()
+  if(UKNCBTL_ENABLE_TSAN)
+    if(UKNCBTL_ENABLE_ASAN)
+      message(FATAL_ERROR "ThreadSanitizer and AddressSanitizer require separate builds")
+    endif()
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+  endif()
+endif()
 if(UKNCBTL_ENABLE_ASAN)
   if(MSVC)
     # clang-cl's sanitizer runtime uses the shared CRT.
@@ -78,6 +99,14 @@ function(ukncbtl_toolchain target)
   target_compile_features(${target} PUBLIC cxx_std_23)
   if(MSVC)
     target_compile_options(${target} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/permissive-;/Zc:__cplusplus;/GS>")
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_options(${target} PRIVATE -fstack-protector-strong -fstack-clash-protection
+      -ftrivial-auto-var-init=zero)
+    target_compile_definitions(${target} PRIVATE "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:_FORTIFY_SOURCE=3>")
+    get_target_property(target_type ${target} TYPE)
+    if(target_type STREQUAL "EXECUTABLE")
+      target_link_options(${target} PRIVATE "LINKER:-z,relro,-z,now,-z,noexecstack")
+    endif()
   endif()
 endfunction()
 
@@ -86,6 +115,11 @@ add_library(DearImGui STATIC
   "${imgui_SOURCE_DIR}/imgui_tables.cpp" "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
   "${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp"
   "${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp")
+if(UKNCBTL_ENABLE_UBSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # The pinned ImGui version can truncate a NaN in CalcWindowContentSizes.
+  set_property(SOURCE "${imgui_SOURCE_DIR}/imgui.cpp" APPEND
+    PROPERTY COMPILE_OPTIONS -fno-sanitize=float-cast-overflow)
+endif()
 ukncbtl_toolchain(DearImGui)
 target_include_directories(DearImGui PUBLIC "${imgui_SOURCE_DIR}" "${imgui_SOURCE_DIR}/backends")
 target_link_libraries(DearImGui PUBLIC SDL3::SDL3)

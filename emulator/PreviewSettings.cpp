@@ -11,17 +11,17 @@
 namespace
 {
 constexpr std::wstring_view section = L"SDLPreview";
+constexpr std::wstring_view hexDigits = L"0123456789abcdef";
 
 std::optional<std::wstring> EncodeLayout(std::string_view layout)
 {
     if (layout.size() > preview_settings::MaxUiLayoutBytes || layout.find('\0') != layout.npos) return std::nullopt;
     const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(layout.data()), layout.size());
     if (!ini_encoding::Decode(bytes)) return std::nullopt;
-    constexpr wchar_t digits[] = L"0123456789abcdef";
     std::wstring result;
     result.reserve(layout.size() * 2);
     for (const auto ch : layout)
-    { const auto byte = static_cast<unsigned char>(ch); result.push_back(digits[byte >> 4]); result.push_back(digits[byte & 15]); }
+    { const auto byte = static_cast<unsigned char>(ch); result.push_back(hexDigits[byte >> 4]); result.push_back(hexDigits[byte & 15]); }
     return result;
 }
 
@@ -55,11 +55,10 @@ std::optional<std::wstring> EncodePath(const std::filesystem::path& path)
     {
         const auto utf8 = path.u8string();
         if (utf8.size() > 32768) return std::nullopt;
-        constexpr wchar_t digits[] = L"0123456789abcdef";
         std::wstring result;
         result.reserve(utf8.size() * 2);
         for (const auto value : utf8)
-        { const auto byte = static_cast<unsigned char>(value); result.push_back(digits[byte >> 4]); result.push_back(digits[byte & 15]); }
+        { const auto byte = static_cast<unsigned char>(value); result.push_back(hexDigits[byte >> 4]); result.push_back(hexDigits[byte & 15]); }
         return result;
     }
     catch (const std::filesystem::filesystem_error&) { return std::nullopt; }

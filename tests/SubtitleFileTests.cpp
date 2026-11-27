@@ -51,7 +51,7 @@ TEST_F(SubtitleFileTest, LoadsUtf16WithOrWithoutBomAtUnicodePath)
         ASSERT_EQ(result->size(), 2u);
         EXPECT_EQ((*result)[0].address, 8);
         EXPECT_EQ((*result)[0].comment, L";\u041f\u0440\u0438\u0432\u0435\u0442");
-        EXPECT_EQ((*result)[1].type, SUBTYPE_COMMENT | SUBTYPE_DATA);
+        EXPECT_EQ((*result)[1].type, DisasmSubtitleType::comment | DisasmSubtitleType::data);
         EXPECT_EQ((*result)[1].comment, L";\U0001f600");
     }
 }

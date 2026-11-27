@@ -175,7 +175,7 @@ TEST(SdlKeyboard, ReleasesAllOnFocusLossAndCanRestart)
     EXPECT_TRUE(keyboard.ReleaseAll().empty());
     EXPECT_FALSE(keyboard.Transition(SDL_SCANCODE_RSHIFT, false, false, false, false));
     EXPECT_TRUE(keyboard.Transition(SDL_SCANCODE_A, true, false, false, false));
-    EXPECT_FALSE(keyboard.Transition(static_cast<SDL_Scancode>(-1), true, false, false, false));
+    EXPECT_FALSE(keyboard.Transition(SDL_SCANCODE_UNKNOWN, true, false, false, false));
     EXPECT_FALSE(keyboard.Transition(SDL_SCANCODE_COUNT, true, false, false, false));
 }
 

@@ -29,26 +29,26 @@ std::expected<std::vector<DisasmSubtitleItem>, ParseError> Parse(std::wstring_vi
         if (!address) return std::unexpected(ParseError::InvalidAddress);
         if (!block.empty())
         {
-            items.push_back({*address, SUBTYPE_BLOCKCOMMENT, std::move(block)});
+            items.push_back({*address, DisasmSubtitleType::blockComment, std::move(block)});
             block.clear();
         }
         line.remove_prefix(digits == line.npos ? line.size() : digits);
         const auto content = line.find_first_not_of(L" \t$:");
         line.remove_prefix(content == line.npos ? line.size() : content);
-        const bool data = !line.empty() && line.front() == L'.';
+        const auto type = !line.empty() && line.front() == L'.' ? DisasmSubtitleType::data : DisasmSubtitleType::none;
         const auto comment = line.find(L';');
         if (comment != line.npos)
-            items.push_back({*address, SUBTYPE_COMMENT | (data ? SUBTYPE_DATA : 0), std::wstring(line.substr(comment))});
-        else if (data)
-            items.push_back({*address, SUBTYPE_DATA, {}});
+            items.push_back({*address, DisasmSubtitleType::comment | type, std::wstring(line.substr(comment))});
+        else if (type == DisasmSubtitleType::data)
+            items.push_back({*address, type, {}});
     }
     return items;
 }
 
-const DisasmSubtitleItem* Find(std::span<const DisasmSubtitleItem> items, std::uint16_t address, int mask)
+const DisasmSubtitleItem* Find(std::span<const DisasmSubtitleItem> items, std::uint16_t address, DisasmSubtitleType mask)
 {
     for (const auto& item : items)
-        if (item.address == address && (item.type & mask) != 0) return &item;
+        if (item.address == address && MatchesSubtitleType(item.type, mask)) return &item;
     return nullptr;
 }
 }

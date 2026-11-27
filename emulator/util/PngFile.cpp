@@ -24,10 +24,11 @@ std::expected<void, png_file::Error> png_file::Save(const std::filesystem::path&
     if (!surface) return std::unexpected(Error::surface_failed);
 
     const auto utf8 = path.u8string();
-    SDL_IOStream* io = SDL_IOFromFile(reinterpret_cast<const char*>(utf8.c_str()), "wb");
+    std::unique_ptr<SDL_IOStream, decltype(&SDL_CloseIO)> io(
+        SDL_IOFromFile(reinterpret_cast<const char*>(utf8.c_str()), "wb"), SDL_CloseIO);
     if (!io) return std::unexpected(Error::open_failed);
-    const bool written = SDL_SavePNG_IO(surface.get(), io, false);
-    const bool closed = SDL_CloseIO(io);
+    const bool written = SDL_SavePNG_IO(surface.get(), io.get(), false);
+    const bool closed = SDL_CloseIO(io.release());
     if (!written) return std::unexpected(Error::write_failed);
     if (!closed) return std::unexpected(Error::close_failed);
     return {};

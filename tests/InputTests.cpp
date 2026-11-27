@@ -194,6 +194,8 @@ TEST(InputMouse, SaturationAndLargeCoordinatesDoNotWrap)
     EXPECT_EQ(-127, input::MouseAxis(0,40000,0,640,640,640));
     EXPECT_EQ(127, input::MouseAxis(INT_MAX,INT_MIN,0,640,640,640));
     EXPECT_EQ(-127, input::MouseAxis(INT_MIN,INT_MAX,0,640,640,640));
+    EXPECT_EQ(127, input::MouseAxis(INT_MAX, INT_MIN, INT_MIN, INT_MIN, INT_MAX, INT_MAX));
+    EXPECT_EQ(-127, input::MouseAxis(INT_MIN, INT_MAX, INT_MAX, INT_MAX, INT_MAX, INT_MAX));
 }
 TEST(InputMouse, InvalidDimensionsAreInert)
 {

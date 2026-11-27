@@ -1,5 +1,6 @@
 /* This file is part of UKNCBTL, distributed under the GNU LGPL v3 or later. */
 #include "PreviewOptions.h"
+#include "util/Utf8Path.h"
 
 std::expected<preview_options::Options, std::string> preview_options::Parse(std::span<const std::string_view> args)
 {
@@ -36,8 +37,7 @@ std::expected<preview_options::Options, std::string> preview_options::Parse(std:
             }
             if (++i == args.size() || args[i].empty() || args[i].starts_with("--"))
                 return std::unexpected(std::string(arg) + " requires a file path");
-            const std::u8string utf8(reinterpret_cast<const char8_t*>(args[i].data()), args[i].size());
-            auto path = std::filesystem::path(utf8);
+            auto path = PathFromUtf8(args[i]);
             if (arg == "--settings") options.settingsFile = std::move(path);
             else if (arg == "--rom") options.rom = std::move(path);
             else if (arg == "--tape") options.tape = std::move(path);

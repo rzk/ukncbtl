@@ -353,6 +353,9 @@ TEST(MemoryTests, Memory_PpuRomCartridgeWindow)
     tb.SetPpuWord(0177054, 06);
     ASSERT_EQ(ADDRTYPE_ROMCART1, PpuAddrType(tb, 0100000, false, &offset)) << L"bank 3";
     ASSERT_EQ(040000, offset) << L"bank 3 is 16 KB further";
+    const auto view = tb.Board()->GetPPUMemoryController()->GetWordView(0117777, false, false);
+    EXPECT_EQ(ADDRTYPE_ROMCART1, view.addressType);
+    EXPECT_EQ(cart[cart.size() - 2] | (cart.back() << 8), view.value);
 }
 
 TEST(MemoryTests, Memory_PpuRomCartridgeInSlot2)
@@ -365,6 +368,10 @@ TEST(MemoryTests, Memory_PpuRomCartridgeInSlot2)
 
     ASSERT_EQ(ADDRTYPE_ROMCART2, PpuAddrType(tb, 0100000, false, &offset)) << L"slot 2";
     ASSERT_EQ(0x1111, tb.GetPpuWord(0100000)) << L"word";
+
+    tb.SetPpuWord(0177054, 010);  // Slot 2 with no cartridge bank selected.
+    EXPECT_EQ(ADDRTYPE_DENY, PpuAddrType(tb, 0100000, false, &offset));
+    EXPECT_EQ(0, tb.Board()->GetPPUMemoryController()->GetWordView(0100000, false, false).value);
 }
 
 // PPU ports
